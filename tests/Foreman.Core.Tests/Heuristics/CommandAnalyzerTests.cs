@@ -1,5 +1,6 @@
 using Foreman.Core.Heuristics;
 using Foreman.Core.Models;
+using Foreman.Core.Profiles;
 
 namespace Foreman.Core.Tests.Heuristics;
 
@@ -54,6 +55,32 @@ public sealed class CommandAnalyzerTests : IClassFixture<PatternLibraryFixture>
         Assert.NotNull(match);
         Assert.Equal(expectedSev, match.Severity);
         Assert.Equal(expectedId, match.RuleId);
+    }
+
+    [Fact]
+    public void KnownHarnessEnvironmentSnapshot_IsLowSeverityHarnessNotice()
+    {
+        const string cmd = "powershell.exe -NoLogo -Command \"Get-ChildItem Env: | ForEach-Object { $_.Name }; Write-Output '_SHELL_ENV_DELIMITER_'\"";
+        var profile = new HarnessProfile { Name = "codex-default" };
+
+        var match = _analyzer.Analyze(cmd, "powershell.exe", profile);
+
+        Assert.NotNull(match);
+        Assert.Equal(ForemanSeverity.Low, match.Severity);
+        Assert.Equal("cred-013-harness", match.RuleId);
+        Assert.Equal("Harness environment snapshot", match.RuleName);
+    }
+
+    [Fact]
+    public void EnvironmentSnapshotWithoutHarnessProfile_RemainsMediumCredentialAlert()
+    {
+        const string cmd = "powershell.exe -NoLogo -Command \"Get-ChildItem Env: | ForEach-Object { $_.Name }; Write-Output '_SHELL_ENV_DELIMITER_'\"";
+
+        var match = _analyzer.Analyze(cmd, "powershell.exe");
+
+        Assert.NotNull(match);
+        Assert.Equal(ForemanSeverity.Medium, match.Severity);
+        Assert.Equal("cred-013", match.RuleId);
     }
 
     [Theory]

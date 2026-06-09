@@ -147,10 +147,11 @@ public partial class AlertDetailWindow : Window
 
             case AskOutcome.Notified:
                 MessageBox.Show(
-                    $"Delivered a justify/act request to the live {Blank(result.MatchedClient, harnessId ?? "harness")} MCP session — " +
-                    "check that session for its response.\n\n" +
-                    "(That client doesn't support being queried directly, so no reply returns to Foreman. " +
-                    (clipped ? "The prompt is also on your clipboard.)" : ")"),
+                    $"Delivered a justify/act request to the live {Blank(result.MatchedClient, harnessId ?? "harness")} MCP session.\n\n" +
+                    "This client accepts Foreman's notification, but does not support a direct query/reply round trip, so no answer returns to Foreman.\n\n" +
+                    (clipped
+                        ? "The prompt is also on your clipboard. Paste it into that session if you want a visible answer."
+                        : "Copying the prompt to the clipboard failed, so check the live session notification."),
                     title, MessageBoxButton.OK, MessageBoxImage.Information);
                 break;
 

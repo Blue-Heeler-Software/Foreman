@@ -15,6 +15,7 @@ Date: 2026-06-08
 - MCP alert payloads include spawner and owner metadata so another harness/API can audit the event without reconstructing stale process-tree state.
 - MCP/profile integration now has integration instructions, validation, audit preference listing, and route selection.
 - Connect Agent now has one-click Codex setup that writes `~/.codex/config.toml`, and MCP inventory scans Codex TOML alongside Claude Code JSON.
+- Known harness shell environment snapshots are now classified as a lower-severity `cred-013-harness` notice instead of the generic environment-credential search alert.
 - T3 Code and OpenCode are built-in harnesses with classifier rules, default profiles, MCP integration metadata, and audit-routing defaults.
 - Alert detail has `Ask Harness`, `Send for Audit`, and `Kill/End Process` actions. **Ask Harness** prompts the offending harness itself to justify/act, delivered to its own MCP session (sampling → notification) or a scoped clipboard prompt. **Send for Audit** (shown only for alarming behavior) routes to a different reviewer via the LLM triage preference list. Kill/End Process terminates the specific alert target PID after confirmation. See [`docs/oversight-model.md`](oversight-model.md).
 
@@ -29,7 +30,7 @@ dotnet build .\src\Foreman.App\Foreman.App.csproj -c Release
 
 Latest local result:
 
-- Tests: 141 passed, 0 failed.
+- Tests: 143 passed, 0 failed.
 - Release app build: succeeded, 2 warnings, 0 errors. The warnings are `NU1510` package-pruning notices for `System.Diagnostics.PerformanceCounter`.
 - Running instance after bounce: `Foreman.App` PID 53980.
 - Health endpoint: `http://localhost:54321/health` returned `status: ok`.
