@@ -9,6 +9,7 @@ Date: 2026-06-08
 - Every WPF window declares the Foreman icon for the titlebar, taskbar, and Alt-Tab surfaces.
 - The Dashboard has a branded header, session metric strip, quick navigation actions, polished row cards, and an empty state using the supplied icon.
 - README and the generated banner now lead with Foreman as safety oversight for AI coding agents, including the "one AI audits another" use case.
+- The README social banner uses compact check markers for the feature badges, avoiding the previous colored-block/text collision.
 - No-I/O hang alerts are medium/yellow warnings, not high/red alarms.
 - Hang alerts now attribute both the direct spawner process and the owning harness when they differ.
 - MCP alert payloads include spawner and owner metadata so another harness/API can audit the event without reconstructing stale process-tree state.
@@ -27,9 +28,9 @@ dotnet build .\src\Foreman.App\Foreman.App.csproj -c Release
 
 Latest local result:
 
-- Tests: 66 passed, 0 failed.
-- Release app build: succeeded, 0 warnings, 0 errors.
-- Running instance after bounce: `Foreman.App` PID 76076.
+- Tests: 134 passed, 0 failed.
+- Release app build: succeeded, 2 warnings, 0 errors. The warnings are `NU1510` package-pruning notices for `System.Diagnostics.PerformanceCounter`.
+- Running instance after bounce: `Foreman.App` PID 56204.
 - Health endpoint: `http://localhost:54321/health` returned `status: ok`.
 
 ## Push Status
