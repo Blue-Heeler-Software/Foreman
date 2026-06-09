@@ -432,12 +432,8 @@
                 Padding="12,8">
             <Grid>
                 <StackPanel Orientation="Horizontal">
-                    <Button Content="Process Monitor" Click="OpenProcessMonitorClick" Margin="0,0,8,0" />
-                    <Button Content="Harnesses" Click="OpenHarnessesClick" Margin="0,0,8,0" />
-                    <Button Content="Behavior Metrics" Click="OpenBehaviorMetricsClick" Margin="0,0,8,0" />
-                    <Button Content="Settings" Click="OpenSettingsClick" Margin="0,0,8,0" />
                     <Button Content="Connect agent" Click="ConnectAgentClick" Margin="0,0,8,0" />
-                    <Button Content="Event Log" Click="OpenLogClick" Style="{StaticResource PrimaryButton}" />
+                    <Button Content="Settings" Click="OpenSettingsClick" />
                 </StackPanel>
                 <TextBlock x:Name="FooterText"
                            HorizontalAlignment="Right" VerticalAlignment="Center"

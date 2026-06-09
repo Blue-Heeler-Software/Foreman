@@ -25,11 +25,7 @@ public partial class DashboardWindow : Window, IEventSink
     private readonly DispatcherTimer _refreshTimer;
     private readonly List<IDisposable> _hostedViews = [];
 
-    /// <summary>Wired by TrayController so "Open Full Log" can open the log window.</summary>
-    public Action? OpenLogRequested { get; set; }
-    public Action? OpenProcessMonitorRequested { get; set; }
-    public Action? OpenHarnessesRequested { get; set; }
-    public Action? OpenBehaviorMetricsRequested { get; set; }
+    /// <summary>Wired by TrayController — Settings and Connect-agent stay as separate dialogs.</summary>
     public Action? OpenSettingsRequested { get; set; }
 
     /// <summary>Live status providers for the strip/footer, wired by TrayController.</summary>
@@ -152,11 +148,6 @@ public partial class DashboardWindow : Window, IEventSink
             AlertDetailWindow.ShowFor(vm.OriginalEvent);
         }
     }
-
-    private void OpenLogClick(object sender, RoutedEventArgs e) => ShowTab(DashboardTab.Log);
-    private void OpenProcessMonitorClick(object sender, RoutedEventArgs e) => ShowTab(DashboardTab.Processes);
-    private void OpenHarnessesClick(object sender, RoutedEventArgs e) => ShowTab(DashboardTab.Harnesses);
-    private void OpenBehaviorMetricsClick(object sender, RoutedEventArgs e) => ShowTab(DashboardTab.Behavior);
 
     private void OpenSettingsClick(object sender, RoutedEventArgs e) =>
         OpenSettingsRequested?.Invoke();
