@@ -95,23 +95,37 @@ public sealed class McpServerHost : IAsyncDisposable
         _authToken.WriteSetupFile(_settings.McpPort);
         _app.Use(async (ctx, next) =>
         {
-            if (ctx.Request.Path.StartsWithSegments("/mcp"))
+            var isMcpRequest = ctx.Request.Path.StartsWithSegments("/mcp");
+            try
             {
-                var origin = ctx.Request.Headers.Origin.ToString();
-                if (!string.IsNullOrEmpty(origin) && !IsLoopbackOrigin(origin))
+                if (isMcpRequest)
                 {
-                    await Deny(ctx, StatusCodes.Status403Forbidden, "Cross-origin requests are not allowed.").ConfigureAwait(false);
-                    return;
+                    var origin = ctx.Request.Headers.Origin.ToString();
+                    if (!string.IsNullOrEmpty(origin) && !IsLoopbackOrigin(origin))
+                    {
+                        await Deny(ctx, StatusCodes.Status403Forbidden, "Cross-origin requests are not allowed.").ConfigureAwait(false);
+                        return;
+                    }
+                    if (!_authToken.Matches(ExtractToken(ctx.Request)))
+                    {
+                        ctx.Response.Headers.WWWAuthenticate = "Bearer";
+                        await Deny(ctx, StatusCodes.Status401Unauthorized,
+                            "A valid Foreman MCP token is required. See mcp-setup.txt in %LocalAppData%\\Foreman.").ConfigureAwait(false);
+                        return;
+                    }
                 }
-                if (!_authToken.Matches(ExtractToken(ctx.Request)))
-                {
-                    ctx.Response.Headers.WWWAuthenticate = "Bearer";
-                    await Deny(ctx, StatusCodes.Status401Unauthorized,
-                        "A valid Foreman MCP token is required. See mcp-setup.txt in %LocalAppData%\\Foreman.").ConfigureAwait(false);
-                    return;
-                }
+                await next().ConfigureAwait(false);
             }
-            await next().ConfigureAwait(false);
+            catch (System.Text.Json.JsonException ex) when (isMcpRequest && !ctx.Response.HasStarted)
+            {
+                LogMcpException(ex);
+                await Deny(ctx, StatusCodes.Status400BadRequest, "Invalid JSON-RPC request body.").ConfigureAwait(false);
+            }
+            catch (Exception ex) when (isMcpRequest)
+            {
+                LogMcpException(ex);
+                throw;
+            }
         });
 
         _app.MapMcp("/mcp");
@@ -137,6 +151,21 @@ public sealed class McpServerHost : IAsyncDisposable
     {
         ctx.Response.StatusCode = status;
         await ctx.Response.WriteAsJsonAsync(new { error = message }).ConfigureAwait(false);
+    }
+
+    private static void LogMcpException(Exception ex)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Foreman");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(
+                Path.Combine(dir, "mcp-errors.log"),
+                $"[{DateTimeOffset.UtcNow:O}] {ex}\n\n");
+        }
+        catch { /* best-effort diagnostics only */ }
     }
 
     public async ValueTask DisposeAsync()

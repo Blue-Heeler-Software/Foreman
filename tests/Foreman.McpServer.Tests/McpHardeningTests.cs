@@ -82,6 +82,12 @@ public sealed class McpHardeningTests
 
             // a second instance over the same directory reuses the persisted token
             Assert.Equal(token.Value, new McpAuthToken(dir).Value);
+
+            var rotated = Convert.ToBase64String(Guid.NewGuid().ToByteArray()) +
+                          Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+            File.WriteAllText(Path.Combine(dir, "mcp.token"), rotated);
+            Assert.True(token.Matches(rotated));
+            Assert.False(token.Matches(rotated + "x"));
         }
         finally
         {

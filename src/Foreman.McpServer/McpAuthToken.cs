@@ -69,9 +69,29 @@ public sealed class McpAuthToken
     public bool Matches(string? presented)
     {
         if (string.IsNullOrEmpty(presented)) return false;
+        return FixedEquals(presented, Value) || FixedEquals(presented, ReadPersistedToken());
+    }
+
+    private string? ReadPersistedToken()
+    {
+        try
+        {
+            if (!File.Exists(_tokenPath)) return null;
+            var token = File.ReadAllText(_tokenPath).Trim();
+            return token.Length >= 32 ? token : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool FixedEquals(string presented, string? expected)
+    {
+        if (string.IsNullOrEmpty(expected)) return false;
         var a = Encoding.UTF8.GetBytes(presented);
-        var b = Encoding.UTF8.GetBytes(Value);
-        return CryptographicOperations.FixedTimeEquals(a, b);
+        var b = Encoding.UTF8.GetBytes(expected);
+        return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
     }
 
     /// <summary>Writes a human-readable, ready-to-paste setup file next to the token.</summary>
