@@ -30,4 +30,55 @@ public sealed class McpInventoryMonitorTests
 
         Assert.False(McpInventoryMonitor.IsForemanSelfServer(entry, 54321));
     }
+
+    private static McpServerEntry Srv(string name, string source) =>
+        new("codex", name, "stdio", $"cmd-{name}", "global", source);
+
+    [Fact]
+    public void ClassifyNewServers_FirstRun_BaselinesEverythingSilently()
+    {
+        var keys = new HashSet<string>();
+        var sources = new HashSet<string>();
+
+        var newOnes = McpInventoryMonitor.ClassifyNewServers(
+            [Srv("a", "X"), Srv("b", "X")], keys, sources, firstRun: true);
+
+        Assert.Empty(newOnes);
+        Assert.Contains("X", sources);
+        Assert.Equal(2, keys.Count);
+    }
+
+    [Fact]
+    public void ClassifyNewServers_NewServerInKnownSource_Alerts()
+    {
+        var keys = new HashSet<string>();
+        var sources = new HashSet<string>();
+        McpInventoryMonitor.ClassifyNewServers([Srv("a", "X")], keys, sources, firstRun: true);
+
+        var newOnes = McpInventoryMonitor.ClassifyNewServers(
+            [Srv("a", "X"), Srv("b", "X")], keys, sources, firstRun: false);
+
+        Assert.Single(newOnes);
+        Assert.Equal("b", newOnes[0].Name);
+    }
+
+    [Fact]
+    public void ClassifyNewServers_FirstSightOfNewSource_IsSilent()
+    {
+        var keys = new HashSet<string>();
+        var sources = new HashSet<string>();
+        McpInventoryMonitor.ClassifyNewServers([Srv("a", "X")], keys, sources, firstRun: true);
+
+        // A brand-new source Y appears later, not on first run. Its servers should not flood as "new".
+        var newOnes = McpInventoryMonitor.ClassifyNewServers(
+            [Srv("a", "X"), Srv("c", "Y")], keys, sources, firstRun: false);
+
+        Assert.Empty(newOnes);
+        Assert.Contains("Y", sources);
+
+        var later = McpInventoryMonitor.ClassifyNewServers(
+            [Srv("a", "X"), Srv("c", "Y"), Srv("d", "Y")], keys, sources, firstRun: false);
+        Assert.Single(later);
+        Assert.Equal("d", later[0].Name);
+    }
 }
