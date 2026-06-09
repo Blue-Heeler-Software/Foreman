@@ -14,7 +14,7 @@ public sealed class McpInventoryMonitorTests
     {
         var entry = new McpServerEntry("codex", "foreman", "http", target, "global", "config.toml");
 
-        Assert.True(McpInventoryMonitor.IsForemanSelfServer(entry));
+        Assert.True(McpInventoryMonitor.IsForemanSelfServer(entry, 54321));
     }
 
     [Theory]
@@ -23,10 +23,11 @@ public sealed class McpInventoryMonitorTests
     [InlineData("foreman", "http", "https://example.com/mcp")]
     [InlineData("foreman", "http", "http://localhost:54321/other")]
     [InlineData("foreman", "http", "not-a-url")]
+    [InlineData("foreman", "http", "http://localhost:9999/mcp")]   // right name, WRONG port → not self
     public void NonForemanOrRemoteServers_AreNotSelfServer(string name, string transport, string target)
     {
         var entry = new McpServerEntry("codex", name, transport, target, "global", "config.toml");
 
-        Assert.False(McpInventoryMonitor.IsForemanSelfServer(entry));
+        Assert.False(McpInventoryMonitor.IsForemanSelfServer(entry, 54321));
     }
 }

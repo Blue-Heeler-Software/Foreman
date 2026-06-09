@@ -14,15 +14,17 @@ namespace Foreman.Monitor;
 public sealed class McpInventoryMonitor : IDisposable
 {
     private readonly EventBus _bus;
+    private readonly int _ownPort;
     private readonly string _seenFile;
     private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
     private Timer? _timer;
     private volatile IReadOnlyList<McpServerEntry> _current = [];
 
-    public McpInventoryMonitor(EventBus bus, string? baseDir = null)
+    public McpInventoryMonitor(EventBus bus, int ownPort, string? baseDir = null)
     {
         _bus = bus;
+        _ownPort = ownPort;
         var dir = baseDir ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman");
         _seenFile = Path.Combine(dir, "mcp-seen.json");
@@ -57,7 +59,7 @@ public sealed class McpInventoryMonitor : IDisposable
 
             foreach (var entry in newOnes)
             {
-                if (IsForemanSelfServer(entry))
+                if (IsForemanSelfServer(entry, _ownPort))
                 {
                     _bus.Publish(new InfoEvent(
                         DateTimeOffset.UtcNow,
@@ -75,7 +77,13 @@ public sealed class McpInventoryMonitor : IDisposable
         }
     }
 
-    public static bool IsForemanSelfServer(McpServerEntry entry)
+    /// <summary>
+    /// True only for Foreman's OWN local MCP endpoint — name "foreman", http/sse, loopback, the
+    /// configured port, path "/mcp". Pinning the port (mirrors McpToolScanMonitor.IsScannableTarget)
+    /// narrows the window where a config-writing attacker could name a server "foreman" on some other
+    /// loopback port to demote the supply-chain alert to a silent Info.
+    /// </summary>
+    public static bool IsForemanSelfServer(McpServerEntry entry, int ownPort)
     {
         if (!string.Equals(entry.Name, "foreman", StringComparison.OrdinalIgnoreCase))
             return false;
@@ -85,6 +93,8 @@ public sealed class McpInventoryMonitor : IDisposable
         if (!Uri.TryCreate(entry.Target, UriKind.Absolute, out var uri))
             return false;
         if (!uri.IsLoopback)
+            return false;
+        if (uri.Port != ownPort)
             return false;
 
         var path = uri.AbsolutePath.TrimEnd('/');

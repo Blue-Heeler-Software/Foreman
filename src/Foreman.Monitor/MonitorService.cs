@@ -24,7 +24,7 @@ public sealed class MonitorService : IDisposable
 
     public MonitorService(ForemanSettings settings, EventBus bus)
     {
-        McpInventory = new McpInventoryMonitor(bus);
+        McpInventory = new McpInventoryMonitor(bus, settings.McpPort);
         Tree = new ProcessTreeTracker();
         _profileStore = new ProfileStore(settings.ProfilesDirectory);
         _profileStore.Initialize();
