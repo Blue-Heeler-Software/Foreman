@@ -216,4 +216,4 @@ GPL-3.0-or-later. See [LICENSE](LICENSE). Contributions are accepted under the s
 
 ## Support
 
-Foreman is free and GPL. If it helped you keep agent work safer, saved tokens or trimmed a power bill and you want to chip in, there's a Ko-fi: <https://ko-fi.com/axl333>.
+Foreman is free and GPL. If it helped you keep agent work safer, saved tokens or trimmed a power bill and you want to chip in, there's a Ko-fi: <https://ko-fi.com/aXL333>
