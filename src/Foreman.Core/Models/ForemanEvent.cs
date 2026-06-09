@@ -1,7 +1,17 @@
 using Foreman.Core.Behavior;
+using System.Text.Json.Serialization;
 
 namespace Foreman.Core.Models;
 
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(CommandAlertEvent),       "command")]
+[JsonDerivedType(typeof(HangDetectedEvent),       "hang")]
+[JsonDerivedType(typeof(OrphanDetectedEvent),     "orphan")]
+[JsonDerivedType(typeof(PermissionViolationEvent),"permission")]
+[JsonDerivedType(typeof(NonzeroExitEvent),        "exit")]
+[JsonDerivedType(typeof(InfoEvent),               "info")]
+[JsonDerivedType(typeof(MonitoringNoticeEvent),   "monitoring")]
+[JsonDerivedType(typeof(EscalationEvent),         "escalation")]
 public abstract record ForemanEvent(
     DateTimeOffset Timestamp,
     ForemanSeverity Severity,

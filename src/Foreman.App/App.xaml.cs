@@ -37,6 +37,17 @@ public partial class App : Application
 
         PatternLibrary.Instance.Initialize();
 
+        // Durable event log: persist every published event to disk (JSONL) so the Event Log tab
+        // survives restarts. Subscribe before anything publishes. The Log VIEW merges these
+        // prior-session events with the in-memory session history; EventBus history stays
+        // session-scoped so reloading the log never resurrects old alerts as "active".
+        if (settings.EventLogPersist)
+        {
+            var eventLog = new EventLogStore();
+            EventBus.Instance.Subscribe(e => eventLog.Append(e));
+            LogWindow.LoadPersisted = () => eventLog.Load();
+        }
+
         _tray = new TrayController(settings, EventBus.Instance);
         _tray.Initialize();
 

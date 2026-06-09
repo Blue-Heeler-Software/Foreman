@@ -15,6 +15,10 @@ namespace Foreman.App.Windows;
 public partial class LogWindow : UserControl, IEventSink, IDisposable
 {
     private const int MaxEvents = 5000;
+
+    /// <summary>Wired by App — loads prior-session events from the on-disk event log (null = persistence off).</summary>
+    public static Func<IReadOnlyList<ForemanEvent>>? LoadPersisted { get; set; }
+
     private readonly ObservableCollection<EventViewModel> _events = [];
     private readonly ICollectionView _view;
     private bool _autoScroll = true;
@@ -30,8 +34,17 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         _view.Filter = FilterPredicate;
         EventList.ItemsSource = _view;
 
-        // hydrate with events that fired before this window was opened
-        foreach (var evt in EventBus.Instance.GetHistory())
+        // Hydrate: merge persisted (prior-session) events with this session's in-memory history,
+        // de-duped by Id, oldest first, capped at MaxEvents.
+        var persisted = LoadPersisted?.Invoke() ?? [];
+        var seen = new HashSet<string>();
+        var merged = persisted.Concat(EventBus.Instance.GetHistory())
+            .Where(e => seen.Add(e.Id))
+            .OrderBy(e => e.Timestamp)
+            .ToList();
+        if (merged.Count > MaxEvents)
+            merged = merged.GetRange(merged.Count - MaxEvents, MaxEvents);
+        foreach (var evt in merged)
             _events.Add(EventViewModel.FromEvent(evt));
 
         // subscribe for future events

@@ -26,6 +26,9 @@ public sealed class ForemanSettings
     public bool NotifyOnCriticalCommand { get; set; } = true;
     public bool MonitorAllProcesses { get; set; } = false; // false = harness children only
 
+    /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
+    public bool EventLogPersist { get; set; } = true;
+
     /// <summary>
     /// Opt-in: launch an elevated, capture-only ETW sidecar so the Process Monitor can show
     /// per-process Network throughput. Off by default — only the sidecar runs elevated; the main
