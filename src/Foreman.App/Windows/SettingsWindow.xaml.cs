@@ -22,6 +22,10 @@ public partial class SettingsWindow : Window
 
     private void Populate()
     {
+        // General — the HKCU Run entry is the source of truth, not a settings field,
+        // so the checkbox always reflects what Windows will actually do at sign-in.
+        StartWithWindowsCheck.IsChecked = StartupManager.IsEnabled();
+
         // MCP
         McpPortBox.Text    = _settings.McpPort.ToString();
 
@@ -116,6 +120,19 @@ public partial class SettingsWindow : Window
         _settings.EmergencyRuleIds           = emergencyRules;
 
         SettingsStore.Save(_settings);
+
+        // ── Start with Windows (registry, not settings JSON) ─────────────────
+        var startupWanted = StartWithWindowsCheck.IsChecked == true;
+        try
+        {
+            if (startupWanted != StartupManager.IsEnabled())
+                StartupManager.SetEnabled(startupWanted);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't update the Windows startup entry: {ex.Message}", "Foreman",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
 
         if (portChanged)
             MessageBox.Show("Port change takes effect after restart.", "Foreman",

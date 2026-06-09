@@ -35,6 +35,10 @@ public partial class App : Application
         var settings = SettingsStore.Load();
         _cts = new CancellationTokenSource();
 
+        // If "start with Windows" is on but the install moved (registered exe gone),
+        // re-point the HKCU Run entry at the exe that's actually running. Best-effort.
+        StartupManager.RepairIfNeeded();
+
         PatternLibrary.Instance.Initialize();
 
         // Durable event log: persist every published event to disk (JSONL) so the Event Log tab

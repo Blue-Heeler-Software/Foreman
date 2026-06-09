@@ -95,6 +95,10 @@ dotnet publish .\src\Foreman.App\Foreman.App.csproj `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
+### Start With Windows
+
+Optional: in **Settings → General**, tick **Start Foreman when you sign in to Windows**. This adds a per-user `HKCU` Run entry (no admin rights) so the tray app, monitoring, and the MCP server are up before your first agent session. Foreman self-heals the entry if you later move the install.
+
 ### Connect An Agent
 
 Foreman's MCP server listens on `http://localhost:54321/mcp` while the tray app is running. `/mcp` requires a per-install bearer token. `/health` is open for liveness checks.
