@@ -117,7 +117,8 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(child);
 
         var hits = CaptureHangsFor(child.Pid);
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        // Cooldown 0 so re-arm is immediate (this test is about the epoch re-arm, not the rate-limit).
+        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings { HangRealertCooldownMinutes = 0 }, tree);
 
         sut.Check(child);   // first hang episode → alert #1
 
@@ -128,6 +129,33 @@ public sealed class HangDetectorTests
         sut.Check(child);   // second, distinct hang episode → alert #2
 
         Assert.Equal(2, hits.Count);
+    }
+
+    [Fact]
+    public void BurstyChild_ReHangingWithinCooldown_DoesNotReAlert()
+    {
+        // A child that wakes briefly then idles past the threshold again must NOT re-alert while the
+        // re-alert cooldown is in effect — this is the fix for "breeding" no-I/O alerts.
+        var tree    = new ProcessTreeTracker();
+        var harness = Idle(900_901, 900_900, "node.exe", isHarness: true, harnessType: "claude-code");
+        var child   = Idle(900_902, harness.Pid, "tsserver.exe");
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(child);
+
+        var hits = CaptureHangsFor(child.Pid);
+        // Default 60-min cooldown.
+        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+
+        sut.Check(child);                                   // first idle episode → alert #1
+
+        for (var i = 0; i < 5; i++)                         // five rapid wake/re-idle cycles
+        {
+            child.LastIoChangeTime = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(15);
+            child.State = ProcessState.Active;
+            sut.Check(child);                               // within cooldown → suppressed
+        }
+
+        Assert.Single(hits);   // still only the one alert, not six
     }
 
     [Fact]

@@ -5,6 +5,14 @@ public sealed class ForemanSettings
     public int McpPort { get; set; } = 54321;
     public int HangThresholdMinutes { get; set; } = 10;
     public int HookJamThresholdMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// After a hang alert for a process, suppress further hang alerts for that same PID for this many
+    /// minutes — even if its I/O briefly resumes and it idles again. Stops a bursty-I/O child (language
+    /// server, file watcher, MCP helper) from re-firing a "no I/O" alert on every idle stretch. 0 = no
+    /// cooldown (re-arm immediately on each new silent episode).
+    /// </summary>
+    public int HangRealertCooldownMinutes { get; set; } = 60;
     public int IoPollerIntervalSeconds { get; set; } = 30;
     public int AlertSuppressWindowMinutes { get; set; } = 5;
     public bool NotifyOnHang { get; set; } = true;

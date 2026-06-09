@@ -28,6 +28,11 @@ public sealed class HangDetector
     // We only re-alert if this advances (i.e. I/O resumed and the process hung anew).
     private readonly ConcurrentDictionary<int, DateTimeOffset> _alertedEpoch = new();
 
+    // key: pid → wall-clock time we last alerted. A bursty child that keeps waking briefly then
+    // idling past the threshold would otherwise produce a fresh "no I/O" alert every cycle; the
+    // cooldown (HangRealertCooldownMinutes) rate-limits re-alerts per PID so they can't breed.
+    private readonly ConcurrentDictionary<int, DateTimeOffset> _lastAlertAt = new();
+
     // Processes that legitimately sit idle or are part of Foreman's own monitoring stack.
     // A no-I/O alert on these is noise rather than an actionable stalled harness child.
     private static readonly HashSet<string> _ignoredHangProcessNames = new(StringComparer.OrdinalIgnoreCase)
@@ -77,7 +82,21 @@ public sealed class HangDetector
         if (_alertedEpoch.TryGetValue(record.Pid, out var epoch) && epoch == record.LastIoChangeTime)
             return;
 
+        // ── Re-alert cooldown ────────────────────────────────────────────────────
+        // This is a NEW silent episode (I/O resumed since our last alert, then idled again). Without
+        // a cooldown, a process with bursty I/O re-alerts on every idle stretch — the "breeding" noise.
+        // Mark the episode seen so it won't re-trigger the instant the cooldown lapses, then stay quiet.
+        var cooldown = TimeSpan.FromMinutes(_settings.HangRealertCooldownMinutes);
+        if (cooldown > TimeSpan.Zero
+            && _lastAlertAt.TryGetValue(record.Pid, out var last)
+            && DateTimeOffset.UtcNow - last < cooldown)
+        {
+            _alertedEpoch[record.Pid] = record.LastIoChangeTime;
+            return;
+        }
+
         _alertedEpoch[record.Pid] = record.LastIoChangeTime;
+        _lastAlertAt[record.Pid]  = DateTimeOffset.UtcNow;
         record.State = ProcessState.Hanging;
 
         // If we have an owning harness, name it in the message and event so the user
@@ -117,7 +136,11 @@ public sealed class HangDetector
     }
 
     /// <summary>Drops the per-process alert state when a process exits (called by the poller/watcher).</summary>
-    public void Forget(int pid) => _alertedEpoch.TryRemove(pid, out _);
+    public void Forget(int pid)
+    {
+        _alertedEpoch.TryRemove(pid, out _);
+        _lastAlertAt.TryRemove(pid, out _);
+    }
 
     private static string DescribeOwner(string? harnessType, string? processName, int pid)
     {
