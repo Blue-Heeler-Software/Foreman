@@ -3,8 +3,9 @@ using Foreman.Core.Heuristics;
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
 using Foreman.Core.Settings;
-using System.Management;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Management;
 
 namespace Foreman.Monitor.Wmi;
 
@@ -206,6 +207,9 @@ public sealed class WmiProcessWatcher : IDisposable
         if (string.IsNullOrEmpty(dmtf))
             return DateTimeOffset.UtcNow;
 
+        if (TryParseDmtfDateTimeOffset(dmtf, out var parsed))
+            return parsed;
+
         try
         {
             var local = ManagementDateTimeConverter.ToDateTime(dmtf);
@@ -218,6 +222,42 @@ public sealed class WmiProcessWatcher : IDisposable
             return DateTimeOffset.UtcNow;
         }
     }
+
+    private static bool TryParseDmtfDateTimeOffset(string dmtf, out DateTimeOffset value)
+    {
+        value = default;
+        if (dmtf.Length < 25 || dmtf[14] != '.')
+            return false;
+
+        var sign = dmtf[21];
+        if (sign is not ('+' or '-'))
+            return false;
+
+        try
+        {
+            var year = ParseInt(dmtf, 0, 4);
+            var month = ParseInt(dmtf, 4, 2);
+            var day = ParseInt(dmtf, 6, 2);
+            var hour = ParseInt(dmtf, 8, 2);
+            var minute = ParseInt(dmtf, 10, 2);
+            var second = ParseInt(dmtf, 12, 2);
+            var microsecond = ParseInt(dmtf, 15, 6);
+            var offsetMinutes = ParseInt(dmtf, 22, 3);
+            if (sign == '-') offsetMinutes = -offsetMinutes;
+
+            value = new DateTimeOffset(
+                year, month, day, hour, minute, second,
+                TimeSpan.FromMinutes(offsetMinutes)).AddTicks(microsecond * 10L);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int ParseInt(string value, int start, int length) =>
+        int.Parse(value.AsSpan(start, length), NumberStyles.None, CultureInfo.InvariantCulture);
 
     private void ApplyDirectProfile(ProcessRecord record)
     {
