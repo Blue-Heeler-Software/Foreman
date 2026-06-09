@@ -56,12 +56,39 @@ public sealed class McpInventoryMonitor : IDisposable
                 SaveSeen();
 
             foreach (var entry in newOnes)
+            {
+                if (IsForemanSelfServer(entry))
+                {
+                    _bus.Publish(new InfoEvent(
+                        DateTimeOffset.UtcNow,
+                        "Foreman.McpInventory",
+                        $"Foreman MCP connector registered for {entry.Harness}: {Trunc(entry.Target, 100)}"));
+                    continue;
+                }
+
                 _bus.Publish(new MonitoringNoticeEvent(
                     DateTimeOffset.UtcNow,
                     ForemanSeverity.Medium,
                     "Foreman.McpInventory",
                     $"New MCP server '{entry.Name}' ({entry.Transport}) configured for {entry.Harness}: {Trunc(entry.Target, 100)}"));
+            }
         }
+    }
+
+    public static bool IsForemanSelfServer(McpServerEntry entry)
+    {
+        if (!string.Equals(entry.Name, "foreman", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.Equals(entry.Transport, "http", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(entry.Transport, "sse", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!Uri.TryCreate(entry.Target, UriKind.Absolute, out var uri))
+            return false;
+        if (!uri.IsLoopback)
+            return false;
+
+        var path = uri.AbsolutePath.TrimEnd('/');
+        return string.Equals(path, "/mcp", StringComparison.OrdinalIgnoreCase);
     }
 
     private void LoadSeen()

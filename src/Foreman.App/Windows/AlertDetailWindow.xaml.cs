@@ -65,6 +65,10 @@ public partial class AlertDetailWindow : Window
         // "Send for Audit" is only meaningful for alarming behavior (not hangs/mess/notices).
         SendForAuditButton.Visibility =
             AuditPolicy.QualifiesForAudit(evt) ? Visibility.Visible : Visibility.Collapsed;
+        AskHarnessButton.Visibility =
+            string.IsNullOrWhiteSpace(ResolveTargetHarnessId()) ? Visibility.Collapsed : Visibility.Visible;
+        KillProcessButton.Visibility =
+            ResolveTargetPid() is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Opens an AlertDetailWindow for the given event and forces it to the foreground.</summary>
@@ -902,7 +906,18 @@ public sealed class AlertDetailVm
             default:
                 EventTypeLabel = "System Event";
                 WhyDangerous = evt.Message;
-                RecommendedAction = "No action required for informational events.";
+                RecommendedAction = evt switch
+                {
+                    MonitoringNoticeEvent when evt.Source.Equals("Foreman.McpInventory", StringComparison.OrdinalIgnoreCase) =>
+                        "1. Confirm you expected this MCP server to be added to the harness configuration.\n" +
+                        "2. If unexpected, remove it from the harness MCP config and review recent agent activity.\n" +
+                        "3. Foreman's own local MCP connector is treated as an informational event and should not appear here.",
+                    MonitoringNoticeEvent =>
+                        "1. Review the notice and decide whether it matches an expected Foreman monitoring action.\n" +
+                        "2. If unexpected, open the event log for nearby activity before acknowledging it.",
+                    _ =>
+                        "No action required for informational events.",
+                };
                 break;
         }
     }

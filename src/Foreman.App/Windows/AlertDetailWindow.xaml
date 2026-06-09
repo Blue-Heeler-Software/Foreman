@@ -160,7 +160,7 @@
         <!-- ── Buttons ───────────────────────────────────────────────────── -->
         <Grid Grid.Row="12">
             <!-- Kill is isolated on the far left, away from Close/Acknowledge, so it can't be hit by accident. -->
-            <Button Content="Kill/End Process" Click="KillProcessClick" HorizontalAlignment="Left"
+            <Button x:Name="KillProcessButton" Content="Kill/End Process" Click="KillProcessClick" HorizontalAlignment="Left"
                     Background="#FF34191A" BorderBrush="#FF8A3A3A"
                     Foreground="#FFFFDAD8" MinWidth="132"
                     ToolTip="Terminate the process this alert is about (after confirmation)." />
