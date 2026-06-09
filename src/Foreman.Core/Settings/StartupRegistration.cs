@@ -11,7 +11,10 @@ namespace Foreman.Core.Settings;
 public static class StartupRegistration
 {
     /// <summary>Value name under HKCU\Software\Microsoft\Windows\CurrentVersion\Run.</summary>
-    public const string RunValueName = "Foreman";
+    public const string RunValueName = "Foreman Agent Safety";
+
+    /// <summary>Older public startup value name, kept so upgrades preserve the user's setting.</summary>
+    public const string LegacyRunValueName = "Foreman";
 
     /// <summary>Relative registry path of the per-user Run key.</summary>
     public const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";

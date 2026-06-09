@@ -1,11 +1,12 @@
-; Inno Setup script for Foreman -- per-user, no-admin installer.
+; Inno Setup script for Foreman Agent Safety -- per-user, no-admin installer.
 ; Build locally:   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.1.0 installer\foreman.iss
 ; CI passes the version via /DMyAppVersion=... (see .github/workflows/release.yml).
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
 #endif
-#define MyAppName "Foreman"
+#define MyAppName "Foreman Agent Safety"
+#define MyAppInstallDirName "Foreman"
 #define MyAppPublisher "aXL333"
 #define MyAppURL "https://github.com/aXL333/Foreman"
 #define MyAppExeName "Foreman.exe"
@@ -21,10 +22,10 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
 ; Install per-user so no UAC prompt is required.
 PrivilegesRequired=lowest
-DefaultDirName={localappdata}\{#MyAppName}
+DefaultDirName={localappdata}\{#MyAppInstallDirName}
 DisableProgramGroupPage=yes
 OutputDir=Output
-OutputBaseFilename=Foreman-Setup-{#MyAppVersion}
+OutputBaseFilename=Foreman-Agent-Safety-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -36,7 +37,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "startup";     Description: "Start Foreman automatically when I sign in"; GroupDescription: "Startup:";   Flags: checkedonce
+Name: "startup";     Description: "Start Foreman Agent Safety automatically when I sign in"; GroupDescription: "Startup:";   Flags: checkedonce
 Name: "desktopicon"; Description: "Create a desktop shortcut";                  GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
@@ -44,14 +45,14 @@ Name: "desktopicon"; Description: "Create a desktop shortcut";                  
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Foreman";   Filename: "{app}\{#MyAppExeName}"
-Name: "{userdesktop}\Foreman";    Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}";   Filename: "{app}\{#MyAppExeName}"
+Name: "{userdesktop}\{#MyAppName}";    Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
 ; Optional run-at-login entry under HKCU (no admin needed); removed on uninstall.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
-    ValueName: "Foreman"; ValueData: """{app}\{#MyAppExeName}"""; \
+    ValueName: "Foreman Agent Safety"; ValueData: """{app}\{#MyAppExeName}"""; \
     Flags: uninsdeletevalue; Tasks: startup
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Foreman now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Foreman Agent Safety now"; Flags: nowait postinstall skipifsilent

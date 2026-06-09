@@ -35,7 +35,7 @@ public partial class ConnectAgentWindow : Window
             ClaudeMcpConnector.BuildServerEntrySnippet(_port, _token);
         TokenNote.Text =
             "Your token lives at %LocalAppData%\\Foreman\\mcp.token. Keep it private — anything holding it " +
-            "can call Foreman's MCP tools. /health is open; /mcp requires the token.";
+            "can call Foreman Agent Safety's MCP tools. /health is open; /mcp requires the token.";
         RefreshConnected();
     }
 
@@ -43,7 +43,7 @@ public partial class ConnectAgentWindow : Window
     {
         var clients = _getClients?.Invoke() ?? [];
         ConnectedText.Text = clients.Count == 0
-            ? "No agents are connected to Foreman yet. Connect one below, then restart it."
+            ? "No agents are connected to Foreman Agent Safety yet. Connect one below, then restart it."
             : "Connected now:\n" + string.Join("\n", clients.Select(c =>
                 $"  • {c.Name}{(string.IsNullOrWhiteSpace(c.Version) ? "" : $" v{c.Version}")} — " +
                 $"sampling: {(c.Sampling ? "yes" : "no")}"));
@@ -56,12 +56,12 @@ public partial class ConnectAgentWindow : Window
             MessageBox.Show(
                 $"Couldn't update Claude Code's config automatically:\n\n{r.Message}\n\n" +
                 "Use the copy-paste JSON below instead.",
-                "Foreman — Connect Claude Code", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman Agent Safety — Connect Claude Code", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
             MessageBox.Show(
                 $"{r.Message}\n\nRestart Claude Code to connect." +
                 (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
-                "Foreman — Connect Claude Code", MessageBoxButton.OK, MessageBoxImage.Information);
+                "Foreman Agent Safety — Connect Claude Code", MessageBoxButton.OK, MessageBoxImage.Information);
         RefreshConnected();
     }
 
@@ -72,12 +72,12 @@ public partial class ConnectAgentWindow : Window
             MessageBox.Show(
                 $"Couldn't update Codex's config automatically:\n\n{r.Message}\n\n" +
                 "Use the copy-paste TOML below instead.",
-                "Foreman — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman Agent Safety — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
             MessageBox.Show(
-                $"{r.Message}\n\nRestart Codex to connect and load the Foreman instructions." +
+                $"{r.Message}\n\nRestart Codex to connect and load the Foreman Agent Safety instructions." +
                 (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
-                "Foreman — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
+                "Foreman Agent Safety — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
         RefreshConnected();
     }
 

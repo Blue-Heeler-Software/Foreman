@@ -46,7 +46,7 @@ public sealed class CodexMcpConnectorTests : IDisposable
         Assert.True(CodexMcpConnector.IsConfigured(54321, _cfg));
 
         var agents = File.ReadAllText(_agents);
-        Assert.Contains("Foreman MCP Safety Monitor", agents);
+        Assert.Contains("Foreman Agent Safety MCP Monitor", agents);
         Assert.Contains("ListAskHarnessRequests(harnessId: \"codex\")", agents);
         Assert.Contains("ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: \"codex\")", agents);
     }

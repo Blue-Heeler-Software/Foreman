@@ -37,7 +37,7 @@ public static class HarnessIntegrationRegistry
             "codex-default",
             [],
             [],
-            "Add Foreman's HTTP MCP endpoint to ~/.codex/config.toml and the Foreman MCP Safety Monitor section to ~/.codex/AGENTS.md, or use Foreman's Connect Agent window to write both automatically.",
+            "Add Foreman Agent Safety's HTTP MCP endpoint to ~/.codex/config.toml and the Foreman Agent Safety MCP Monitor section to ~/.codex/AGENTS.md, or use Foreman Agent Safety's Connect Agent window to write both automatically.",
             """
             [mcp_servers.foreman]
             url = "http://localhost:{port}/mcp"
@@ -50,7 +50,7 @@ public static class HarnessIntegrationRegistry
             "t3-code-default",
             [],
             [],
-            "Add Foreman's MCP endpoint to the underlying agent configured in T3 Code; monitor T3 Code itself as the control plane.",
+            "Add Foreman Agent Safety's MCP endpoint to the underlying agent configured in T3 Code; monitor T3 Code itself as the control plane.",
             """
             {
               "mcpServers": {
@@ -68,7 +68,7 @@ public static class HarnessIntegrationRegistry
             "opencode-default",
             [@".opencode\hooks\", ".opencode/hooks/"],
             [],
-            "Add Foreman's HTTP MCP endpoint to opencode.json under the mcp object.",
+            "Add Foreman Agent Safety's HTTP MCP endpoint to opencode.json under the mcp object.",
             """
             {
               "$schema": "https://opencode.ai/config.json",

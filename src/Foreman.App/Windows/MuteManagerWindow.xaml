@@ -1,7 +1,7 @@
 <Window x:Class="Foreman.App.Windows.MuteManagerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Muted alerts — Foreman"
+        Title="Muted alerts — Foreman Agent Safety"
         Width="560" Height="460"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BackgroundBrush}"

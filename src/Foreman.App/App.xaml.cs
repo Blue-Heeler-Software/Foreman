@@ -25,7 +25,7 @@ public partial class App : Application
     {
         if (!_singleInstance.WaitOne(0, false))
         {
-            MessageBox.Show("Foreman is already running.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("Foreman Agent Safety is already running.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
         }

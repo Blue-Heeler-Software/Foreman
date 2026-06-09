@@ -26,16 +26,16 @@ public static class FirstRunDetector
 
         var choice = MessageBox.Show(
             $"""
-            Welcome to Foreman - a local safety monitor for AI coding agents.
+            Welcome to Foreman Agent Safety - a local safety monitor for AI coding agents.
 
-            Foreman's MCP server is running on port {mcpPort}.
+            Foreman Agent Safety's MCP server is running on port {mcpPort}.
 
             Open the Connect Agent guide now?
 
             It can configure Claude Code and Codex automatically, and it shows
             copy-paste settings for other MCP-capable agents.
             """,
-            "Foreman - First Run", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            "Foreman Agent Safety - First Run", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
         if (choice == MessageBoxResult.Yes)
         {
@@ -46,7 +46,7 @@ public static class FirstRunDetector
 
         MessageBox.Show(
             $"""
-            You can connect an agent later from the Foreman tray menu or dashboard.
+            You can connect an agent later from the Foreman Agent Safety tray menu or dashboard.
 
             MCP URL:
               http://localhost:{mcpPort}/mcp
@@ -54,6 +54,6 @@ public static class FirstRunDetector
             The /mcp endpoint needs the bearer token in:
               %LocalAppData%\Foreman\mcp.token
             """,
-            "Foreman - Connect Agent", MessageBoxButton.OK, MessageBoxImage.Information);
+            "Foreman Agent Safety - Connect Agent", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 }

@@ -131,7 +131,7 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
             MessageBox.Show(
                 "No SHA-256 yet for this process's executable — it may still be hashing in the background, " +
                 "or the file path is empty/unreadable at this privilege level.",
-                "Foreman — VirusTotal", MessageBoxButton.OK, MessageBoxImage.Information);
+                "Foreman Agent Safety — VirusTotal", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void CopyHashClick(object sender, RoutedEventArgs e)
@@ -156,7 +156,7 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception ex)
         {
-            MessageBox.Show($"Could not open the browser.\n\n{ex.Message}", "Foreman",
+            MessageBox.Show($"Could not open the browser.\n\n{ex.Message}", "Foreman Agent Safety",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }

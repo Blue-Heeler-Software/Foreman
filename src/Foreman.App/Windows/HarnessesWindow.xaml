@@ -44,7 +44,7 @@
             <TextBlock Text="HARNESS MONITORING" FontSize="12" FontWeight="Bold"
                        Foreground="{StaticResource AccentBrush}" />
             <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}" FontSize="11" Margin="0,4,0,0"
-                       Text="Uncheck any harness to stop monitoring it. Add custom executables below — Foreman will treat them the same as built-in harnesses." />
+                       Text="Uncheck any harness to stop monitoring it. Add custom executables below — Foreman Agent Safety will treat them the same as built-in harnesses." />
         </StackPanel>
 
         <!-- Column headers -->

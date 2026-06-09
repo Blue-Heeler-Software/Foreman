@@ -99,10 +99,10 @@ public sealed class McpAuthToken
     {
         var snippet =
 $$"""
-Foreman MCP - connection setup
-==============================
+Foreman Agent Safety MCP - connection setup
+===========================================
 
-Foreman's MCP server requires a bearer token. It listens on:
+Foreman Agent Safety's MCP server requires a bearer token. It listens on:
 
     http://localhost:{{port}}/mcp        (tools - requires the token)
     http://localhost:{{port}}/health     (liveness - open)
@@ -130,7 +130,7 @@ url = "http://localhost:{{port}}/mcp"
 http_headers = { Authorization = "Bearer <TOKEN>" }
 enabled = true
 
-Keep mcp.token private - anyone who can read it can call Foreman's MCP tools.
+Keep mcp.token private - anyone who can read it can call Foreman Agent Safety's MCP tools.
 Delete mcp.token to force a new token (you must then update every client config).
 """;
         try { File.WriteAllText(_setupPath, snippet); }

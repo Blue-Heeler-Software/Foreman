@@ -72,7 +72,7 @@ public sealed class TrayController : IEventSink, IDisposable
         _tray = new TaskbarIcon
         {
             Icon = TrayIconSet.Green,
-            ToolTipText = "Foreman — All clear",
+            ToolTipText = "Foreman Agent Safety — All clear",
             ContextMenu = BuildMenu(),
         };
 
@@ -174,9 +174,9 @@ public sealed class TrayController : IEventSink, IDisposable
         {
             var (title, icon) = esc.NewLevel switch
             {
-                EscalationLevel.Emergency => ("Foreman — EMERGENCY", H.NotifyIcon.Core.NotificationIcon.Error),
-                EscalationLevel.Alarm     => ("Foreman — ALARM",     H.NotifyIcon.Core.NotificationIcon.Error),
-                _                         => ("Foreman — Alert",     H.NotifyIcon.Core.NotificationIcon.Warning),
+                EscalationLevel.Emergency => ("Foreman Agent Safety — EMERGENCY", H.NotifyIcon.Core.NotificationIcon.Error),
+                EscalationLevel.Alarm     => ("Foreman Agent Safety — ALARM",     H.NotifyIcon.Core.NotificationIcon.Error),
+                _                         => ("Foreman Agent Safety — Alert",     H.NotifyIcon.Core.NotificationIcon.Warning),
             };
             _lastBalloonEvent = esc;
             _tray.ShowNotification(title,
@@ -188,14 +188,14 @@ public sealed class TrayController : IEventSink, IDisposable
         if (evt.Severity >= ForemanSeverity.High)
         {
             _lastBalloonEvent = evt;
-            _tray.ShowNotification("Foreman — Critical Alert",
+            _tray.ShowNotification("Foreman Agent Safety — Critical Alert",
                 evt.Message + "\n(Click for details)",
                 H.NotifyIcon.Core.NotificationIcon.Error);
         }
         else if (evt.Severity == ForemanSeverity.Medium)
         {
             _lastBalloonEvent = evt;
-            _tray.ShowNotification("Foreman — Warning",
+            _tray.ShowNotification("Foreman Agent Safety — Warning",
                 evt.Message + "\n(Click for details)",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
         }
@@ -216,7 +216,7 @@ public sealed class TrayController : IEventSink, IDisposable
         var escalationStr = _highestEscalation > EscalationLevel.Watch
             ? $" · {_highestEscalation.ToString().ToUpperInvariant()}"
             : "";
-        _tray.ToolTipText = $"Foreman — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}";
+        _tray.ToolTipText = $"Foreman Agent Safety — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}";
         _tray.ContextMenu = BuildMenu();
     }
 
@@ -330,7 +330,7 @@ public sealed class TrayController : IEventSink, IDisposable
 
         var levelStr = _highestEscalation > EscalationLevel.Watch
             ? $"  [{_highestEscalation.ToString().ToUpperInvariant()}]" : "";
-        AddMenuItem(menu, $"Foreman v{GetVersion()}  ●  {_activeAlerts} alert(s){levelStr}", null, enabled: false);
+        AddMenuItem(menu, $"Foreman Agent Safety v{GetVersion()}  ●  {_activeAlerts} alert(s){levelStr}", null, enabled: false);
         menu.Items.Add(new Separator());
         AddMenuItem(menu, "Dashboard", () => OpenDashboardWindow());
         AddMenuItem(menu, "Open Log", () => OpenLogWindow());
@@ -362,8 +362,8 @@ public sealed class TrayController : IEventSink, IDisposable
         if (string.IsNullOrWhiteSpace(token))
         {
             MessageBox.Show(
-                "Foreman's MCP token isn't ready yet — give the server a moment to start, then try again.",
-                "Foreman — Connect agent", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman Agent Safety's MCP token isn't ready yet — give the server a moment to start, then try again.",
+                "Foreman Agent Safety — Connect agent", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 

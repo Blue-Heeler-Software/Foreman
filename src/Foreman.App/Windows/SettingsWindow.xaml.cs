@@ -57,36 +57,36 @@ public partial class SettingsWindow : Window
     {
         // ── MCP ─────────────────────────────────────────────────────────────
         if (!int.TryParse(McpPortBox.Text, out var port) || port is < 1024 or > 65535)
-        { MessageBox.Show("Port must be 1024–65535.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Port must be 1024–65535.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         // ── Process thresholds ───────────────────────────────────────────────
         if (!int.TryParse(HangBox.Text, out var hang) || hang < 1)
-        { MessageBox.Show("Hang threshold must be ≥ 1 minute.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Hang threshold must be ≥ 1 minute.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(HookBox.Text, out var hook) || hook < 1)
-        { MessageBox.Show("Hook jam threshold must be ≥ 1 minute.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Hook jam threshold must be ≥ 1 minute.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(HangRealertBox.Text, out var hangRealert) || hangRealert < 0)
-        { MessageBox.Show("Hang re-alert cooldown must be ≥ 0 minutes.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Hang re-alert cooldown must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(SuppressBox.Text, out var suppress) || suppress < 0)
-        { MessageBox.Show("Alert suppress window must be ≥ 0.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Alert suppress window must be ≥ 0.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         // ── Escalation thresholds ────────────────────────────────────────────
         if (!int.TryParse(AlertMediumBox.Text, out var alertMed) || alertMed < 1)
-        { MessageBox.Show("Alert medium threshold must be ≥ 1.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Alert medium threshold must be ≥ 1.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(AlarmHighBox.Text, out var alarmHigh) || alarmHigh < 1)
-        { MessageBox.Show("Alarm high threshold must be ≥ 1.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Alarm high threshold must be ≥ 1.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(AlarmRulesBox.Text, out var alarmRules) || alarmRules < 1)
-        { MessageBox.Show("Alarm rules threshold must be ≥ 1.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Alarm rules threshold must be ≥ 1.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(AlarmCatsBox.Text, out var alarmCats) || alarmCats < 1)
-        { MessageBox.Show("Alarm category threshold must be ≥ 1.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Alarm category threshold must be ≥ 1.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(EmergencyTotalBox.Text, out var emergencyTotal) || emergencyTotal < 1)
-        { MessageBox.Show("Emergency total threshold must be ≥ 1.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        { MessageBox.Show("Emergency total threshold must be ≥ 1.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         var emergencyRules = EmergencyRulesBox.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -130,12 +130,12 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Couldn't update the Windows startup entry: {ex.Message}", "Foreman",
+            MessageBox.Show($"Couldn't update the Windows startup entry: {ex.Message}", "Foreman Agent Safety",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         if (portChanged)
-            MessageBox.Show("Port change takes effect after restart.", "Foreman",
+            MessageBox.Show("Port change takes effect after restart.", "Foreman Agent Safety",
                 MessageBoxButton.OK, MessageBoxImage.Information);
 
         // Apply the elevation toggle (starts/stops the sidecar; enabling prompts UAC).

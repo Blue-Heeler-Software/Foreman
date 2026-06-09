@@ -22,7 +22,7 @@ public static class ForemanMcpTools
 
     internal static void SetState(ForemanState state) => _state = state;
 
-    [McpServerTool, Description("Returns Foreman's current overall health summary.")]
+    [McpServerTool, Description("Returns Foreman Agent Safety's current overall health summary.")]
     public static object ForemanStatus()
     {
         var state = _state ?? new ForemanState();
@@ -58,7 +58,7 @@ public static class ForemanMcpTools
         };
     }
 
-    [McpServerTool, Description("Lists all AI harness processes Foreman is monitoring.")]
+    [McpServerTool, Description("Lists all AI harness processes Foreman Agent Safety is monitoring.")]
     public static object ListMonitoredProcesses(
         [Description("Include child processes of harnesses")] bool includeChildren = true,
         [Description("Optional harness ID to scope results, e.g. 'claude-code' or 'codex'")] string? harnessId = null,
@@ -317,7 +317,7 @@ public static class ForemanMcpTools
         "and what corrective action you took or recommend.")]
     public static object ReplyToAskHarnessRequest(
         [Description("The requestId returned by ListAskHarnessRequests")] string requestId,
-        [Description("Your reply to Foreman's prompt")] string response,
+        [Description("Your reply to Foreman Agent Safety's prompt")] string response,
         [Description("Optional concise action taken, e.g. 'stopped pid 1234', 'left running', 'needs operator review'")] string? actionTaken = null,
         [Description("Optional harness ID, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
         [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null)
@@ -392,7 +392,7 @@ public static class ForemanMcpTools
         };
     }
 
-    [McpServerTool, Description("Returns setup instructions for connecting a supported harness to Foreman's MCP server.")]
+    [McpServerTool, Description("Returns setup instructions for connecting a supported harness to Foreman Agent Safety's MCP server.")]
     public static object GetIntegrationInstructions(
         [Description("Harness ID, e.g. 'claude-code' or 'codex'")] string harnessId)
     {
@@ -420,14 +420,14 @@ public static class ForemanMcpTools
             },
             askHarness = new
             {
-                receive = "Call ListAskHarnessRequests with your harnessId or processId to receive Foreman's pending prompts.",
-                reply = "Call ReplyToAskHarnessRequest with the requestId and your response so Foreman records the answer.",
+                receive = "Call ListAskHarnessRequests with your harnessId or processId to receive Foreman Agent Safety's pending prompts.",
+                reply = "Call ReplyToAskHarnessRequest with the requestId and your response so Foreman Agent Safety records the answer.",
             },
-            note = "Pass harnessId or processId to Foreman MCP tools so permissions, process listings, and Ask Harness requests can be scoped to this harness.",
+            note = "Pass harnessId or processId to Foreman Agent Safety MCP tools so permissions, process listings, and Ask Harness requests can be scoped to this harness.",
         };
     }
 
-    [McpServerTool, Description("Checks whether Foreman can see a harness, its profile, and any MCP sessions.")]
+    [McpServerTool, Description("Checks whether Foreman Agent Safety can see a harness, its profile, and any MCP sessions.")]
     public static object ValidateHarnessIntegration(
         [Description("Harness ID, e.g. 'claude-code' or 'codex'")] string harnessId)
     {

@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a Foreman defect or crash.
+description: Report a Foreman Agent Safety defect or crash.
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -14,9 +14,9 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Include the exact Foreman version/commit and what you were doing.
+      description: Include the exact Foreman Agent Safety version/commit and what you were doing.
       placeholder: |
-        1. Launch Foreman...
+        1. Launch Foreman Agent Safety...
         2. Connect Codex...
         3. Open...
     validations:

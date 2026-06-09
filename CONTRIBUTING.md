@@ -1,6 +1,6 @@
-# Contributing to Foreman
+# Contributing to Foreman Agent Safety
 
-Foreman is alpha software for local AI-agent safety oversight. Bug reports, false-positive tuning, docs polish, and small focused pull requests are welcome.
+Foreman Agent Safety is alpha software for local AI-agent safety oversight. Bug reports, false-positive tuning, docs polish, and small focused pull requests are welcome.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@ Foreman is alpha software for local AI-agent safety oversight. Bug reports, fals
 - Windows 10/11 x64 for the full tray app and monitor.
 - A working `dotnet` on `PATH`.
 
-Foreman runs at normal user integrity by default. No admin/UAC prompt is required except for the optional elevated network sidecar.
+Foreman Agent Safety runs at normal user integrity by default. No admin/UAC prompt is required except for the optional elevated network sidecar.
 
 ## Build And Test
 
@@ -53,14 +53,14 @@ Avoid putting working offensive one-liners in issue prose, PR titles, or docs. T
 
 ## Product And Design Standards
 
-Foreman is a safety tool, not a novelty tray utility. Public-facing changes should keep that tone:
+Foreman Agent Safety is a safety tool, not a novelty tray utility. Public-facing changes should keep that tone:
 
 - Prefer "safety monitor", "oversight", "audit", "review", and "accountability" over vague cleanup language.
-- Be precise about trust boundaries. Foreman is not a sandbox and should not be described as one.
+- Be precise about trust boundaries. Foreman Agent Safety is not a sandbox and should not be described as one.
 - Treat false positives as product bugs worth tuning.
 - Keep UI copy calm and direct. Avoid theatrical destructive labels.
 - Preserve privacy: do not include tokens, private paths, project names, or command output in screenshots or examples.
-- New artwork must be original, generated specifically for Foreman, or otherwise GPL-compatible.
+- New artwork must be original, generated specifically for Foreman Agent Safety, or otherwise GPL-compatible.
 
 ## Pull Requests
 
@@ -82,4 +82,4 @@ Before publishing binaries, use `docs/release-checklist.md`.
 
 ## License
 
-Foreman is licensed under GPL-3.0-or-later. By contributing, you agree that your contributions are licensed under the same terms.
+Foreman Agent Safety is licensed under GPL-3.0-or-later. By contributing, you agree that your contributions are licensed under the same terms.

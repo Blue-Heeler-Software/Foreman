@@ -131,13 +131,13 @@ public partial class DashboardWindow : Window, IEventSink
         // support the sampling round-trip that makes Ask Harness a true poll vs. a one-way notify.
         var clients = GetConnectedClients?.Invoke() ?? [];
         McpClientsCard.ToolTip = clients.Count == 0
-            ? "No agents connected to Foreman's MCP.\nRight-click the tray → Connect agent, or use the Connect agent button."
+            ? "No agents connected to Foreman Agent Safety's MCP.\nRight-click the tray → Connect agent, or use the Connect agent button."
             : "Connected agents:\n" + string.Join("\n", clients.Select(c =>
                 $"  • {c.Name}{(string.IsNullOrWhiteSpace(c.Version) ? "" : $" v{c.Version}")} — " +
                 $"sampling: {(c.Sampling ? "yes (Ask Harness gets a reply)" : "no (Ask Harness notifies one-way)")}"));
 
         // ── Footer ────────────────────────────────────────────────────────────
-        var meta = $"Foreman v{Version}  ·  up {Uptime()}  ·  MCP :{McpPort}";
+        var meta = $"Foreman Agent Safety v{Version}  ·  up {Uptime()}  ·  MCP :{McpPort}";
         FooterText.Text = relevant.Count == 0
             ? meta
             : $"{meta}  ·  {relevant.Count} recent event{(relevant.Count == 1 ? "" : "s")}  ·  click any row for detail";
@@ -247,7 +247,7 @@ public partial class DashboardWindow : Window, IEventSink
     private static MessageBoxResult PromptSaveHarnesses(string action) =>
         MessageBox.Show(
             $"You have unsaved changes on the Harnesses tab.\n\nSave them before {action}?",
-            "Foreman — Unsaved changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            "Foreman Agent Safety — Unsaved changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
 
     private static string Version =>
         System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1";

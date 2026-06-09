@@ -6,6 +6,12 @@ public sealed class StartupRegistrationTests
 {
     private const string Exe = @"C:\Program Files\Foreman\Foreman.exe";
 
+    [Fact] public void RunValueName_UsesPublicProductName()
+        => Assert.Equal("Foreman Agent Safety", StartupRegistration.RunValueName);
+
+    [Fact] public void LegacyRunValueName_PreservesUpgradeCompatibility()
+        => Assert.Equal("Foreman", StartupRegistration.LegacyRunValueName);
+
     private static Func<string, bool> Exists(params string[] paths) =>
         p => paths.Contains(p, StringComparer.OrdinalIgnoreCase);
 

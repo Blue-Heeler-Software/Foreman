@@ -1,8 +1,8 @@
 # Security Policy
 
-Foreman is a local Windows safety monitor for AI coding agents. It watches process trees, applies heuristic command analysis, reads selected local harness configuration files, and exposes a local MCP server at `http://localhost:54321/mcp` by default.
+Foreman Agent Safety is a local Windows safety monitor for AI coding agents. It watches process trees, applies heuristic command analysis, reads selected local harness configuration files, and exposes a local MCP server at `http://localhost:54321/mcp` by default.
 
-Foreman is alpha software. It improves visibility and reviewability, but it is not a sandbox and does not claim to stop a determined same-user attacker.
+Foreman Agent Safety is alpha software. It improves visibility and reviewability, but it is not a sandbox and does not claim to stop a determined same-user attacker.
 
 ## Supported Versions
 
@@ -23,15 +23,15 @@ Please report privately. Do not open a public issue, discussion, pull request, o
 Preferred channels:
 
 1. **GitHub Security Advisories** - use the repository Security tab and choose "Report a vulnerability".
-2. **Email** - `xredux@protonmail.com`, subject line `Foreman security`.
+2. **Email** - `xredux@protonmail.com`, subject line `Foreman Agent Safety security`.
 
 A useful report includes:
 
 - Affected commit, tag, or installer version.
-- Windows version and whether Foreman was launched from source or an installer.
+- Windows version and whether Foreman Agent Safety was launched from source or an installer.
 - Reproduction steps.
 - Expected impact.
-- Relevant Foreman settings, especially MCP port, run-at-login, `RunElevated`, `ScanMcpTools`, custom harnesses, and MCP client configuration.
+- Relevant Foreman Agent Safety settings, especially MCP port, run-at-login, `RunElevated`, `ScanMcpTools`, custom harnesses, and MCP client configuration.
 
 ## Response Window
 
@@ -45,7 +45,7 @@ If there is no response within two weeks, a polite follow-up on the same channel
 
 ## Scope
 
-Foreman is local desktop software. There is no hosted service, account system, cloud backend, or telemetry.
+Foreman Agent Safety is local desktop software. There is no hosted service, account system, cloud backend, or telemetry.
 
 ### In Scope
 
@@ -53,9 +53,9 @@ Foreman is local desktop software. There is no hosted service, account system, c
 - The local HTTP listener binding beyond loopback.
 - Token handling: generation, storage, ACL hardening, and bearer-token verification.
 - Process and command-line parsing crashes, hangs, or resource exhaustion caused by hostile or malformed local process metadata.
-- Pattern/profile/config file handling where a crafted file can crash Foreman or cause unsafe behavior.
+- Pattern/profile/config file handling where a crafted file can crash Foreman Agent Safety or cause unsafe behavior.
 - Installer behavior, per-user install paths, run-at-login registration, and release artifact tampering.
-- Privilege/integrity boundary issues, especially anything that causes Foreman's main UI/MCP server to run elevated unintentionally or lets an untrusted process influence Foreman's own execution.
+- Privilege/integrity boundary issues, especially anything that causes Foreman Agent Safety's main UI/MCP server to run elevated unintentionally or lets an untrusted process influence Foreman Agent Safety's own execution.
 - Optional elevated ETW sidecar issues when `RunElevated` is enabled.
 - Optional outbound MCP tool-description scan behavior when `ScanMcpTools` is enabled.
 
@@ -66,26 +66,26 @@ Foreman is local desktop software. There is no hosted service, account system, c
 - A same-user local attacker reading process command lines or otherwise doing what the user's account can already do.
 - Roadmap features that are not implemented.
 - Issues requiring a compromised OS, physical access, or disabling Windows security features.
-- Denial of service that requires the reporter to already control the machine and user account Foreman runs under.
+- Denial of service that requires the reporter to already control the machine and user account Foreman Agent Safety runs under.
 
 If unsure, report privately and ask.
 
 ## MCP Bridge Threat Model
 
-Foreman's MCP tools are served on localhost. The `/health` endpoint is intentionally open for liveness checks. The `/mcp` endpoint requires an `Authorization: Bearer <token>` header.
+Foreman Agent Safety's MCP tools are served on localhost. The `/health` endpoint is intentionally open for liveness checks. The `/mcp` endpoint requires an `Authorization: Bearer <token>` header.
 
-The token is generated on first run and stored at `%LocalAppData%\Foreman\mcp.token`. Foreman attempts to restrict that file to the current Windows user. This protects against other local users when filesystem ACLs are enforced, but it does **not** protect against another process already running as the same user.
+The token is generated on first run and stored at `%LocalAppData%\Foreman\mcp.token`. Foreman Agent Safety attempts to restrict that file to the current Windows user. This protects against other local users when filesystem ACLs are enforced, but it does **not** protect against another process already running as the same user.
 
 Important boundaries:
 
-- A same-user process that can read the token can call Foreman's MCP tools.
-- Foreman MCP tools do not grant a harness direct kill authority.
-- High and Critical alerts cannot be acknowledged through MCP; the operator must use the Foreman UI.
+- A same-user process that can read the token can call Foreman Agent Safety's MCP tools.
+- Foreman Agent Safety MCP tools do not grant a harness direct kill authority.
+- High and Critical alerts cannot be acknowledged through MCP; the operator must use the Foreman Agent Safety UI.
 - Ask Harness delivery is advisory. It uses MCP client/session identity for routing prompts, not authorization.
 - The server should bind only to loopback. Remote reachability is in scope for private reporting.
 
 ## Detection Content
 
-Foreman ships detection patterns under `data/patterns/` and embedded copies under `src/Foreman.Core/patterns/`. They are descriptive signatures used to flag risky command shapes for review. They are not runnable exploit tooling and do not execute anything.
+Foreman Agent Safety ships detection patterns under `data/patterns/` and embedded copies under `src/Foreman.Core/patterns/`. They are descriptive signatures used to flag risky command shapes for review. They are not runnable exploit tooling and do not execute anything.
 
 Detection improvements are welcome as normal pull requests. Avoid including working attack one-liners in issue titles, PR titles, or prose; the regex pattern and safe category-level explanation are enough.

@@ -80,7 +80,7 @@ public partial class BehaviorMetricsWindow : UserControl, IDisposable
         {
             var r = MessageBox.Show(
                 $"Kill all running '{vm.DisplayName}' processes?\n\nThis will immediately terminate the harness.",
-                "Foreman — Confirm Kill",
+                "Foreman Agent Safety — Confirm Kill",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
 

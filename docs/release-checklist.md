@@ -1,4 +1,4 @@
-# Foreman Release Checklist
+# Foreman Agent Safety Release Checklist
 
 Use this before publishing a public binary release.
 
@@ -12,7 +12,7 @@ Use this before publishing a public binary release.
 - Verify `/health` is reachable and `/mcp` rejects missing or wrong bearer tokens.
 - Verify a connected Claude Code or Codex session appears in the dashboard.
 - Verify Ask Harness delivery for at least one connected client.
-- Verify MCP inventory treats Foreman's own `foreman` loopback server as informational.
+- Verify MCP inventory treats Foreman Agent Safety's own `foreman` loopback server as informational.
 - Capture fresh screenshots for README/release notes.
 - Attach SHA-256 checksums to the release.
 - State clearly whether the installer is signed or unsigned.

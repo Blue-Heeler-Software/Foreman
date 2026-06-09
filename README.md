@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/foreman-social-preview.png" alt="Foreman - safety oversight for AI coding agents">
+  <img src="docs/assets/foreman-social-preview.png" alt="Foreman Agent Safety - safety oversight for AI coding agents">
 </p>
 
-<h1 align="center">Foreman</h1>
+<h1 align="center">Foreman Agent Safety</h1>
 
 <p align="center">
   A Windows safety monitor for AI coding agents: watch risky commands, stuck runs, MCP changes, and use one AI to audit another.
@@ -19,27 +19,27 @@
   <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-E8B23C">
 </p>
 
-> **Status:** alpha. Foreman currently targets a .NET 10 preview SDK and runs on Windows 10/11 x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
+> **Status:** alpha. Foreman Agent Safety currently targets a .NET 10 preview SDK and runs on Windows 10/11 x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
 
-## Why Foreman Exists
+## Why Foreman Agent Safety Exists
 
 AI coding agents can move quickly across shells, files, credentials, networked tools, and MCP servers. Most of that work is useful. Some of it is surprising, expensive, stuck, or unsafe.
 
-Foreman sits in the tray and keeps that work visible. It raises explainable alerts, attributes child processes back to the harness that spawned them, and gives you two response paths:
+Foreman Agent Safety sits in the tray and keeps that work visible. It raises explainable alerts, attributes child processes back to the harness that spawned them, and gives you two response paths:
 
 - **Ask Harness:** ask the offending agent to justify or correct its own action.
 - **Send for Audit:** route alarming behavior to a different agent or API for a second opinion, using MCP when a reviewer harness is connected.
 
 That safety loop can also save money. Catching a runaway command or abandoned agent early means fewer wasted tokens, less CPU/GPU churn, and lower power use.
 
-## What Foreman Does
+## What Foreman Agent Safety Does
 
 - Watches agent process trees, spawned shells, hung children, and orphaned processes.
 - Flags risky command patterns: destructive commands, credential access, privilege escalation, network-borne code execution, and Windows defense-evasion or persistence.
 - Tracks per-agent behavior and escalates through **Watch -> Alert -> Alarm -> Emergency** as risk accumulates.
 - Reads agent MCP configuration and alerts when a new or changed MCP server appears.
 - Optionally scans HTTP/SSE MCP tool descriptions for prompt-injection or data-exfiltration wording. This opt-in scan is the only feature that connects to third-party MCP servers; stdio servers are never launched.
-- Exposes a local MCP server so agents can check Foreman status, pre-flight commands, inspect recent events, and get integration instructions.
+- Exposes a local MCP server so agents can check Foreman Agent Safety status, pre-flight commands, inspect recent events, and get integration instructions.
 - Keeps a searchable/exportable event log and a dashboard for live process, harness, and behavior state.
 
 ## Screenshots
@@ -97,20 +97,20 @@ dotnet publish .\src\Foreman.App\Foreman.App.csproj `
 
 ### Start With Windows
 
-Optional: in **Settings → General**, tick **Start Foreman when you sign in to Windows**. This adds a per-user `HKCU` Run entry (no admin rights) so the tray app, monitoring, and the MCP server are up before your first agent session. Foreman self-heals the entry if you later move the install.
+Optional: in **Settings → General**, tick **Start Foreman Agent Safety when you sign in to Windows**. This adds a per-user `HKCU` Run entry (no admin rights) so the tray app, monitoring, and the MCP server are up before your first agent session. Foreman Agent Safety self-heals the entry if you later move the install.
 
 ### Connect An Agent
 
-Foreman's MCP server listens on `http://localhost:54321/mcp` while the tray app is running. `/mcp` requires a per-install bearer token. `/health` is open for liveness checks.
+Foreman Agent Safety's MCP server listens on `http://localhost:54321/mcp` while the tray app is running. `/mcp` requires a per-install bearer token. `/health` is open for liveness checks.
 
 The easiest path is in the app:
 
-1. Open Foreman from the tray or dashboard.
+1. Open Foreman Agent Safety from the tray or dashboard.
 2. Choose **Connect agent**.
 3. Use **Connect automatically** for Claude Code or Codex.
 4. Restart the agent.
 
-Foreman writes only its own user-scope `foreman` MCP entry and saves a backup of the original config first. For Codex, it also adds/updates a marked Foreman section in `~/.codex/AGENTS.md` so Codex knows how to receive and answer Ask Harness and audit prompts.
+Foreman Agent Safety writes only its own user-scope `foreman` MCP entry and saves a backup of the original config first. For Codex, it also adds/updates a marked Foreman Agent Safety section in `~/.codex/AGENTS.md` so Codex knows how to receive and answer Ask Harness and audit prompts.
 
 Manual Claude Code setup:
 
@@ -133,11 +133,11 @@ Add this marked section to `~/.codex/AGENTS.md` as well, then restart Codex:
 
 ```markdown
 <!-- foreman-mcp:begin -->
-## Foreman MCP Safety Monitor
+## Foreman Agent Safety MCP Monitor
 
 When the `foreman` MCP server is available:
 
-- Identify this agent as `harnessId: "codex"` when Foreman tools accept a harness id.
+- Identify this agent as `harnessId: "codex"` when Foreman Agent Safety tools accept a harness id.
 - At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
 - If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness or audit requests, call `ListAskHarnessRequests(harnessId: "codex")`.
 - For each pending request addressed to Codex, answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
@@ -150,15 +150,15 @@ The token is generated on first run and stored at `%LocalAppData%\Foreman\mcp.to
 
 ## Privacy And Trust Boundaries
 
-- Foreman is local-only. There is no hosted service, account system, or telemetry.
-- Process command lines can contain secrets. Foreman displays and logs command lines locally, and masks obvious secrets before putting alert prompts on the clipboard.
-- Foreman is not a sandbox. A same-user local process can still do anything your user account can do.
+- Foreman Agent Safety is local-only. There is no hosted service, account system, or telemetry.
+- Process command lines can contain secrets. Foreman Agent Safety displays and logs command lines locally, and masks obvious secrets before putting alert prompts on the clipboard.
+- Foreman Agent Safety is not a sandbox. A same-user local process can still do anything your user account can do.
 - The optional ETW network sidecar runs elevated only if you enable **Run elevated for per-process Network**.
 - The optional MCP tool-description scan can make outbound HTTP/SSE connections to configured third-party MCP servers. It is off by default.
 
 ## How It Works
 
-Foreman is split into four main pieces:
+The Foreman Agent Safety codebase is split into four main pieces:
 
 - **Foreman.App:** WPF tray app, dashboard, settings, alert detail, and connection UI.
 - **Foreman.Monitor:** WMI process create/terminate watcher, process tree tracker, I/O polling, hang/orphan detection, MCP inventory monitor.
@@ -171,12 +171,12 @@ The embedded MCP server exposes tools including:
 | --- | --- |
 | `ForemanStatus` | Current health, active alerts, process count, uptime, version |
 | `ListConnectedMcpClients` | Debug connected client identities and sampling support |
-| `ListMonitoredProcesses` | Agent and child processes Foreman is tracking |
+| `ListMonitoredProcesses` | Agent and child processes Foreman Agent Safety is tracking |
 | `QueryProcessDetail` | Details for one PID |
 | `ReportSuspiciousCommand` | Pre-flight a command line |
 | `ListRecentEvents` | Recent event log entries |
 | `ListAskHarnessRequests` | Receive pending Ask Harness or audit prompts for a harness |
-| `ReplyToAskHarnessRequest` | Send Foreman a reply to a pending Ask Harness or audit prompt |
+| `ReplyToAskHarnessRequest` | Send Foreman Agent Safety a reply to a pending Ask Harness or audit prompt |
 | `AcknowledgeAlert` | Acknowledge low/medium alerts; high/critical require the UI |
 | `GetBehaviorMetrics` | Per-harness escalation state |
 | `ReportTaskStart` | Announce a task boundary |
@@ -229,4 +229,4 @@ GPL-3.0-or-later. See [LICENSE](LICENSE). Contributions are accepted under the s
 
 ## Support
 
-Foreman is free and GPL. If it helped you keep agent work safer, saved tokens, or trimmed a power bill and you want to chip in, there is a Ko-fi: <https://ko-fi.com/aXL333>.
+Foreman Agent Safety is free and GPL. If it helped you keep agent work safer, saved tokens, or trimmed a power bill and you want to chip in, there is a Ko-fi: <https://ko-fi.com/aXL333>.

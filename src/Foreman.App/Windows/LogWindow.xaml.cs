@@ -180,7 +180,7 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
     {
         var dlg = new SaveFileDialog
         {
-            Title      = "Export Foreman Event Log",
+            Title      = "Export Foreman Agent Safety Event Log",
             Filter     = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             FileName   = $"foreman-log-{DateTime.Now:yyyy-MM-dd-HHmm}.csv",
             DefaultExt = ".csv",
@@ -205,7 +205,7 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Export failed: {ex.Message}", "Foreman",
+            MessageBox.Show($"Export failed: {ex.Message}", "Foreman Agent Safety",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }

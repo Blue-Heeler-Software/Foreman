@@ -1,7 +1,7 @@
 <Window x:Class="Foreman.App.Windows.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Foreman — Settings"
+        Title="Foreman Agent Safety — Settings"
         Icon="/Resources/foreman.ico"
         Width="500" Height="820"
         MinHeight="680"
@@ -63,10 +63,10 @@
                 <TextBlock Text="GENERAL" FontSize="10" FontWeight="Bold"
                            Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8" />
                 <CheckBox x:Name="StartWithWindowsCheck"
-                          Content="Start Foreman when you sign in to Windows" />
+                          Content="Start Foreman Agent Safety when you sign in to Windows" />
                 <TextBlock TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Adds a per-user startup entry (HKCU Run — no admin rights). Foreman starts quietly in the system tray, so monitoring and the MCP server are up before your first agent session." />
+                           Text="Adds a per-user startup entry (HKCU Run — no admin rights). Foreman Agent Safety starts quietly in the system tray, so monitoring and the MCP server are up before your first agent session." />
             </StackPanel>
 
             <!-- ── MCP Server ────────────────────────────────────────────────── -->
@@ -117,7 +117,7 @@
                           Margin="0,12,0,0" />
                 <TextBlock TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Launches a small, elevated ETW helper (one UAC prompt) that meters per-process network throughput — byte counts per process only, NOT packet contents or destinations (no deep packet inspection). Only the helper runs elevated; Foreman's UI, MCP server, and kill action stay unprivileged. Leave off if you don't need the Net column." />
+                           Text="Launches a small, elevated ETW helper (one UAC prompt) that meters per-process network throughput — byte counts per process only, NOT packet contents or destinations (no deep packet inspection). Only the helper runs elevated; Foreman Agent Safety's UI, MCP server, and kill action stay unprivileged. Leave off if you don't need the Net column." />
                 <CheckBox x:Name="ScanMcpToolsCheck"
                           Content="Scan MCP tool descriptions for injection (opt-in)"
                           Margin="0,12,0,0" />
@@ -133,7 +133,7 @@
                 <TextBlock TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}"
                            Margin="0,0,0,10">
-                    These thresholds control when Foreman promotes a harness from Watch → Alert → Alarm → Emergency.
+                    These thresholds control when Foreman Agent Safety promotes a harness from Watch → Alert → Alarm → Emergency.
                 </TextBlock>
 
                 <!-- Alert thresholds -->

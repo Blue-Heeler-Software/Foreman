@@ -1,7 +1,7 @@
 <Window x:Class="Foreman.App.Windows.DashboardWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Foreman"
+        Title="Foreman Agent Safety"
         Icon="/Resources/foreman.ico"
         Width="1080" Height="680"
         MinWidth="820" MinHeight="500"
@@ -307,7 +307,7 @@
                            FontSize="16" FontWeight="SemiBold" FontFamily="Segoe UI, Arial"
                            Foreground="{StaticResource TextPrimaryBrush}"
                            HorizontalAlignment="Center" />
-                <TextBlock Text="Foreman is watching"
+                <TextBlock Text="Foreman Agent Safety is watching"
                            FontSize="12" FontFamily="Segoe UI, Arial"
                            Foreground="{StaticResource TextMutedBrush}"
                            HorizontalAlignment="Center" Margin="0,6,0,0" />

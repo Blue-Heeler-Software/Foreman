@@ -11,13 +11,14 @@ namespace Foreman.App;
 /// </summary>
 public static class StartupManager
 {
-    /// <summary>True if a Run entry for Foreman exists (the registry is the source of truth).</summary>
+    /// <summary>True if a Run entry for Foreman Agent Safety exists (the registry is the source of truth).</summary>
     public static bool IsEnabled()
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(StartupRegistration.RunKeyPath);
-            return key?.GetValue(StartupRegistration.RunValueName) is string;
+            return key?.GetValue(StartupRegistration.RunValueName) is string ||
+                   key?.GetValue(StartupRegistration.LegacyRunValueName) is string;
         }
         catch
         {
@@ -34,12 +35,14 @@ public static class StartupManager
         if (on)
         {
             var exe = Environment.ProcessPath
-                ?? throw new InvalidOperationException("Cannot resolve Foreman's executable path.");
+                ?? throw new InvalidOperationException("Cannot resolve Foreman Agent Safety's executable path.");
             key.SetValue(StartupRegistration.RunValueName, StartupRegistration.BuildCommand(exe));
+            key.DeleteValue(StartupRegistration.LegacyRunValueName, throwOnMissingValue: false);
         }
         else
         {
             key.DeleteValue(StartupRegistration.RunValueName, throwOnMissingValue: false);
+            key.DeleteValue(StartupRegistration.LegacyRunValueName, throwOnMissingValue: false);
         }
     }
 
@@ -53,13 +56,26 @@ public static class StartupManager
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(StartupRegistration.RunKeyPath, writable: true);
-            if (key?.GetValue(StartupRegistration.RunValueName) is not string value) return;
+            if (key is null) return;
+
+            var currentValue = key.GetValue(StartupRegistration.RunValueName) as string;
+            var legacyValue = key.GetValue(StartupRegistration.LegacyRunValueName) as string;
+            var hasCurrentName = currentValue is not null;
+            var hasLegacyName = legacyValue is not null;
+            if (!hasCurrentName && !hasLegacyName) return;
+
+            var value = currentValue ?? legacyValue!;
 
             var current = Environment.ProcessPath;
             if (current is null) return;
 
             if (StartupRegistration.NeedsRepair(value, current, File.Exists))
                 key.SetValue(StartupRegistration.RunValueName, StartupRegistration.BuildCommand(current));
+            else if (hasLegacyName && !hasCurrentName)
+                key.SetValue(StartupRegistration.RunValueName, value);
+
+            if (hasLegacyName)
+                key.DeleteValue(StartupRegistration.LegacyRunValueName, throwOnMissingValue: false);
         }
         catch { /* best-effort */ }
     }

@@ -1,7 +1,7 @@
 <Window x:Class="Foreman.App.Windows.ConnectAgentWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Connect an agent — Foreman"
+        Title="Connect an agent — Foreman Agent Safety"
         Width="720" Height="760"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BackgroundBrush}"
@@ -53,10 +53,10 @@
 
         <!-- Header -->
         <StackPanel Grid.Row="0" Margin="0,0,0,12">
-            <TextBlock Text="Connect an agent to Foreman" FontSize="20" FontWeight="SemiBold"
+            <TextBlock Text="Connect an agent to Foreman Agent Safety" FontSize="20" FontWeight="SemiBold"
                        Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
             <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0"
-                       Text="Foreman runs a local MCP server your AI agent connects to. That connection is how Foreman reports status to the agent, how the agent can pre-flight a command, and how 'Ask Harness' reaches it. Pick your agent below, then restart it." />
+                       Text="Foreman Agent Safety runs a local MCP server your AI agent connects to. That connection is how Foreman reports status to the agent, how the agent can pre-flight a command, and how 'Ask Harness' reaches it. Pick your agent below, then restart it." />
             <Border Margin="0,10,0,0" CornerRadius="6" Padding="10,7"
                     Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                 <TextBlock x:Name="ConnectedText" TextWrapping="Wrap" FontSize="12"
@@ -73,7 +73,7 @@
                     <StackPanel>
                         <TextBlock Text="Claude Code" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
-                                   Text="Easiest: let Foreman add the entry for you — it writes a user-scope &quot;foreman&quot; server into ~/.claude.json (a backup of the original is saved first)." />
+                                   Text="Easiest: let Foreman Agent Safety add the entry for you — it writes a user-scope &quot;foreman&quot; server into ~/.claude.json (a backup of the original is saved first)." />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Content="Connect automatically" Click="ConnectClaudeClick" Margin="0,0,8,0"
                                     Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
@@ -92,14 +92,14 @@
                     <StackPanel>
                         <TextBlock Text="Codex" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
-                                   Text="Easiest: let Foreman add the entry for you. It writes a user-scope &quot;foreman&quot; server into ~/.codex/config.toml and adds a marked Foreman section to ~/.codex/AGENTS.md so Codex knows how to receive and answer Ask Harness and audit prompts." />
+                                   Text="Easiest: let Foreman Agent Safety add the entry for you. It writes a user-scope &quot;foreman&quot; server into ~/.codex/config.toml and adds a marked Foreman Agent Safety section to ~/.codex/AGENTS.md so Codex knows how to receive and answer Ask Harness and audit prompts." />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Content="Connect automatically" Click="ConnectCodexClick" Margin="0,0,8,0"
                                     Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
                             <Button Content="Copy TOML" Click="CopyCodexTomlClick" />
                         </StackPanel>
                         <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,4"
-                                   Text="Or paste this into ~/.codex/config.toml, then add the Foreman MCP Safety Monitor section to ~/.codex/AGENTS.md and restart Codex:" />
+                                   Text="Or paste this into ~/.codex/config.toml, then add the Foreman Agent Safety MCP Monitor section to ~/.codex/AGENTS.md and restart Codex:" />
                         <TextBox x:Name="CodexTomlBox" Style="{StaticResource Mono}" Height="112" />
                     </StackPanel>
                 </Border>

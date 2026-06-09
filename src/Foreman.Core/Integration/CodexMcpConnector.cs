@@ -4,9 +4,9 @@ using System.Text.RegularExpressions;
 namespace Foreman.Core.Integration;
 
 /// <summary>
-/// One-click "connect Codex to Foreman": writes Foreman's streamable-HTTP MCP
+/// One-click "connect Codex to Foreman Agent Safety": writes Foreman Agent Safety's streamable-HTTP MCP
 /// server into Codex's user config (<c>~/.codex/config.toml</c>) and adds a
-/// bounded Foreman section to <c>~/.codex/AGENTS.md</c>.
+/// bounded Foreman Agent Safety section to <c>~/.codex/AGENTS.md</c>.
 ///
 /// Codex stores MCP servers as TOML tables under <c>[mcp_servers.&lt;name&gt;]</c>.
 /// This helper only owns the <c>foreman</c> table, preserves unrelated config,
@@ -38,11 +38,11 @@ public static class CodexMcpConnector
     public static string BuildAgentsInstructions() =>
         $"""
         {AgentsBeginMarker}
-        ## Foreman MCP Safety Monitor
+        ## Foreman Agent Safety MCP Monitor
 
         When the `foreman` MCP server is available:
 
-        - Identify this agent as `harnessId: "codex"` when Foreman tools accept a harness id.
+        - Identify this agent as `harnessId: "codex"` when Foreman Agent Safety tools accept a harness id.
         - At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
         - If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness or audit requests, call `ListAskHarnessRequests(harnessId: "codex")`.
         - For each pending request addressed to Codex, answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
@@ -173,12 +173,12 @@ public static class CodexMcpConnector
             out var agentsError);
 
         if (agentsError is not null)
-            return message + $" Codex config is ready, but Foreman couldn't update AGENTS.md: {agentsError}";
+            return message + $" Codex config is ready, but Foreman Agent Safety couldn't update AGENTS.md: {agentsError}";
 
         if (!agentsChanged)
-            return message + " Foreman's Codex instructions in AGENTS.md were already current.";
+            return message + " Foreman Agent Safety's Codex instructions in AGENTS.md were already current.";
 
-        message += " Added/updated Foreman's Codex instructions in AGENTS.md.";
+        message += " Added/updated Foreman Agent Safety's Codex instructions in AGENTS.md.";
         if (agentsBackup is not null)
             message += $" AGENTS backup saved: {agentsBackup}";
         return message;

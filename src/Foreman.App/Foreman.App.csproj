@@ -6,6 +6,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>Foreman</AssemblyName>
     <RootNamespace>Foreman.App</RootNamespace>
+    <PackageId>Foreman.AgentSafety</PackageId>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Resources\foreman.ico</ApplicationIcon>
   </PropertyGroup>

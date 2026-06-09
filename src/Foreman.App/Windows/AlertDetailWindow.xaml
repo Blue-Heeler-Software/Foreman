@@ -1,7 +1,7 @@
 <Window x:Class="Foreman.App.Windows.AlertDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Foreman — Alert Detail"
+        Title="Foreman Agent Safety — Alert Detail"
         Icon="/Resources/foreman.ico"
         Width="780" Height="560"
         MinWidth="680" MinHeight="400"

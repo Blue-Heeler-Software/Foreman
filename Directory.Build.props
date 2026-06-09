@@ -1,15 +1,17 @@
 <Project>
   <PropertyGroup>
-    <Product>Foreman</Product>
+    <Product>Foreman Agent Safety</Product>
+    <Title>Foreman Agent Safety</Title>
     <Company>aXL333</Company>
     <Authors>aXL333</Authors>
     <Version>0.1.0</Version>
-    <Description>A Windows safety monitor for AI coding agents: watch risky commands, stuck runs, MCP changes, and cross-agent audit workflows.</Description>
+    <Description>Foreman Agent Safety is a Windows safety monitor for AI coding agents: watch risky commands, stuck runs, MCP changes, and cross-agent audit workflows.</Description>
     <Copyright>Copyright (c) 2026 aXL333</Copyright>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/aXL333/Foreman</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/aXL333/Foreman</PackageProjectUrl>
+    <PackageTags>ai;agent-safety;mcp;windows;monitoring;security</PackageTags>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>

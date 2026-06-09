@@ -119,7 +119,7 @@ public partial class AlertDetailWindow : Window
             MessageBox.Show(
                 $"Could not open the event log.\n\n" +
                 $"{ex.GetType().Name}: {ex.Message}\n\n{stackSnippet}",
-                "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         Close();
     }
@@ -136,7 +136,7 @@ public partial class AlertDetailWindow : Window
         var processName = ResolveTargetProcessName();
         var prompt      = BuildSelfJustifyPrompt(harnessId, pid, processName);
         const string systemPrompt =
-            "You are the AI coding agent that Foreman (a local safety monitor on this machine) flagged. " +
+            "You are the AI coding agent that Foreman Agent Safety (a local safety monitor on this machine) flagged. " +
             "This is a self-audit. Answer honestly and briefly: say what you were doing and whether it " +
             "is expected, then either justify it or take the corrective action requested.";
         var queued = !string.IsNullOrWhiteSpace(harnessId)
@@ -157,7 +157,7 @@ public partial class AlertDetailWindow : Window
         }
 
         var clipped = TrySetClipboard(prompt);
-        const string title = "Foreman - Ask Harness";
+        const string title = "Foreman Agent Safety - Ask Harness";
 
         switch (result?.Outcome)
         {
@@ -181,7 +181,7 @@ public partial class AlertDetailWindow : Window
             case AskOutcome.Notified:
                 MessageBox.Show(
                     $"Delivered a justify/act request to the live {Blank(result.MatchedClient, harnessId ?? "harness")} MCP session.\n\n" +
-                    "This client accepts Foreman's notification, but does not support a direct query/reply round trip.\n" +
+                    "This client accepts Foreman Agent Safety's notification, but does not support a direct query/reply round trip.\n" +
                     "It can reply by calling ReplyToAskHarnessRequest with the pending request id.\n\n" +
                     PendingLine(queued) + "\n\n" +
                     (clipped
@@ -196,8 +196,8 @@ public partial class AlertDetailWindow : Window
                     : $"the {Blank(harnessId, "offending harness")}";
                 MessageBox.Show(
                     string.IsNullOrWhiteSpace(harnessId)
-                        ? "Foreman couldn't attribute this alert to a specific harness."
-                        : $"No live {harnessId} session is connected to Foreman's MCP, so the request couldn't be delivered automatically.\n\n" +
+                        ? "Foreman Agent Safety couldn't attribute this alert to a specific harness."
+                        : $"No live {harnessId} session is connected to Foreman Agent Safety's MCP, so the request couldn't be delivered automatically.\n\n" +
                           PendingLine(queued) + "\n\n" +
                           (clipped
                               ? $"A justify/act prompt is also on your clipboard as a manual fallback for {owner}."
@@ -210,7 +210,7 @@ public partial class AlertDetailWindow : Window
       catch (Exception ex)
       {
           MessageBox.Show($"Ask Harness failed.\n\n{ex.GetType().Name}: {ex.Message}",
-              "Foreman - Ask Harness", MessageBoxButton.OK, MessageBoxImage.Warning);
+              "Foreman Agent Safety - Ask Harness", MessageBoxButton.OK, MessageBoxImage.Warning);
       }
     }
 
@@ -273,7 +273,7 @@ public partial class AlertDetailWindow : Window
                         $"Asked the live {Blank(result.MatchedClient, selected.DisplayName)} session to audit this alert.\n\n" +
                         $"Its response:\n\n{Blank(result.ReplyText, "(the auditor returned an empty response)")}\n\n" +
                         PendingLine(queued),
-                        "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+                        "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
 
                 case AskOutcome.Notified:
@@ -284,7 +284,7 @@ public partial class AlertDetailWindow : Window
                         "This client does not support a direct query/reply round trip. It can reply by calling " +
                         "ReplyToAskHarnessRequest with the pending request id.\n\n" +
                         PendingLine(queued),
-                        "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+                        "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
             }
 
@@ -298,14 +298,14 @@ public partial class AlertDetailWindow : Window
                     ? "The prompt is also on your clipboard as a manual fallback."
                     : "Clipboard fallback failed, but the pending request remains queued.") +
                 ConnectionHelp(selected.AuditorId),
-                "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+                "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (!TrySetClipboard(prompt))
         {
             MessageBox.Show("Could not copy the audit prompt to the clipboard.",
-                "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -313,7 +313,7 @@ public partial class AlertDetailWindow : Window
             $"Audit prompt prepared for alert [{_event.Id}] via {route.Selected?.DisplayName ?? "manual route"}"));
 
         MessageBox.Show(BuildAuditMessage(targetHarnessId, route),
-            "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+            "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private static bool TrySetClipboard(string text)
@@ -334,7 +334,7 @@ public partial class AlertDetailWindow : Window
         var agent = string.Equals(harnessId, "codex", StringComparison.OrdinalIgnoreCase)
             ? "Codex"
             : "the agent";
-        return $"\n\nTo fix automatic delivery: open Foreman Dashboard or tray menu > Connect agent > {agent} > Connect automatically, then restart {agent}.";
+        return $"\n\nTo fix automatic delivery: open Foreman Agent Safety Dashboard or tray menu > Connect agent > {agent} > Connect automatically, then restart {agent}.";
     }
 
     private string BuildAuditMessage(string? targetHarnessId, AuditRouteSelection route)
@@ -376,14 +376,14 @@ public partial class AlertDetailWindow : Window
         var commandLine = ResolveTargetCommandLine(liveProcess);
 
         var sb = new StringBuilder();
-        sb.AppendLine("Foreman - a local safety monitor for AI coding agents on this machine - flagged an action attributed to you. This is a self-audit; account for it.");
+        sb.AppendLine("Foreman Agent Safety - a local safety monitor for AI coding agents on this machine - flagged an action attributed to you. This is a self-audit; account for it.");
         sb.AppendLine();
         sb.AppendLine("Alert");
         sb.AppendLine($"- Id: {_event.Id}");
         sb.AppendLine($"- Type: {vm?.EventTypeLabel ?? _event.GetType().Name}");
         sb.AppendLine($"- Severity: {_event.Severity}");
         sb.AppendLine($"- When: {_event.Timestamp:O}");
-        sb.AppendLine($"- What Foreman saw: {_event.Message}");
+        sb.AppendLine($"- What Foreman Agent Safety saw: {_event.Message}");
         sb.AppendLine();
         sb.AppendLine("You");
         sb.AppendLine($"- Harness: {Blank(harnessId, "unknown")}");
@@ -401,7 +401,7 @@ public partial class AlertDetailWindow : Window
         if (vm is not null && !string.IsNullOrWhiteSpace(vm.WhyDangerous))
         {
             sb.AppendLine();
-            sb.AppendLine("Why Foreman flagged it:");
+            sb.AppendLine("Why Foreman Agent Safety flagged it:");
             sb.AppendLine(vm.WhyDangerous);
         }
 
@@ -431,7 +431,7 @@ public partial class AlertDetailWindow : Window
         PermissionViolationEvent =>
             "Justify this access against your current task, or confirm it was unintended and stop.",
         EscalationEvent =>
-            "Your recent activity tripped Foreman's escalation. Summarize what you're doing and why it " +
+            "Your recent activity tripped Foreman Agent Safety's escalation. Summarize what you're doing and why it " +
             "shouldn't be treated as alarming — or correct course.",
         _ =>
             "Account for this alert: explain whether it's expected and either justify it or take the " +
@@ -445,7 +445,7 @@ public partial class AlertDetailWindow : Window
         {
             MessageBox.Show(
                 "This alert does not identify a single process to terminate. Use Behavior Metrics to kill an entire harness.",
-                "Foreman - Kill/End Process",
+                "Foreman Agent Safety - Kill/End Process",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
@@ -454,7 +454,7 @@ public partial class AlertDetailWindow : Window
         var processName = ResolveTargetProcessName() ?? "process";
         var result = MessageBox.Show(
             $"Kill/end \"{processName}\" (pid {pid.Value})?\n\nThis will immediately terminate the process tree rooted at this alert target.",
-            "Foreman - Confirm Kill",
+            "Foreman Agent Safety - Confirm Kill",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
 
@@ -469,8 +469,8 @@ public partial class AlertDetailWindow : Window
                 $"Kill/end failed for alert [{_event.Id}] target pid {pid.Value}"));
 
             MessageBox.Show(
-                $"Foreman could not terminate pid {pid.Value}. It may have already exited, or Windows may have denied access.",
-                "Foreman - Kill/End Process",
+                $"Foreman Agent Safety could not terminate pid {pid.Value}. It may have already exited, or Windows may have denied access.",
+                "Foreman Agent Safety - Kill/End Process",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
@@ -484,7 +484,7 @@ public partial class AlertDetailWindow : Window
 
         MessageBox.Show(
             $"Terminated \"{processName}\" (pid {pid.Value}).",
-            "Foreman - Kill/End Process",
+            "Foreman Agent Safety - Kill/End Process",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
         Close();
@@ -499,7 +499,7 @@ public partial class AlertDetailWindow : Window
         var commandLine = ResolveTargetCommandLine(liveProcess);
 
         var sb = new StringBuilder();
-        sb.AppendLine("Foreman alert audit request");
+        sb.AppendLine("Foreman Agent Safety alert audit request");
         sb.AppendLine();
         sb.AppendLine("You are acting as an independent safety auditor for another AI coding harness or its child process.");
         sb.AppendLine("Decide whether this alert is expected, benign-but-stuck, risky, or suspicious. Recommend one concrete next action.");
@@ -536,10 +536,10 @@ public partial class AlertDetailWindow : Window
         if (vm is not null)
         {
             sb.AppendLine();
-            sb.AppendLine("Foreman assessment");
+            sb.AppendLine("Foreman Agent Safety assessment");
             sb.AppendLine(vm.WhyDangerous);
             sb.AppendLine();
-            sb.AppendLine("Foreman recommended action");
+            sb.AppendLine("Foreman Agent Safety recommended action");
             sb.AppendLine(vm.RecommendedAction);
         }
 
@@ -828,7 +828,7 @@ public partial class AlertDetailWindow : Window
         {
             MessageBox.Show(
                 "That mute isn't allowed for this alert — protected detections can only be snoozed briefly.",
-                "Foreman — Mute", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman Agent Safety — Mute", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -839,7 +839,7 @@ public partial class AlertDetailWindow : Window
         MessageBox.Show(
             $"Muted {mute.Label} {when}.\n\nThis only quiets the tray popup — the alert is still recorded, " +
             "counted on the dashboard, and feeds escalation.",
-            "Foreman — Mute", MessageBoxButton.OK, MessageBoxImage.Information);
+            "Foreman Agent Safety — Mute", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
@@ -1022,10 +1022,10 @@ public sealed class AlertDetailVm
                     $"Profile \"{perm.ProfileName}\" was violated.\n\n" +
                     $"Violation type: {perm.ViolationType}\n" +
                     $"Detail: {perm.Detail}\n\n" +
-                    $"The harness attempted an action outside the boundaries configured for it in Foreman's permission profiles.";
+                    $"The harness attempted an action outside the boundaries configured for it in Foreman Agent Safety's permission profiles.";
                 RecommendedAction =
                     "1. Review the harness's current task to determine if this action was intentional.\n" +
-                    "2. If the action is legitimate, update the permission profile in Foreman's Profiles editor.\n" +
+                    "2. If the action is legitimate, update the permission profile in Foreman Agent Safety's Profiles editor.\n" +
                     "3. If unexpected, terminate the harness and audit its recent command history in the event log.";
                 break;
 
@@ -1061,15 +1061,15 @@ public sealed class AlertDetailVm
                         "1. Open the Behavior Metrics window and review the full session history.\n" +
                         "2. If the activity was not authorised, use 'End Harness Processes' to terminate the harness.\n" +
                         "3. Review the event log for the specific commands that triggered escalation.\n" +
-                        "4. Consider disabling the harness in Foreman until you can audit its behaviour.",
+                        "4. Consider disabling the harness in Foreman Agent Safety until you can audit its behaviour.",
                     EscalationLevel.Alarm =>
                         "1. Open the Behavior Metrics window and review the alert pattern.\n" +
                         "2. Check the event log for the specific commands that crossed the alarm threshold.\n" +
-                        "3. If the alerts are from a legitimate task, acknowledge this event — Foreman will continue monitoring.\n" +
+                        "3. If the alerts are from a legitimate task, acknowledge this event — Foreman Agent Safety will continue monitoring.\n" +
                         "4. If unexpected, terminate the harness or disable it in the Harnesses window.",
                     _ =>
                         "1. Review the event log for the alerts that contributed to this escalation.\n" +
-                        "2. If all alerts were from legitimate tasks, acknowledge this event — Foreman will continue monitoring.\n" +
+                        "2. If all alerts were from legitimate tasks, acknowledge this event — Foreman Agent Safety will continue monitoring.\n" +
                         "3. Open Behavior Metrics to see the full picture across this session.",
                 };
                 break;
@@ -1082,9 +1082,9 @@ public sealed class AlertDetailVm
                     MonitoringNoticeEvent when evt.Source.Equals("Foreman.McpInventory", StringComparison.OrdinalIgnoreCase) =>
                         "1. Confirm you expected this MCP server to be added to the harness configuration.\n" +
                         "2. If unexpected, remove it from the harness MCP config and review recent agent activity.\n" +
-                        "3. Foreman's own connector registers silently (logged as info), so this alert is about another server.",
+                        "3. Foreman Agent Safety's own connector registers silently (logged as info), so this alert is about another server.",
                     MonitoringNoticeEvent =>
-                        "1. Review the notice and decide whether it matches an expected Foreman monitoring action.\n" +
+                        "1. Review the notice and decide whether it matches an expected Foreman Agent Safety monitoring action.\n" +
                         "2. If unexpected, open the event log for nearby activity before acknowledging it.",
                     _ =>
                         "No action required for informational events.",
@@ -1129,7 +1129,7 @@ public sealed class AlertDetailVm
             _ =>
                 "1. Review the harness's current task to determine if this command was expected.\n" +
                 "2. If unexpected, terminate the harness and audit its recent activity in the event log.\n" +
-                "3. Acknowledge this alert in Foreman once you have reviewed and understood what happened.",
+                "3. Acknowledge this alert in Foreman Agent Safety once you have reviewed and understood what happened.",
         };
     }
 
