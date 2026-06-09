@@ -5,7 +5,8 @@ namespace Foreman.Core.Integration;
 
 /// <summary>
 /// One-click "connect Codex to Foreman": writes Foreman's streamable-HTTP MCP
-/// server into Codex's user config (<c>~/.codex/config.toml</c>).
+/// server into Codex's user config (<c>~/.codex/config.toml</c>) and adds a
+/// bounded Foreman section to <c>~/.codex/AGENTS.md</c>.
 ///
 /// Codex stores MCP servers as TOML tables under <c>[mcp_servers.&lt;name&gt;]</c>.
 /// This helper only owns the <c>foreman</c> table, preserves unrelated config,
@@ -14,6 +15,8 @@ namespace Foreman.Core.Integration;
 public static class CodexMcpConnector
 {
     private const string SectionName = "mcp_servers.foreman";
+    private const string AgentsBeginMarker = "<!-- foreman-mcp:begin -->";
+    private const string AgentsEndMarker = "<!-- foreman-mcp:end -->";
 
     public static string DefaultConfigPath =>
         Path.Combine(
@@ -21,10 +24,32 @@ public static class CodexMcpConnector
             ".codex",
             "config.toml");
 
+    public static string DefaultAgentsPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".codex",
+            "AGENTS.md");
+
     public static string Url(int port) => $"http://localhost:{port}/mcp";
 
     public static string BuildConfigSnippet(int port, string token) =>
         BuildSection(port, token).TrimEnd();
+
+    public static string BuildAgentsInstructions() =>
+        $"""
+        {AgentsBeginMarker}
+        ## Foreman MCP Safety Monitor
+
+        When the `foreman` MCP server is available:
+
+        - Identify this agent as `harnessId: "codex"` when Foreman tools accept a harness id.
+        - At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
+        - If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness requests, call `ListAskHarnessRequests(harnessId: "codex")`.
+        - For each pending request addressed to Codex, answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
+        - Treat Ask Harness as a safety prompt: explain what you were doing, whether it was expected, and any corrective action you took.
+
+        {AgentsEndMarker}
+        """;
 
     public static bool IsConfigured(int port, string? configPath = null)
     {
@@ -46,33 +71,40 @@ public static class CodexMcpConnector
         }
     }
 
-    public static ConnectResult Connect(int port, string token, string? configPath = null)
+    public static ConnectResult Connect(
+        int port,
+        string token,
+        string? configPath = null,
+        string? agentsPath = null)
     {
         var path = configPath ?? DefaultConfigPath;
         try
         {
-            var bytes    = File.Exists(path) ? File.ReadAllBytes(path) : [];
-            var hadBom    = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            var bytes = File.Exists(path) ? File.ReadAllBytes(path) : [];
+            var hadBom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
             var original = bytes.Length == 0
                 ? ""
                 : new UTF8Encoding(false).GetString(hadBom ? bytes[3..] : bytes);
 
-            // Respect a user who already set up the more secure bearer_token_env_var form for this port —
-            // don't silently overwrite it with a plaintext inline token (IsConfigured accepts both forms).
+            // Respect a user who already set up the more secure bearer_token_env_var form for this port.
+            // Do not silently overwrite it with a plaintext inline token (IsConfigured accepts both forms).
             var existingSection = ExtractForemanSection(original);
             if (existingSection is not null &&
                 HasAssignment(existingSection, "url", Url(port)) &&
                 Regex.IsMatch(existingSection, @"(?im)^\s*bearer_token_env_var\s*=\s*""[^""]+""\s*(?:#.*)?$"))
             {
+                var secureEntryMessage =
+                    "Codex already has a foreman entry using bearer_token_env_var for this port - left it " +
+                    "unchanged (the more secure form). Update that environment variable to rotate the token.";
+
                 return new ConnectResult(
                     ConnectStatus.Updated,
-                    "Codex already has a foreman entry using bearer_token_env_var for this port — left it " +
-                    "unchanged (the more secure form). Update that environment variable to rotate the token.",
+                    AppendAgentsNote(secureEntryMessage, agentsPath ?? DefaultAgentsPath),
                     null);
             }
 
             // Preserve the file's own newline + BOM so a one-click connect only changes the foreman table,
-            // not the whole file's encoding (avoids a noisy LF↔CRLF / BOM diff under git).
+            // not the whole file's encoding (avoids noisy LF/CRLF or BOM diffs under git).
             var newline = original.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
             var updated = UpsertForemanSection(original, port, token, newline, out var existed);
 
@@ -86,11 +118,13 @@ public static class CodexMcpConnector
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hadBom));
 
+            var message = existed
+                ? "Updated the existing foreman MCP entry in Codex's config."
+                : "Added a user-scope foreman MCP entry to Codex's config.";
+
             return new ConnectResult(
                 existed ? ConnectStatus.Updated : ConnectStatus.Added,
-                existed
-                    ? "Updated the existing foreman MCP entry in Codex's config."
-                    : "Added a user-scope foreman MCP entry to Codex's config.",
+                AppendAgentsNote(message, agentsPath ?? DefaultAgentsPath),
                 backup);
         }
         catch (Exception ex)
@@ -129,6 +163,88 @@ public static class CodexMcpConnector
         $"url = \"{TomlEscape(Url(port))}\"\n" +
         $"http_headers = {{ Authorization = \"Bearer {TomlEscape(token)}\" }}\n" +
         "enabled = true\n";
+
+    private static string AppendAgentsNote(string message, string agentsPath)
+    {
+        TryUpsertAgentsInstructions(
+            agentsPath,
+            out var agentsBackup,
+            out var agentsChanged,
+            out var agentsError);
+
+        if (agentsError is not null)
+            return message + $" Codex config is ready, but Foreman couldn't update AGENTS.md: {agentsError}";
+
+        if (!agentsChanged)
+            return message + " Foreman's Codex instructions in AGENTS.md were already current.";
+
+        message += " Added/updated Foreman's Codex instructions in AGENTS.md.";
+        if (agentsBackup is not null)
+            message += $" AGENTS backup saved: {agentsBackup}";
+        return message;
+    }
+
+    private static bool TryUpsertAgentsInstructions(
+        string agentsPath,
+        out string? backupPath,
+        out bool changed,
+        out string? error)
+    {
+        backupPath = null;
+        changed = false;
+        error = null;
+
+        try
+        {
+            var original = File.Exists(agentsPath) ? File.ReadAllText(agentsPath) : "";
+            var newline = original.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            var desired = BuildAgentsInstructions().Replace("\r\n", "\n").Replace("\n", newline).TrimEnd();
+            var updated = UpsertMarkedBlock(original, desired, newline);
+
+            if (string.Equals(original, updated, StringComparison.Ordinal))
+                return true;
+
+            if (original.Length > 0)
+            {
+                backupPath = agentsPath + ".foreman-bak";
+                File.WriteAllText(backupPath, original, new UTF8Encoding(false));
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(agentsPath)!);
+            File.WriteAllText(agentsPath, updated, new UTF8Encoding(false));
+            changed = true;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static string UpsertMarkedBlock(string original, string block, string newline)
+    {
+        var normalized = original.Replace("\r\n", "\n").Replace('\r', '\n');
+        var normalizedBlock = block.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd();
+        var begin = normalized.IndexOf(AgentsBeginMarker, StringComparison.Ordinal);
+        var end = normalized.IndexOf(AgentsEndMarker, StringComparison.Ordinal);
+
+        string updated;
+        if (begin >= 0 && end > begin)
+        {
+            end += AgentsEndMarker.Length;
+            updated = normalized[..begin].TrimEnd() + "\n\n" + normalizedBlock + "\n\n" + normalized[end..].TrimStart();
+        }
+        else
+        {
+            updated = normalized.TrimEnd();
+            if (updated.Length > 0)
+                updated += "\n\n";
+            updated += normalizedBlock + "\n";
+        }
+
+        return updated.Replace("\n", newline);
+    }
 
     private static string? ExtractForemanSection(string text)
     {
@@ -220,13 +336,13 @@ public static class CodexMcpConnector
             sb.Append(c switch
             {
                 '\\' => "\\\\",
-                '"'  => "\\\"",
+                '"' => "\\\"",
                 '\b' => "\\b",
                 '\t' => "\\t",
                 '\n' => "\\n",
                 '\f' => "\\f",
                 '\r' => "\\r",
-                _    => c,
+                _ => c,
             });
         }
 

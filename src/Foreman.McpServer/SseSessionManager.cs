@@ -15,7 +15,7 @@ public enum AskOutcome { Sampled, Notified, NoSession }
 /// Result of asking the offending harness to justify/act. <see cref="ReplyText"/> is non-null only
 /// for <see cref="AskOutcome.Sampled"/> (a true round-trip); for a notification it's fire-and-forget.
 /// </summary>
-public sealed record AskOffenderResult(AskOutcome Outcome, string? ReplyText, string? MatchedClient);
+public sealed record AskOffenderResult(AskOutcome Outcome, string? ReplyText, string? MatchedClient, string? RequestId = null);
 
 /// <summary>
 /// Tracks live MCP SSE sessions and broadcasts server-initiated notifications
@@ -74,7 +74,11 @@ public sealed class SseSessionManager
     /// Session→harness matching is by the client's self-announced name (advisory only, never auth).
     /// </summary>
     public async Task<AskOffenderResult> AskOffenderAsync(
-        string harnessId, string systemPrompt, string userPrompt, CancellationToken ct = default)
+        string harnessId,
+        string systemPrompt,
+        string userPrompt,
+        string? requestId = null,
+        CancellationToken ct = default)
     {
         var matches = _sessions.Values
             .Where(s => MatchesHarness(s.ClientInfo?.Name, s.ClientInfo?.Title, harnessId))
@@ -97,7 +101,7 @@ public sealed class SseSessionManager
                     }],
                 };
                 var res = await sampler.SampleAsync(req, ct).ConfigureAwait(false);
-                return new AskOffenderResult(AskOutcome.Sampled, ExtractText(res.Content), ClientLabel(sampler));
+                return new AskOffenderResult(AskOutcome.Sampled, ExtractText(res.Content), ClientLabel(sampler), requestId);
             }
             catch { /* client declined / errored / timed out — degrade to notification */ }
         }
@@ -105,16 +109,16 @@ public sealed class SseSessionManager
         // 2) targeted, fire-and-forget notification to matching sessions
         if (matches.Count > 0)
         {
-            var data = new { type = "ask_harness", harnessId, prompt = userPrompt };
+            var data = new { type = "ask_harness", harnessId, requestId, prompt = userPrompt };
             var tasks = matches.Select(s =>
                 s.SendNotificationAsync("notifications/message", new { level = "warning", logger = "foreman", data })
                  .ContinueWith(_ => { /* swallow per-client errors */ }, TaskScheduler.Default));
             await Task.WhenAll(tasks).ConfigureAwait(false);
-            return new AskOffenderResult(AskOutcome.Notified, null, ClientLabel(matches[0]));
+            return new AskOffenderResult(AskOutcome.Notified, null, ClientLabel(matches[0]), requestId);
         }
 
         // 3) offender not connected to Foreman's MCP
-        return new AskOffenderResult(AskOutcome.NoSession, null, null);
+        return new AskOffenderResult(AskOutcome.NoSession, null, null, requestId);
     }
 
     private static string? ClientLabel(McpServerType s) =>

@@ -106,7 +106,7 @@ The easiest path is in the app:
 3. Use **Connect automatically** for Claude Code or Codex.
 4. Restart the agent.
 
-Foreman writes only its own user-scope `foreman` MCP entry and saves a backup of the original config first.
+Foreman writes only its own user-scope `foreman` MCP entry and saves a backup of the original config first. For Codex, it also adds/updates a marked Foreman section in `~/.codex/AGENTS.md` so Codex knows how to receive and answer Ask Harness prompts.
 
 Manual Claude Code setup:
 
@@ -123,6 +123,23 @@ Manual Codex setup in `~/.codex/config.toml`:
 url = "http://localhost:54321/mcp"
 http_headers = { Authorization = "Bearer <paste-token-from-mcp.token>" }
 enabled = true
+```
+
+Add this marked section to `~/.codex/AGENTS.md` as well, then restart Codex:
+
+```markdown
+<!-- foreman-mcp:begin -->
+## Foreman MCP Safety Monitor
+
+When the `foreman` MCP server is available:
+
+- Identify this agent as `harnessId: "codex"` when Foreman tools accept a harness id.
+- At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
+- If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness requests, call `ListAskHarnessRequests(harnessId: "codex")`.
+- For each pending request addressed to Codex, answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
+- Treat Ask Harness as a safety prompt: explain what you were doing, whether it was expected, and any corrective action you took.
+
+<!-- foreman-mcp:end -->
 ```
 
 The token is generated on first run and stored at `%LocalAppData%\Foreman\mcp.token` with current-user-only ACLs where Windows allows it.
@@ -149,10 +166,13 @@ The embedded MCP server exposes tools including:
 | Tool | Purpose |
 | --- | --- |
 | `ForemanStatus` | Current health, active alerts, process count, uptime, version |
+| `ListConnectedMcpClients` | Debug connected client identities and sampling support |
 | `ListMonitoredProcesses` | Agent and child processes Foreman is tracking |
 | `QueryProcessDetail` | Details for one PID |
 | `ReportSuspiciousCommand` | Pre-flight a command line |
 | `ListRecentEvents` | Recent event log entries |
+| `ListAskHarnessRequests` | Receive pending Ask Harness prompts for a harness |
+| `ReplyToAskHarnessRequest` | Send Foreman a reply to an Ask Harness prompt |
 | `AcknowledgeAlert` | Acknowledge low/medium alerts; high/critical require the UI |
 | `GetBehaviorMetrics` | Per-harness escalation state |
 | `ReportTaskStart` | Announce a task boundary |

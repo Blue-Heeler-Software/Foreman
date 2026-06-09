@@ -6,12 +6,14 @@ public sealed class CodexMcpConnectorTests : IDisposable
 {
     private readonly string _dir;
     private readonly string _cfg;
+    private readonly string _agents;
 
     public CodexMcpConnectorTests()
     {
         _dir = Path.Combine(Path.GetTempPath(), "foreman-codex-conn-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(_dir);
         _cfg = Path.Combine(_dir, "config.toml");
+        _agents = Path.Combine(_dir, "AGENTS.md");
     }
 
     public void Dispose()
@@ -30,7 +32,7 @@ public sealed class CodexMcpConnectorTests : IDisposable
         enabled = false
         """);
 
-        var r = CodexMcpConnector.Connect(54321, "TOKEN123", _cfg);
+        var r = CodexMcpConnector.Connect(54321, "TOKEN123", _cfg, _agents);
 
         Assert.Equal(ConnectStatus.Added, r.Status);
         Assert.True(File.Exists(_cfg + ".foreman-bak"));
@@ -42,12 +44,17 @@ public sealed class CodexMcpConnectorTests : IDisposable
         Assert.Contains("url = \"http://localhost:54321/mcp\"", toml);
         Assert.Contains("Authorization = \"Bearer TOKEN123\"", toml);
         Assert.True(CodexMcpConnector.IsConfigured(54321, _cfg));
+
+        var agents = File.ReadAllText(_agents);
+        Assert.Contains("Foreman MCP Safety Monitor", agents);
+        Assert.Contains("ListAskHarnessRequests(harnessId: \"codex\")", agents);
+        Assert.Contains("ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: \"codex\")", agents);
     }
 
     [Fact]
     public void Connect_OnMissingFile_CreatesIt()
     {
-        var r = CodexMcpConnector.Connect(54321, "T", _cfg);
+        var r = CodexMcpConnector.Connect(54321, "T", _cfg, _agents);
 
         Assert.Equal(ConnectStatus.Added, r.Status);
         Assert.Null(r.BackupPath);
@@ -57,9 +64,9 @@ public sealed class CodexMcpConnectorTests : IDisposable
     [Fact]
     public void Connect_Twice_ReportsUpdated_AndReplacesOldToken()
     {
-        CodexMcpConnector.Connect(54321, "old", _cfg);
+        CodexMcpConnector.Connect(54321, "old", _cfg, _agents);
 
-        var r = CodexMcpConnector.Connect(54321, "new", _cfg);
+        var r = CodexMcpConnector.Connect(54321, "new", _cfg, _agents);
 
         Assert.Equal(ConnectStatus.Updated, r.Status);
         var toml = File.ReadAllText(_cfg);
@@ -81,7 +88,7 @@ public sealed class CodexMcpConnectorTests : IDisposable
         command = "npx"
         """);
 
-        var r = CodexMcpConnector.Connect(54321, "T", _cfg);
+        var r = CodexMcpConnector.Connect(54321, "T", _cfg, _agents);
 
         Assert.Equal(ConnectStatus.Updated, r.Status);
         var toml = File.ReadAllText(_cfg);
@@ -94,7 +101,7 @@ public sealed class CodexMcpConnectorTests : IDisposable
     [Fact]
     public void IsConfigured_FalseForWrongPortOrNoToken()
     {
-        CodexMcpConnector.Connect(54321, "T", _cfg);
+        CodexMcpConnector.Connect(54321, "T", _cfg, _agents);
 
         Assert.False(CodexMcpConnector.IsConfigured(9999, _cfg));
         Assert.False(CodexMcpConnector.IsConfigured(54321, Path.Combine(_dir, "missing.toml")));
@@ -111,12 +118,15 @@ public sealed class CodexMcpConnectorTests : IDisposable
         enabled = true
         """);
 
-        var r = CodexMcpConnector.Connect(54321, "PLAINTEXT", _cfg);
+        var r = CodexMcpConnector.Connect(54321, "PLAINTEXT", _cfg, _agents);
 
         Assert.Equal(ConnectStatus.Updated, r.Status);
         var toml = File.ReadAllText(_cfg);
         Assert.Contains("bearer_token_env_var = \"FOREMAN_TOKEN\"", toml);
         Assert.DoesNotContain("Bearer PLAINTEXT", toml);
+
+        var agents = File.ReadAllText(_agents);
+        Assert.Contains("ReplyToAskHarnessRequest", agents);
     }
 
     [Fact]
@@ -125,11 +135,39 @@ public sealed class CodexMcpConnectorTests : IDisposable
         // LF-only input (common on WSL/macOS, and under git) must not be rewritten to CRLF.
         File.WriteAllText(_cfg, "model = \"x\"\n\n[mcp_servers.other]\ncommand = \"npx\"\n");
 
-        CodexMcpConnector.Connect(54321, "T", _cfg);
+        CodexMcpConnector.Connect(54321, "T", _cfg, _agents);
 
         var raw = File.ReadAllText(_cfg);
         Assert.DoesNotContain("\r\n", raw);
         Assert.Contains("[mcp_servers.foreman]", raw);
         Assert.Contains("[mcp_servers.other]", raw);
+    }
+
+    [Fact]
+    public void Connect_UpsertsMarkedAgentsSection_PreservesUserInstructions_AndBacksUp()
+    {
+        File.WriteAllText(_agents, """
+        # My Codex instructions
+
+        Keep answers concise.
+
+        <!-- foreman-mcp:begin -->
+        stale foreman text
+        <!-- foreman-mcp:end -->
+
+        Leave this alone.
+        """);
+
+        var r = CodexMcpConnector.Connect(54321, "T", _cfg, _agents);
+
+        Assert.Equal(ConnectStatus.Added, r.Status);
+        Assert.True(File.Exists(_agents + ".foreman-bak"));
+
+        var agents = File.ReadAllText(_agents);
+        Assert.Contains("# My Codex instructions", agents);
+        Assert.Contains("Keep answers concise.", agents);
+        Assert.Contains("Leave this alone.", agents);
+        Assert.Contains("ReportTaskStart(taskDescription, harnessId: \"codex\")", agents);
+        Assert.DoesNotContain("stale foreman text", agents);
     }
 }

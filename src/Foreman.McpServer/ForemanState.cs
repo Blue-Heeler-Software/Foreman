@@ -15,7 +15,9 @@ public sealed class ForemanState : IEventSink
 {
     private readonly ConcurrentQueue<ForemanEvent> _eventLog = new();
     private readonly ConcurrentDictionary<string, ForemanEvent> _alertById = new();
+    private readonly ConcurrentDictionary<string, AskHarnessRequest> _askRequests = new();
     private const int MaxEvents = 1000;
+    private const int MaxAskHarnessRequests = 200;
 
     public DateTimeOffset StartTime { get; } = DateTimeOffset.UtcNow;
     public int McpPort { get; set; } = 54321;
@@ -28,6 +30,7 @@ public sealed class ForemanState : IEventSink
     public Func<string, string?>?                  GetDefaultProfileNameByHarnessId { get; set; }
     public Func<int, ProcessRecord?>?              FindHarnessAncestorByPid { get; set; }
     public Func<int>?                              GetMcpSessionCount { get; set; }
+    public Func<IReadOnlyList<McpClientInfo>>?      GetMcpClients { get; set; }
     public Func<IEnumerable<McpServerEntry>>?      GetMcpInventory    { get; set; }
     public Func<(IReadOnlyList<McpToolFinding> Findings, string Summary)>? GetMcpToolScan { get; set; }
 
@@ -38,6 +41,7 @@ public sealed class ForemanState : IEventSink
     public bool HasCritical => _alertById.Values.Any(e => !e.Acknowledged && e.Severity >= ForemanSeverity.High);
     public int ProcessCount => GetProcessSnapshot?.Invoke().Count() ?? 0;
     public int McpSessionCount => GetMcpSessionCount?.Invoke() ?? 0;
+    public int PendingAskHarnessCount => _askRequests.Values.Count(static r => r.Status == "pending");
 
     void IEventSink.OnEvent(ForemanEvent evt)
     {
@@ -144,5 +148,108 @@ public sealed class ForemanState : IEventSink
                 message   = e.Message,
                 acked     = e.Acknowledged,
             });
+    }
+
+    public AskHarnessRequest CreateAskHarnessRequest(
+        string harnessId,
+        string systemPrompt,
+        string prompt,
+        string alertId,
+        int? processId,
+        string? processName)
+    {
+        var request = new AskHarnessRequest(
+            Guid.NewGuid().ToString("N")[..12],
+            DateTimeOffset.UtcNow,
+            alertId,
+            harnessId,
+            processId,
+            processName,
+            systemPrompt,
+            prompt,
+            "pending");
+
+        _askRequests[request.RequestId] = request;
+        PruneAskHarnessRequests();
+        return request;
+    }
+
+    public IReadOnlyList<AskHarnessRequest> ListAskHarnessRequests(
+        string? harnessId,
+        int? processId,
+        bool includeAnswered,
+        int limit)
+    {
+        var resolvedHarness = ResolveHarnessId(harnessId, processId);
+        var query = _askRequests.Values.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(resolvedHarness))
+        {
+            query = query.Where(r =>
+                string.Equals(r.HarnessId, resolvedHarness, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!includeAnswered)
+            query = query.Where(static r => r.Status == "pending");
+
+        return query
+            .OrderByDescending(static r => r.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 50))
+            .ToList();
+    }
+
+    public AskHarnessRequest? GetAskHarnessRequest(string requestId) =>
+        _askRequests.TryGetValue(requestId, out var request) ? request : null;
+
+    public (bool Ok, string Reason, AskHarnessRequest? Request) ReplyToAskHarnessRequest(
+        string requestId,
+        string replyText,
+        string? actionTaken,
+        string? harnessId,
+        int? processId)
+    {
+        if (!_askRequests.TryGetValue(requestId, out var request))
+            return (false, "No Ask Harness request exists with that id.", null);
+
+        var resolvedHarness = ResolveHarnessId(harnessId, processId);
+        if (!string.IsNullOrWhiteSpace(resolvedHarness) &&
+            !string.Equals(request.HarnessId, resolvedHarness, StringComparison.OrdinalIgnoreCase))
+        {
+            return (false,
+                $"Request {requestId} belongs to '{request.HarnessId}', not '{resolvedHarness}'.",
+                request);
+        }
+
+        var updated = request with
+        {
+            Status = "answered",
+            RepliedAt = DateTimeOffset.UtcNow,
+            ReplyText = replyText,
+            ActionTaken = string.IsNullOrWhiteSpace(actionTaken) ? null : actionTaken.Trim(),
+        };
+        _askRequests[requestId] = updated;
+        return (true, "Reply recorded.", updated);
+    }
+
+    public int CountAskHarnessRequests(string? harnessId = null, bool includeAnswered = false)
+    {
+        var query = _askRequests.Values.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(harnessId))
+            query = query.Where(r => string.Equals(r.HarnessId, harnessId, StringComparison.OrdinalIgnoreCase));
+        if (!includeAnswered)
+            query = query.Where(static r => r.Status == "pending");
+        return query.Count();
+    }
+
+    private void PruneAskHarnessRequests()
+    {
+        var toRemove = _askRequests.Values
+            .OrderByDescending(static r => r.CreatedAt)
+            .Skip(MaxAskHarnessRequests)
+            .Select(static r => r.RequestId)
+            .ToList();
+
+        foreach (var id in toRemove)
+            _askRequests.TryRemove(id, out _);
     }
 }

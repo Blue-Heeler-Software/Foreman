@@ -31,8 +31,30 @@ public static class ForemanMcpTools
             status = state.ActiveAlerts == 0 ? "green" : state.HasCritical ? "red" : "amber",
             activeAlerts = state.ActiveAlerts,
             monitoredProcesses = state.ProcessCount,
+            pendingAskHarnessRequests = state.PendingAskHarnessCount,
             uptimeSeconds = (int)(DateTimeOffset.UtcNow - state.StartTime).TotalSeconds,
             version = BuildVersion,
+        };
+    }
+
+    [McpServerTool, Description(
+        "Lists MCP clients currently connected to Foreman, including their self-announced identity " +
+        "and whether they support sampling. Use this to debug Ask Harness delivery. The identity is " +
+        "self-declared by the client and is not an authorization boundary.")]
+    public static object ListConnectedMcpClients()
+    {
+        var state = _state ?? new ForemanState();
+        var clients = state.GetMcpClients?.Invoke() ?? [];
+        return new
+        {
+            count = clients.Count,
+            clients = clients.Select(c => new
+            {
+                c.Name,
+                c.Version,
+                c.Sampling,
+                c.Elicitation,
+            }).ToArray(),
         };
     }
 
@@ -244,6 +266,7 @@ public static class ForemanMcpTools
         [Description("Reset behavioral escalation metrics for a fresh start")] bool resetMetrics = false,
         [Description("Harness ID for metric reset (only used when resetMetrics=true), e.g. 'claude-code'")] string? harnessId = null)
     {
+        var state = _state ?? new ForemanState();
         EventBus.Instance.Publish(new InfoEvent(
             DateTimeOffset.UtcNow,
             "MCP.TaskStart",
@@ -251,7 +274,6 @@ public static class ForemanMcpTools
 
         if (resetMetrics && harnessId is not null)
         {
-            var state = _state ?? new ForemanState();
             ResetAndAnnounce(state, harnessId, "MCP.TaskStart");
         }
 
@@ -260,6 +282,64 @@ public static class ForemanMcpTools
             acknowledged = true,
             taskDescription,
             metricsReset = resetMetrics && harnessId is not null,
+            pendingAskHarnessRequests = harnessId is null
+                ? state.CountAskHarnessRequests()
+                : state.CountAskHarnessRequests(harnessId),
+            hint = "If pendingAskHarnessRequests is non-zero, call ListAskHarnessRequests and answer with ReplyToAskHarnessRequest.",
+        };
+    }
+
+    [McpServerTool, Description(
+        "Lists pending Foreman 'Ask Harness' prompts for a harness. Call this when Foreman flags you, " +
+        "when ForemanStatus or ReportTaskStart reports pendingAskHarnessRequests, or at task boundaries. " +
+        "Then answer each prompt with ReplyToAskHarnessRequest.")]
+    public static object ListAskHarnessRequests(
+        [Description("Optional harness ID to scope prompts, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
+        [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null,
+        [Description("Include already answered requests as well as pending ones")] bool includeAnswered = false,
+        [Description("Maximum requests to return")] int limit = 10)
+    {
+        var state = _state ?? new ForemanState();
+        var resolvedHarness = state.ResolveHarnessId(harnessId, processId);
+        var requests = state.ListAskHarnessRequests(resolvedHarness ?? harnessId, processId, includeAnswered, limit);
+        return new
+        {
+            harnessId = resolvedHarness ?? harnessId,
+            pendingCount = requests.Count(r => r.Status == "pending"),
+            requests = requests.Select(AskRequestShape).ToArray(),
+            nextAction = "If any request is pending, answer with ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId/processId).",
+        };
+    }
+
+    [McpServerTool, Description(
+        "Replies to a Foreman 'Ask Harness' prompt. Use this after ListAskHarnessRequests returns a " +
+        "pending request for your harness. Be factual: explain what you were doing, whether it was expected, " +
+        "and what corrective action you took or recommend.")]
+    public static object ReplyToAskHarnessRequest(
+        [Description("The requestId returned by ListAskHarnessRequests")] string requestId,
+        [Description("Your reply to Foreman's prompt")] string response,
+        [Description("Optional concise action taken, e.g. 'stopped pid 1234', 'left running', 'needs operator review'")] string? actionTaken = null,
+        [Description("Optional harness ID, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
+        [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (string.IsNullOrWhiteSpace(response))
+            return new { accepted = false, reason = "Response must not be empty." };
+
+        var result = state.ReplyToAskHarnessRequest(requestId, response.Trim(), actionTaken, harnessId, processId);
+        if (!result.Ok)
+            return new { accepted = false, reason = result.Reason, request = result.Request is null ? null : AskRequestShape(result.Request) };
+
+        EventBus.Instance.Publish(new InfoEvent(
+            DateTimeOffset.UtcNow,
+            "MCP.AskHarnessReply",
+            $"Ask Harness reply from '{result.Request!.HarnessId}' for alert [{result.Request.AlertId}]: {Truncate(response, 160)}"));
+
+        return new
+        {
+            accepted = true,
+            reason = result.Reason,
+            request = AskRequestShape(result.Request),
         };
     }
 
@@ -303,6 +383,12 @@ public static class ForemanMcpTools
                 trustedHookPathMarkers = profile.Alerts.TrustedHookPathMarkers,
                 launcherSuppressedRuleIds = profile.Alerts.LauncherSuppressedRuleIds,
             },
+            askHarness = new
+            {
+                pendingRequests = resolvedHarness is null ? 0 : state.CountAskHarnessRequests(resolvedHarness),
+                receiveTool = "ListAskHarnessRequests",
+                replyTool = "ReplyToAskHarnessRequest",
+            },
         };
     }
 
@@ -332,7 +418,12 @@ public static class ForemanMcpTools
                 setupFile = @"%LocalAppData%\Foreman\mcp-setup.txt",
                 note = "The /mcp endpoint requires this token in an Authorization header; copy it from the token file into your client config. /health stays open.",
             },
-            note = "Pass harnessId or processId to Foreman MCP tools so permissions and process listings can be scoped to this harness.",
+            askHarness = new
+            {
+                receive = "Call ListAskHarnessRequests with your harnessId or processId to receive Foreman's pending prompts.",
+                reply = "Call ReplyToAskHarnessRequest with the requestId and your response so Foreman records the answer.",
+            },
+            note = "Pass harnessId or processId to Foreman MCP tools so permissions, process listings, and Ask Harness requests can be scoped to this harness.",
         };
     }
 
@@ -356,6 +447,15 @@ public static class ForemanMcpTools
             runningProcessCount = processes.Length,
             runningHarnessCount = processes.Count(p => string.Equals(p.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase)),
             mcpSessions = state.McpSessionCount,
+            connectedClients = state.GetMcpClients?.Invoke().Select(c => new
+            {
+                c.Name,
+                c.Version,
+                c.Sampling,
+                c.Elicitation,
+                matchesHarness = SseSessionManager.MatchesHarness(c.Name, null, harnessId),
+            }).ToArray() ?? [],
+            pendingAskHarnessRequests = state.CountAskHarnessRequests(harnessId),
             status = integration is not null && profile is not null
                 ? "configured"
                 : "incomplete",
@@ -526,4 +626,23 @@ public static class ForemanMcpTools
 
     private static int SeverityRank(string severity) =>
         Enum.TryParse<ForemanSeverity>(severity, true, out var parsed) ? (int)parsed : -1;
+
+    private static object AskRequestShape(AskHarnessRequest request) => new
+    {
+        request.RequestId,
+        request.CreatedAt,
+        request.AlertId,
+        request.HarnessId,
+        request.ProcessId,
+        request.ProcessName,
+        request.Status,
+        request.SystemPrompt,
+        request.Prompt,
+        request.RepliedAt,
+        request.ReplyText,
+        request.ActionTaken,
+    };
+
+    private static string Truncate(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "...";
 }

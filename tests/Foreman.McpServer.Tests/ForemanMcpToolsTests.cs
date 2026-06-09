@@ -12,6 +12,7 @@ public sealed class ForemanMcpToolsTests : IDisposable
     private readonly ProfileMatcher _matcher;
     private readonly ProcessRecord _harness;
     private readonly ProcessRecord _child;
+    private readonly ForemanState _state;
 
     public ForemanMcpToolsTests()
     {
@@ -39,7 +40,7 @@ public sealed class ForemanMcpToolsTests : IDisposable
             StartTime = DateTimeOffset.UtcNow,
         };
 
-        ForemanMcpTools.SetState(new ForemanState
+        _state = new ForemanState
         {
             McpPort = 12345,
             GetProcessSnapshot = () => [_harness, _child],
@@ -47,7 +48,9 @@ public sealed class ForemanMcpToolsTests : IDisposable
             GetDefaultProfileNameByHarnessId = HarnessIntegrationRegistry.GetDefaultProfileName,
             FindHarnessAncestorByPid = pid => pid == _child.Pid || pid == _harness.Pid ? _harness : null,
             GetMcpSessionCount = () => 2,
-        });
+            GetMcpClients = () => [new McpClientInfo("Codex CLI", "1.0", Sampling: false, Elicitation: false)],
+        };
+        ForemanMcpTools.SetState(_state);
     }
 
     [Fact]
@@ -98,6 +101,40 @@ public sealed class ForemanMcpToolsTests : IDisposable
         Assert.True(validation.RootElement.GetProperty("profileLoaded").GetBoolean());
         Assert.Equal(2, validation.RootElement.GetProperty("runningProcessCount").GetInt32());
         Assert.Equal(2, validation.RootElement.GetProperty("mcpSessions").GetInt32());
+        Assert.Equal("Codex CLI", validation.RootElement.GetProperty("connectedClients")[0].GetProperty("Name").GetString());
+    }
+
+    [Fact]
+    public void AskHarnessRequests_CanBePolledAndAnsweredByHarness()
+    {
+        var request = _state.CreateAskHarnessRequest(
+            "codex",
+            "system",
+            "justify this action",
+            "alert-1",
+            _child.Pid,
+            "cmd.exe");
+
+        using var pending = ToJson(ForemanMcpTools.ListAskHarnessRequests(harnessId: "codex"));
+        Assert.Equal(1, pending.RootElement.GetProperty("pendingCount").GetInt32());
+        var returned = pending.RootElement.GetProperty("requests")[0];
+        Assert.Equal(request.RequestId, returned.GetProperty("RequestId").GetString());
+        Assert.Equal("justify this action", returned.GetProperty("Prompt").GetString());
+
+        using var reply = ToJson(ForemanMcpTools.ReplyToAskHarnessRequest(
+            request.RequestId,
+            "I was waiting for a command to finish; I will stop it.",
+            actionTaken: "operator should stop pid",
+            harnessId: "codex"));
+
+        Assert.True(reply.RootElement.GetProperty("accepted").GetBoolean());
+
+        using var answered = ToJson(ForemanMcpTools.ListAskHarnessRequests(
+            harnessId: "codex",
+            includeAnswered: true));
+        var answeredRequest = answered.RootElement.GetProperty("requests")[0];
+        Assert.Equal("answered", answeredRequest.GetProperty("Status").GetString());
+        Assert.Contains("waiting for a command", answeredRequest.GetProperty("ReplyText").GetString());
     }
 
     [Theory]

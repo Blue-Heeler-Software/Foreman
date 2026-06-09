@@ -40,6 +40,7 @@ public sealed class McpServerHost : IAsyncDisposable
         State.McpPort = settings.McpPort;
         State.LlmTriage = settings.LlmTriage;
         State.GetMcpSessionCount = () => Sessions.Count;
+        State.GetMcpClients = () => Sessions.DescribeSessions();
     }
 
     public async Task StartAsync(CancellationToken ct = default)

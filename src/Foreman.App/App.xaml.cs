@@ -70,9 +70,13 @@ public partial class App : Application
         AlertDetailWindow.GetProcessSnapshot = () => _monitor.Tree.GetAll();
         AlertDetailWindow.GetLlmTriageSettings = () => settings.LlmTriage;
         AlertDetailWindow.KillProcessByPid = (pid, startTime) => _monitor.Tree.KillProcess(pid, startTime);
+        AlertDetailWindow.QueueAskHarnessRequest = (harnessId, sys, usr, alertId, pid, processName) =>
+            _mcpHost.State.CreateAskHarnessRequest(harnessId, sys, usr, alertId, pid, processName);
+        AlertDetailWindow.RecordAskHarnessReply = (requestId, reply, actionTaken, harnessId, pid) =>
+            _mcpHost.State.ReplyToAskHarnessRequest(requestId, reply, actionTaken, harnessId, pid).Ok;
         // Ask Harness delivers a justify/act prompt to the offender's own MCP session when reachable.
-        AlertDetailWindow.AskOffender = (harnessId, sys, usr, ct) =>
-            _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, ct);
+        AlertDetailWindow.AskOffender = (harnessId, sys, usr, requestId, ct) =>
+            _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId, ct);
 
         // wire behavior tracker into tray (metrics window + kill + disable actions)
         _tray.GetBehaviorProfiles   = () => _monitor.Behavior.Profiles;

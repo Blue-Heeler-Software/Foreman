@@ -37,7 +37,7 @@ public static class HarnessIntegrationRegistry
             "codex-default",
             [],
             [],
-            "Add Foreman's HTTP MCP endpoint to ~/.codex/config.toml, or use Foreman's Connect Agent window to write it automatically.",
+            "Add Foreman's HTTP MCP endpoint to ~/.codex/config.toml and the Foreman MCP Safety Monitor section to ~/.codex/AGENTS.md, or use Foreman's Connect Agent window to write both automatically.",
             """
             [mcp_servers.foreman]
             url = "http://localhost:{port}/mcp"

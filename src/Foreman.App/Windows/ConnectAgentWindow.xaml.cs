@@ -75,7 +75,7 @@ public partial class ConnectAgentWindow : Window
                 "Foreman — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
             MessageBox.Show(
-                $"{r.Message}\n\nRestart Codex to connect." +
+                $"{r.Message}\n\nRestart Codex to connect and load the Foreman instructions." +
                 (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
                 "Foreman — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
         RefreshConnected();

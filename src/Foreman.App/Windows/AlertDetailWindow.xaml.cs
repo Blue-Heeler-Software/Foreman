@@ -52,9 +52,15 @@ public partial class AlertDetailWindow : Window
     /// Wired up by App.xaml.cs. "Ask Harness": deliver a justify/act prompt to the OFFENDING harness's
     /// own MCP session (sampling round-trip → targeted notification). Returns how it was delivered;
     /// <see cref="AskOutcome.NoSession"/> means the caller falls back to the clipboard.
-    /// Args: (harnessId, systemPrompt, userPrompt, cancellationToken).
+    /// Args: (harnessId, systemPrompt, userPrompt, requestId, cancellationToken).
     /// </summary>
-    public static Func<string, string, string, CancellationToken, Task<AskOffenderResult>>? AskOffender { get; set; }
+    public static Func<string, string, string, string?, CancellationToken, Task<AskOffenderResult>>? AskOffender { get; set; }
+
+    /// <summary>Queues a durable Ask Harness request so MCP clients that cannot receive pushes can poll/reply.</summary>
+    public static Func<string, string, string, string, int?, string?, AskHarnessRequest>? QueueAskHarnessRequest { get; set; }
+
+    /// <summary>Records a reply against a queued Ask Harness request.</summary>
+    public static Func<string, string, string?, string?, int?, bool>? RecordAskHarnessReply { get; set; }
 
     private AlertDetailWindow(ForemanEvent evt)
     {
@@ -126,6 +132,9 @@ public partial class AlertDetailWindow : Window
             "You are the AI coding agent that Foreman (a local safety monitor on this machine) flagged. " +
             "This is a self-audit. Answer honestly and briefly: say what you were doing and whether it " +
             "is expected, then either justify it or take the corrective action requested.";
+        var queued = !string.IsNullOrWhiteSpace(harnessId)
+            ? QueueAskHarnessRequest?.Invoke(harnessId!, systemPrompt, prompt, _event.Id, pid, processName)
+            : null;
 
         // Try to deliver to the offender's own live MCP session. Bounded so a slow or declining client
         // can't hang the UI; any failure falls through to the clipboard.
@@ -135,7 +144,7 @@ public partial class AlertDetailWindow : Window
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                result = await AskOffender(harnessId!, systemPrompt, prompt, cts.Token);
+                result = await AskOffender(harnessId!, systemPrompt, prompt, queued?.RequestId, cts.Token);
             }
             catch { result = null; }
         }
@@ -146,18 +155,28 @@ public partial class AlertDetailWindow : Window
         switch (result?.Outcome)
         {
             case AskOutcome.Sampled:
+                if (queued is not null && !string.IsNullOrWhiteSpace(result.ReplyText))
+                    RecordAskHarnessReply?.Invoke(
+                        queued.RequestId,
+                        result.ReplyText,
+                        "direct sampling reply",
+                        harnessId,
+                        pid);
                 EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
                     $"Ask Harness: {Blank(result.MatchedClient, harnessId ?? "harness")} responded to alert [{_event.Id}]"));
                 MessageBox.Show(
                     $"Asked the live {Blank(result.MatchedClient, harnessId ?? "harness")} session to account for this alert.\n\n" +
-                    $"Its response:\n\n{Blank(result.ReplyText, "(the harness returned an empty response)")}",
+                    $"Its response:\n\n{Blank(result.ReplyText, "(the harness returned an empty response)")}\n\n" +
+                    PendingLine(queued),
                     title, MessageBoxButton.OK, MessageBoxImage.Information);
                 break;
 
             case AskOutcome.Notified:
                 MessageBox.Show(
                     $"Delivered a justify/act request to the live {Blank(result.MatchedClient, harnessId ?? "harness")} MCP session.\n\n" +
-                    "This client accepts Foreman's notification, but does not support a direct query/reply round trip, so no answer returns to Foreman.\n\n" +
+                    "This client accepts Foreman's notification, but does not support a direct query/reply round trip.\n" +
+                    "It can reply by calling ReplyToAskHarnessRequest with the pending request id.\n\n" +
+                    PendingLine(queued) + "\n\n" +
                     (clipped
                         ? "The prompt is also on your clipboard. Paste it into that session if you want a visible answer."
                         : "Copying the prompt to the clipboard failed, so check the live session notification."),
@@ -172,6 +191,7 @@ public partial class AlertDetailWindow : Window
                     string.IsNullOrWhiteSpace(harnessId)
                         ? "Foreman couldn't attribute this alert to a specific harness."
                         : $"No live {harnessId} session is connected to Foreman's MCP, so the request couldn't be delivered automatically.\n\n" +
+                          PendingLine(queued) + "\n\n" +
                           (clipped
                               ? $"A justify/act prompt is on your clipboard — paste it into {owner}."
                               : "(Copying the prompt to the clipboard failed.)") +
@@ -219,6 +239,13 @@ public partial class AlertDetailWindow : Window
         try { Clipboard.SetText(text); return true; }
         catch { return false; }
     }
+
+    private static string PendingLine(AskHarnessRequest? request) =>
+        request is null
+            ? "No pending Ask Harness request was queued."
+            : $"Pending request id: {request.RequestId}\n" +
+              $"The harness can receive it with ListAskHarnessRequests(harnessId: \"{request.HarnessId}\") " +
+              "and reply with ReplyToAskHarnessRequest.";
 
     private static string ConnectionHelp(string? harnessId)
     {
