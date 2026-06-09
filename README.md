@@ -34,7 +34,7 @@ It can also save real money. Every runaway loop caught early is fewer wasted tok
 - Classifies known agents automatically (Claude Code, Codex, and others) from process name and command line; you can register custom executable names.
 - Exposes an **MCP server** an agent can call to check its own status, pre-flight a command, see whether Foreman has raised an alarm about it and announce task boundaries.
 - **Ask Harness** — prompts the *offending* agent itself to justify and/or act on an alert (any type, including hangs and other mess). When that agent is connected to Foreman's MCP it's delivered to its own session — a sampling round-trip if the client supports it, otherwise a notification — and falls back to a clipboard prompt scoped to that agent.
-- **Send for Audit** — routes *alarming* behavior (flagged commands, permission violations, Alarm-level escalations) to a *different* agent or API from your preference list for an independent second opinion. Shown only for alerts that qualify; hangs/mess never route to a peer auditor.
+- **Send for Audit** — (adversarial verification) routes *alarming* behavior (flagged commands, permission violations, Alarm-level escalations) to a *different* agent or API from your preference list for an independent second opinion. Shown only for alerts that qualify; hangs/mess never route to a peer auditor.
 - Keeps a searchable, exportable event log and an at-a-glance dashboard, with tray notifications for critical alerts.
 
 ## Product standards
