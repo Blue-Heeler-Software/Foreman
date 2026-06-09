@@ -86,7 +86,7 @@
 
             <!-- ── Notifications ─────────────────────────────────────────────── -->
             <StackPanel Grid.Row="6">
-                <TextBlock Text="BALLOON NOTIFICATIONS" FontSize="10" FontWeight="Bold"
+                <TextBlock Text="NOTIFICATIONS" FontSize="10" FontWeight="Bold"
                            Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8" />
                 <CheckBox x:Name="NotifyHangCheck" Content="Notify on hang detected" />
                 <CheckBox x:Name="NotifyOrphanCheck" Content="Notify on orphaned process" />

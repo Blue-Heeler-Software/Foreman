@@ -96,9 +96,11 @@ public sealed class McpToolScanMonitor : IDisposable
                 .ToList();
             _current = findings;
             PublishNew(findings);
+            var probed = scanned + unreachable;
             _lastSummary =
-                $"Scanned {scanned} MCP server(s): {findings.Count} finding(s), {unreachable} unreachable" +
-                (skipped.Count > 0 ? $"; skipped {skipped.Count}: {string.Join(", ", skipped)}" : "; nothing skipped") + ".";
+                $"Checked {probed} HTTP MCP server(s): {scanned} reachable, {unreachable} unreachable, " +
+                $"{findings.Count} finding(s)" +
+                (skipped.Count > 0 ? $"; skipped {skipped.Count}: {string.Join(", ", skipped)}" : "") + ".";
             _bus.Publish(new MonitoringNoticeEvent(
                 DateTimeOffset.UtcNow, ForemanSeverity.Info, "Foreman.McpToolScan", _lastSummary));
             return findings;

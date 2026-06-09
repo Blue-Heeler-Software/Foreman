@@ -12,6 +12,8 @@ public static class FalsePositiveFilter
     {
         "Foreman.App",
         "Foreman.App.exe",
+        "Foreman",
+        "Foreman.exe",
         "dotnet",         // test runners
         "xunit.console",
         "pytest",

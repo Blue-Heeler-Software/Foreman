@@ -19,13 +19,14 @@ public static class HarnessIntegrationRegistry
             "claude-code-default",
             [@".claude\hooks\", ".claude/hooks/"],
             ["win-002"],
-            "Run: claude mcp add foreman http://localhost:{port}/mcp",
+            "Run: claude mcp add --transport http foreman http://localhost:{port}/mcp --header \"Authorization: Bearer <token>\" --scope user",
             """
             {
               "mcpServers": {
                 "foreman": {
                   "type": "http",
-                  "url": "http://localhost:{port}/mcp"
+                  "url": "http://localhost:{port}/mcp",
+                  "headers": { "Authorization": "Bearer <token>" }
                 }
               }
             }
@@ -55,7 +56,8 @@ public static class HarnessIntegrationRegistry
               "mcpServers": {
                 "foreman": {
                   "type": "http",
-                  "url": "http://localhost:{port}/mcp"
+                  "url": "http://localhost:{port}/mcp",
+                  "headers": { "Authorization": "Bearer <token>" }
                 }
               }
             }
@@ -74,7 +76,10 @@ public static class HarnessIntegrationRegistry
                 "foreman": {
                   "type": "remote",
                   "url": "http://localhost:{port}/mcp",
-                  "enabled": true
+                  "enabled": true,
+                  "headers": {
+                    "Authorization": "Bearer <token>"
+                  }
                 }
               }
             }

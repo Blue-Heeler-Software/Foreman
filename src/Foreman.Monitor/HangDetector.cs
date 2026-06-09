@@ -35,6 +35,8 @@ public sealed class HangDetector
         "conhost.exe",
         "Foreman.App",
         "Foreman.App.exe",
+        "Foreman",
+        "Foreman.exe",
     };
 
     public HangDetector(EventBus bus, ForemanSettings settings, ProcessTreeTracker tree)

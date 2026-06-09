@@ -247,6 +247,14 @@ public sealed class TrayController : IEventSink, IDisposable
             w.GetMcpClientCount = GetMcpClientCount;
             w.GetNetCaptureConnected = GetNetCaptureActive;
             w.GetConnectedClients = GetConnectedClients;
+            // "Agents running" = distinct harness types currently in the process tree (live), which is
+            // far more intuitive than a count of behaviour profiles (which sits at 0 until something fires).
+            w.GetRunningAgentCount = () => GetProcessSnapshot?.Invoke()
+                .Where(p => p.IsHarness)
+                .Select(p => p.HarnessType)
+                .Where(t => !string.IsNullOrEmpty(t))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count() ?? 0;
             w.McpPort = _settings.McpPort;
 
             // The monitoring views are now tabs inside the dashboard; build them here (the tray is the

@@ -133,7 +133,7 @@ public partial class App : Application
         var port = settings.McpPort;
         var mcpToken = _mcpHost.McpToken;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
-            () => FirstRunDetector.RunIfNeeded(port, mcpToken));
+            () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _mcpHost.Sessions.DescribeSessions()));
     }
 
     protected override void OnExit(ExitEventArgs e)

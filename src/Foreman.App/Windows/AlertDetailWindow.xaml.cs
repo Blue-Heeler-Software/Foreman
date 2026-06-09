@@ -118,7 +118,7 @@ public partial class AlertDetailWindow : Window
         var processName = ResolveTargetProcessName();
         var prompt      = BuildSelfJustifyPrompt(harnessId, pid, processName);
         const string systemPrompt =
-            "You are the AI coding agent that Foreman (a local watchdog on this machine) flagged. " +
+            "You are the AI coding agent that Foreman (a local safety monitor on this machine) flagged. " +
             "This is a self-audit. Answer honestly and briefly: say what you were doing and whether it " +
             "is expected, then either justify it or take the corrective action requested.";
 
@@ -262,7 +262,7 @@ public partial class AlertDetailWindow : Window
         var commandLine = ResolveTargetCommandLine(liveProcess);
 
         var sb = new StringBuilder();
-        sb.AppendLine("Foreman — a local watchdog monitoring the AI coding agents on this machine — flagged an action attributed to you. This is a self-audit; account for it.");
+        sb.AppendLine("Foreman - a local safety monitor for AI coding agents on this machine - flagged an action attributed to you. This is a self-audit; account for it.");
         sb.AppendLine();
         sb.AppendLine("Alert");
         sb.AppendLine($"- Id: {_event.Id}");
@@ -888,7 +888,7 @@ public sealed class AlertDetailVm
                     EscalationLevel.Emergency =>
                         "IMMEDIATE ACTION RECOMMENDED:\n" +
                         "1. Open the Behavior Metrics window and review the full session history.\n" +
-                        "2. If the activity was not authorised, use 'Kill Harness' to terminate the harness.\n" +
+                        "2. If the activity was not authorised, use 'End Harness Processes' to terminate the harness.\n" +
                         "3. Review the event log for the specific commands that triggered escalation.\n" +
                         "4. Consider disabling the harness in Foreman until you can audit its behaviour.",
                     EscalationLevel.Alarm =>

@@ -122,11 +122,11 @@
 
             <!-- Destructive actions on the left -->
             <StackPanel Grid.Column="0" Orientation="Horizontal">
-                <Button Content="☠ Kill Harness Processes" Click="KillClick"
+                <Button Content="End Harness Processes" Click="KillClick"
                         Background="#FF3A0808" Foreground="#FFFF6666"
                         BorderBrush="#FF5A1818" Padding="14,8" FontWeight="Bold"
                         Margin="0,0,10,0" Cursor="Hand" />
-                <Button Content="⊘ Disable &amp; Ignore" Click="DisableClick"
+                <Button Content="Pause Monitoring" Click="DisableClick"
                         Background="#FF1E2028" Foreground="{StaticResource TextMutedBrush}"
                         BorderBrush="#FF303540" Padding="12,8"
                         Cursor="Hand" />

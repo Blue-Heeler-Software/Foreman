@@ -1,11 +1,11 @@
 <Project>
   <PropertyGroup>
     <Product>Foreman</Product>
-    <Company>Foreman</Company>
-    <Authors>user</Authors>
+    <Company>aXL333</Company>
+    <Authors>aXL333</Authors>
     <Version>0.1.0</Version>
-    <Description>A Windows watchdog for AI coding agents. Flags dangerous shell commands, catches hung and orphaned harness child processes, and exposes an MCP bridge so agents can query their own oversight.</Description>
-    <Copyright>Copyright (c) 2026 user</Copyright>
+    <Description>A Windows safety monitor for AI coding agents: watch risky commands, stuck runs, MCP changes, and cross-agent audit workflows.</Description>
+    <Copyright>Copyright (c) 2026 aXL333</Copyright>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/aXL333/Foreman</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

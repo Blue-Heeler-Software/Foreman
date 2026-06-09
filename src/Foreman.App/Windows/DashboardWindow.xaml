@@ -226,7 +226,7 @@
                         <TextBlock x:Name="HarnessCountLabel"
                                    Text="0"
                                    Style="{StaticResource MetricValue}" />
-                        <TextBlock Text="TRACKED HARNESSES"
+                        <TextBlock Text="AGENTS RUNNING"
                                    Style="{StaticResource MetricCaption}" />
                     </StackPanel>
                 </Border>
@@ -285,7 +285,7 @@
                                    FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="NET METERING"
+                        <TextBlock Text="NETWORK"
                                    Style="{StaticResource MetricCaption}" />
                     </StackPanel>
                 </Border>

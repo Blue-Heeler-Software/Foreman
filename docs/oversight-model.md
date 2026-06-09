@@ -16,7 +16,7 @@ different questions:
 | Question | "justify and/or act on this" | "is this alarming? second opinion" |
 | Applies to | every alert type, incl. hangs/mess | **alarming behavior only** |
 | Delivery | the offender's own MCP session, else clipboard | clipboard prompt for the chosen reviewer |
-| Button | always shown | shown only when the alert qualifies |
+| Button | shown when Foreman can attribute the alert to a harness | shown only when the alert qualifies |
 
 ### Ask Harness — interrogate the offender
 
@@ -80,7 +80,9 @@ configured across harness configs (Claude Code `.claude.json`, global + per-proj
 `~/.codex/config.toml`) and
 `McpInventoryMonitor` raises a **Medium** alert when a new or changed-target server appears — a "who
 added this MCP server?" check. Config-file reads only: no network, no elevation. First run is a silent
-baseline; the seen-set persists. Exposed to agents via the `ListMcpServers` MCP tool.
+baseline; the seen-set persists. Foreman's own loopback `foreman` MCP connector is treated as an
+informational registration event, not a supply-chain alert. Exposed to agents via the
+`ListMcpServers` MCP tool.
 
 **Tier 1 — tool-description injection scan (opt-in).** A tool's description is fed to the model
 verbatim, so a malicious server can smuggle instructions there ("ignore previous instructions and

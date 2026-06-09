@@ -17,6 +17,8 @@ namespace Foreman.McpServer;
 public static class ForemanMcpTools
 {
     private static ForemanState? _state;
+    private static readonly string BuildVersion =
+        typeof(ForemanMcpTools).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
 
     internal static void SetState(ForemanState state) => _state = state;
 
@@ -30,7 +32,7 @@ public static class ForemanMcpTools
             activeAlerts = state.ActiveAlerts,
             monitoredProcesses = state.ProcessCount,
             uptimeSeconds = (int)(DateTimeOffset.UtcNow - state.StartTime).TotalSeconds,
-            version = "0.1.0",
+            version = BuildVersion,
         };
     }
 

@@ -6,9 +6,9 @@
   #define MyAppVersion "0.1.0"
 #endif
 #define MyAppName "Foreman"
-#define MyAppPublisher "user"
+#define MyAppPublisher "aXL333"
 #define MyAppURL "https://github.com/aXL333/Foreman"
-#define MyAppExeName "Foreman.App.exe"
+#define MyAppExeName "Foreman.exe"
 
 [Setup]
 ; Stable GUID so upgrades replace the existing install rather than stacking.

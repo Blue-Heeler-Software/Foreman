@@ -1,96 +1,85 @@
 # Contributing to Foreman
 
-Thanks for taking the time to help. Foreman is alpha software built on a preview SDK, so expect rough edges — bug reports, detection-rule additions, and small focused PRs are all welcome.
+Foreman is alpha software for local AI-agent safety oversight. Bug reports, false-positive tuning, docs polish, and small focused pull requests are welcome.
 
 ## Prerequisites
 
-- **.NET 10 SDK (preview)** — Foreman currently targets `net10.0` on a preview SDK. Install the preview channel; the CI workflow uses `dotnet-quality: preview`.
-- **Windows 10/11 x64.** The tray app, WMI monitoring, and P/Invoke code are Windows-only. `Foreman.Core` is platform-agnostic and its tests run anywhere, but the full solution builds and runs only on Windows.
-- A working `dotnet` on your `PATH`. No admin/UAC is required — Foreman runs at medium integrity.
+- .NET 10 SDK preview. CI uses the preview channel.
+- Windows 10/11 x64 for the full tray app and monitor.
+- A working `dotnet` on `PATH`.
 
-## Build and test
+Foreman runs at normal user integrity by default. No admin/UAC prompt is required except for the optional elevated network sidecar.
 
-The solution file is [`Foreman.slnx`](Foreman.slnx) (the newer XML solution format).
+## Build And Test
 
+The solution file is `Foreman.slnx`.
+
+```powershell
+dotnet build .\Foreman.slnx -c Release
+dotnet test .\Foreman.slnx -c Release
 ```
-dotnet build Foreman.slnx -c Release
-dotnet test  Foreman.slnx -c Release
-```
 
-CI runs the equivalent on `windows-latest` as separate restore / build / test steps (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+CI runs restore, build, and tests on `windows-latest`.
 
-## Project layout
-
-Four projects under `src/`:
+## Project Layout
 
 | Project | Responsibility |
 | --- | --- |
-| `Foreman.Core` | Platform-agnostic logic: events/EventBus, models, heuristics (`CommandAnalyzer` + `PatternLibrary`), behavior tracking and escalation, settings, profiles. |
-| `Foreman.Monitor` | Windows-only: WMI process create/terminate watcher, `ProcessTreeTracker`, `HarnessClassifier`, `IoPoller`, `HangDetector`, `OrphanDetector`, `ClaudeSettingsReader`. |
-| `Foreman.McpServer` | Kestrel host, MCP tool registry, and SSE session manager. |
-| `Foreman.App` | The WPF tray app and all its windows. |
+| `Foreman.Core` | Platform-agnostic events, models, heuristics, behavior tracking, settings, profiles, and escalation logic. |
+| `Foreman.Monitor` | Windows process watching, tree attribution, harness classification, I/O polling, hang/orphan detection, and MCP inventory. |
+| `Foreman.McpServer` | Local Kestrel/MCP host, bearer-token auth, tool registry, and connected-session tracking. |
+| `Foreman.App` | WPF tray app, dashboard, settings, alert detail, and connection UI. |
 
-Tests live under `tests/`: `Foreman.Core.Tests` and `Foreman.Monitor.Tests` (xUnit).
+Tests live under `tests/`.
 
-## Adding a detection rule
+## Detection Rules
 
-Detection rules are plain JSON, grouped by category. The source-of-truth copies live in [`data/patterns/*.json`](data/patterns/); `Foreman.Core/patterns/*.json` are the embedded-resource copies that actually ship. `PatternLibrary` loads every embedded `*.json` at startup and pre-compiles each `pattern` into a timeout-guarded `Regex`. Keep both locations in sync when you add or change a rule.
+Detection rules are JSON files grouped by category.
 
-Each file is `{ "category", "version", "rules": [ ... ] }`. A rule object has these fields:
+- Source copies live in `data/patterns/*.json`.
+- Embedded shipping copies live in `src/Foreman.Core/patterns/*.json`.
+- Keep both locations in sync when adding or changing a rule.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | string | Stable unique id, prefixed per category (e.g. `del-006`, `net-003`). Tests reference this. |
-| `name` | string | Short human-readable label. |
-| `severity` | string | One of `info`, `low`, `medium`, `high`, `critical`. Parsed into `ForemanSeverity`; an unknown value falls back to `info`. |
-| `description` | string | One line on what the rule matches and why it matters. |
-| `pattern` | string | A .NET regex (JSON-escaped). Compiled case-insensitive with a 50 ms match timeout, so keep it anchored and avoid catastrophic backtracking. |
-| `platforms` | string[] | Shells/contexts the rule applies to, e.g. `["bash", "sh", "wsl"]` or `["cmd", "powershell"]`. |
-| `falsePositiveTags` | string[] | Tags consumed by the false-positive filter to suppress known-safe contexts. Use `[]` if none. |
+Each rule should have:
 
-An optional `guidance` field is also supported — a short string shown to the user explaining what to do about a match.
+- a stable `id`, prefixed by category, such as `cred-013`;
+- a short `name`;
+- a `severity` of `info`, `low`, `medium`, `high`, or `critical`;
+- a safe, category-level `description`;
+- a .NET regex `pattern`;
+- matching tests.
 
-### Benign example
+Avoid putting working offensive one-liners in issue prose, PR titles, or docs. The rule pattern and a safe behavior-level explanation are enough.
 
-Use a real category file for your actual rule, but here is the shape, using a placeholder pattern that matches nothing dangerous:
+## Product And Design Standards
 
-```json
-{
-  "id": "demo-001",
-  "name": "example placeholder rule",
-  "severity": "low",
-  "description": "matches the literal marker string used in contributor docs",
-  "pattern": "\\bfoo-bar-baz\\b",
-  "platforms": ["bash", "cmd", "powershell"],
-  "falsePositiveTags": []
-}
-```
+Foreman is a safety tool, not a novelty tray utility. Public-facing changes should keep that tone:
 
-### Add a test
+- Prefer "safety monitor", "oversight", "audit", "review", and "accountability" over vague cleanup language.
+- Be precise about trust boundaries. Foreman is not a sandbox and should not be described as one.
+- Treat false positives as product bugs worth tuning.
+- Keep UI copy calm and direct. Avoid theatrical destructive labels.
+- Preserve privacy: do not include tokens, private paths, project names, or command output in screenshots or examples.
+- New artwork must be original, generated specifically for Foreman, or otherwise GPL-compatible.
 
-Every new rule should come with a test. `tests/Foreman.Core.Tests/Heuristics/CommandAnalyzerTests.cs` drives `CommandAnalyzer.Analyze` through `[Theory]`/`[InlineData]` cases and asserts the expected `Severity` and `RuleId`. Add at least one positive case (a string your pattern should flag) and, where it matters, a negative case in `AllowsNormalCommands` so a benign command does not regress into a false positive. The class uses `PatternLibraryFixture`, which calls `PatternLibrary.Instance.Initialize()` once for the run.
+## Pull Requests
 
-When writing detection content, describe behavior at the category level. Do not paste working attack one-liners into descriptions or commit messages — the rule's `pattern` is enough.
+- Branch from `main`.
+- Keep PRs focused.
+- Run build and tests before pushing.
+- Add tests for new behavior, especially detection rules, MCP tools, process attribution, or escalation logic.
+- Mention changes to the MCP surface, token handling, installer behavior, or detection categories in the PR description.
 
-## Coding conventions
-
-- **Nullable reference types are enabled** solution-wide (`<Nullable>enable</Nullable>` in `Directory.Build.props`). Don't suppress warnings to make them go away; fix the nullability.
-- **File-scoped namespaces** (`namespace Foreman.Core.Heuristics;`).
-- **Implicit usings** are on; `LangVersion` is `latest`. Use collection expressions (`[]`) where the existing code does.
-- **Keep `Foreman.Core` platform-agnostic.** No `System.Management`, no P/Invoke, no WPF, no Windows-only APIs in Core — that code belongs in `Foreman.Monitor` or `Foreman.App`. Core must stay testable cross-platform.
-- Match the surrounding style; the existing files are the reference.
-
-## Pull requests
-
-- Branch off `main`, keep PRs focused, and write a clear description of what and why.
-- Run `dotnet build` and `dotnet test` locally before pushing. **CI must pass** — it runs the build and full test suite on Windows, and a green check is required to merge.
-- New behavior (especially detection rules) needs test coverage.
-- If your change touches detection categories or the MCP tool surface, mention it explicitly so reviewers can check the safe-framing and the docs.
+The PR template includes a short safety/privacy checklist. Please fill it in instead of deleting it.
 
 ## Security
 
-If you find a vulnerability, please email **xredux@protonmail.com** rather than opening a public issue.
+Report vulnerabilities privately through GitHub Security Advisories or by email as described in `SECURITY.md`. Do not open public issues for suspected vulnerabilities.
+
+## Release Checklist
+
+Before publishing binaries, use `docs/release-checklist.md`.
 
 ## License
 
-Foreman is licensed under **GPL-3.0-or-later** (see [`LICENSE`](LICENSE)). By contributing, you agree that your contributions are licensed under the same terms.
+Foreman is licensed under GPL-3.0-or-later. By contributing, you agree that your contributions are licensed under the same terms.

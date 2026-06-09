@@ -1,0 +1,35 @@
+name: Detection tuning / false positive
+description: Report a noisy alert, missed detection, or rule tuning idea.
+title: "[Detection]: "
+labels: ["detection", "triage"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options:
+        - False positive
+        - Missed detection
+        - Severity/category tuning
+        - New rule suggestion
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or event
+      description: Redact secrets. Avoid posting working offensive payloads; describe behavior where possible.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why should Foreman treat this differently?
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent/harness involved
+      placeholder: "Codex, Claude Code, OpenCode, T3 Code, custom..."

@@ -36,6 +36,9 @@ public partial class DashboardWindow : Window, IEventSink
     /// <summary>Connected MCP clients + capabilities, for the MCP CLIENTS tooltip.</summary>
     public Func<IReadOnlyList<McpClientInfo>>? GetConnectedClients { get; set; }
 
+    /// <summary>Live count of agents currently running (distinct harness types), wired by TrayController.</summary>
+    public Func<int>? GetRunningAgentCount { get; set; }
+
     /// <summary>Opens the "Connect agent" guide window.</summary>
     public Action? OpenConnectAgentRequested { get; set; }
 
@@ -97,16 +100,21 @@ public partial class DashboardWindow : Window, IEventSink
             .ToList();
 
         // ── Header summary ────────────────────────────────────────────────────
-        var total = profiles.Sum(p => p.TotalAlerts);
-        SummaryLabel.Text = total == 0
-            ? "all clear"
-            : $"{total} alert{(total == 1 ? "" : "s")} total";
-
+        // "Active alerts" = unacknowledged events ABOVE Info severity. Counting by severity (not by
+        // InfoEvent type) keeps Info-severity notices — e.g. the MCP tool-scan summary, a
+        // MonitoringNoticeEvent at Info — from inflating the count. The header summary now mirrors this
+        // exact count, so "all clear" can no longer contradict a non-zero ACTIVE ALERTS card.
         var active = history
-            .Where(static e => e is not InfoEvent && !e.Acknowledged)
+            .Where(static e => e.Severity > ForemanSeverity.Info && !e.Acknowledged)
             .ToList();
+
+        SummaryLabel.Text = active.Count == 0
+            ? "all clear"
+            : $"{active.Count} active alert{(active.Count == 1 ? "" : "s")}";
+
         ActiveAlertCountLabel.Text = active.Count.ToString(CultureInfo.InvariantCulture);
-        HarnessCountLabel.Text = allProfiles.Count.ToString(CultureInfo.InvariantCulture);
+        HarnessCountLabel.Text = (GetRunningAgentCount?.Invoke() ?? allProfiles.Count)
+            .ToString(CultureInfo.InvariantCulture);
         HighAlertCountLabel.Text = active
             .Count(e => e.Severity >= ForemanSeverity.High)
             .ToString(CultureInfo.InvariantCulture);
