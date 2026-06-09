@@ -13,6 +13,12 @@ public sealed class ForemanSettings
     /// cooldown (re-arm immediately on each new silent episode).
     /// </summary>
     public int HangRealertCooldownMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// Operator-set notification mutes (see <see cref="Foreman.Core.Models.MutePolicy"/>). These only
+    /// quiet tray popups — detection, logging, dashboard counts and escalation are unaffected.
+    /// </summary>
+    public List<Foreman.Core.Models.MuteEntry> Mutes { get; set; } = [];
     public int IoPollerIntervalSeconds { get; set; } = 30;
     public int AlertSuppressWindowMinutes { get; set; } = 5;
     public bool NotifyOnHang { get; set; } = true;
