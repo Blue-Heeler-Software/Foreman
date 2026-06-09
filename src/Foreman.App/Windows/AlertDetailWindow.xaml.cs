@@ -6,6 +6,7 @@ using Foreman.McpServer;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace Foreman.App.Windows;
@@ -47,6 +48,12 @@ public partial class AlertDetailWindow : Window
     /// captured start time (identity pin) so the kill is refused if the PID was since recycled.
     /// </summary>
     public static Func<int, DateTimeOffset?, bool>? KillProcessByPid { get; set; }
+
+    /// <summary>Wired by App — persists an operator mute (notification suppression only).</summary>
+    public static Action<MuteEntry>? AddMute { get; set; }
+
+    /// <summary>Wired by App — the emergency-tier rule ids, so the mute guardrail can protect them.</summary>
+    public static Func<IReadOnlyList<string>>? GetEmergencyRuleIds { get; set; }
 
     /// <summary>
     /// Wired up by App.xaml.cs. "Ask Harness": deliver a justify/act prompt to the OFFENDING harness's
@@ -702,6 +709,62 @@ public partial class AlertDetailWindow : Window
         int RunningHarnessCount,
         string? ApiEndpoint,
         string? Model);
+
+    // Quiet this kind of alert's popup. The menu offers only durations the guardrail allows: a
+    // protected detection (Critical / emergency rule / cred-net-priv category) gets snooze-only options;
+    // everything else can be muted for longer or until cleared. Muting never stops detection.
+    private void MuteClick(object sender, RoutedEventArgs e)
+    {
+        var emergency = GetEmergencyRuleIds?.Invoke() ?? [];
+        var menu = new ContextMenu();
+
+        void Add(string header, TimeSpan? duration)
+        {
+            var item = new MenuItem { Header = header };
+            item.Click += (_, _) => ApplyMute(duration, emergency);
+            menu.Items.Add(item);
+        }
+
+        if (MutePolicy.IsProtected(_event, emergency))
+        {
+            menu.Items.Add(new MenuItem { Header = "Protected detection — snooze only", IsEnabled = false });
+            menu.Items.Add(new Separator());
+            Add("Snooze 15 minutes", TimeSpan.FromMinutes(15));
+            Add("Snooze 60 minutes", TimeSpan.FromMinutes(60));
+        }
+        else
+        {
+            // Time-boxed only for now: every mute auto-expires, so none can be silently orphaned
+            // (a "mute until cleared" option waits for a mute-manager UI to clear them).
+            Add("Mute 1 hour",   TimeSpan.FromHours(1));
+            Add("Mute 8 hours",  TimeSpan.FromHours(8));
+            Add("Mute 24 hours", TimeSpan.FromHours(24));
+        }
+
+        menu.PlacementTarget = sender as UIElement;
+        menu.IsOpen = true;
+    }
+
+    private void ApplyMute(TimeSpan? duration, IReadOnlyList<string> emergency)
+    {
+        var mute = MutePolicy.CreateMute(_event, duration, emergency, DateTimeOffset.UtcNow);
+        if (mute is null)
+        {
+            MessageBox.Show(
+                "That mute isn't allowed for this alert — protected detections can only be snoozed briefly.",
+                "Foreman — Mute", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        AddMute?.Invoke(mute);
+        var when = mute.Until is { } u ? $"until {u.ToLocalTime():t}" : "until you clear it";
+        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+            $"Muted {mute.Label} {when} — notifications only; still logged, counted and escalated."));
+        MessageBox.Show(
+            $"Muted {mute.Label} {when}.\n\nThis only quiets the tray popup — the alert is still recorded, " +
+            "counted on the dashboard, and feeds escalation.",
+            "Foreman — Mute", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
 
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
 }

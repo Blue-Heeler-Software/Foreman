@@ -160,6 +160,9 @@ public sealed class TrayController : IEventSink, IDisposable
     private void ShowBalloonIfNeeded(ForemanEvent evt)
     {
         if (_tray is null) return;
+        // Operator mute: quiet the popup only. The event is already logged/counted/escalated by the
+        // time we get here — muting never hides it from the log, dashboard or escalation.
+        if (Foreman.Core.Models.MutePolicy.IsSuppressed(evt, _settings.Mutes, DateTimeOffset.UtcNow)) return;
         if (!_settings.NotifyOnHang && evt is HangDetectedEvent) return;
         if (!_settings.NotifyOnOrphan && evt is OrphanDetectedEvent) return;
         if (!_settings.NotifyOnCriticalCommand && evt is CommandAlertEvent) return;

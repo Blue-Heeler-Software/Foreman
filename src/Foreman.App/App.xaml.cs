@@ -70,6 +70,9 @@ public partial class App : Application
         AlertDetailWindow.GetProcessSnapshot = () => _monitor.Tree.GetAll();
         AlertDetailWindow.GetLlmTriageSettings = () => settings.LlmTriage;
         AlertDetailWindow.KillProcessByPid = (pid, startTime) => _monitor.Tree.KillProcess(pid, startTime);
+        // Click-to-mute: persist an operator mute (notification suppression only; guardrailed by MutePolicy).
+        AlertDetailWindow.AddMute = m => { settings.Mutes.Add(m); SettingsStore.Save(settings); };
+        AlertDetailWindow.GetEmergencyRuleIds = () => settings.EmergencyRuleIds;
         AlertDetailWindow.QueueAskHarnessRequest = (harnessId, sys, usr, alertId, pid, processName) =>
             _mcpHost.State.CreateAskHarnessRequest(harnessId, sys, usr, alertId, pid, processName);
         AlertDetailWindow.RecordAskHarnessReply = (requestId, reply, actionTaken, harnessId, pid) =>

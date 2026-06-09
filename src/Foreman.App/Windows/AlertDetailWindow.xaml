@@ -173,6 +173,8 @@
                         Background="#FF1A2A1F" BorderBrush="#FF3E8A57"
                         Foreground="#FFDDF8E5" MinWidth="116"
                         ToolTip="Route this alert to a different agent for an independent review (alarming behavior only)." />
+                <Button x:Name="MuteButton" Content="Mute…" Click="MuteClick" Margin="0,0,8,0"
+                        ToolTip="Quiet this kind of alert's popup (still logged, counted and escalated). Protected detections can only be snoozed briefly." />
                 <Button Content="Acknowledge" Click="AcknowledgeClick" Margin="0,0,8,0" />
                 <Button Content="Open Log"    Click="OpenLogClick"    Margin="0,0,8,0" />
                 <Button Content="Close"       Click="CloseClick"
