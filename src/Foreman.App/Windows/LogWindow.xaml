@@ -111,6 +111,7 @@
                   VirtualizingPanel.IsVirtualizing="True"
                   VirtualizingPanel.VirtualizationMode="Recycling"
                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  GridViewColumnHeader.Click="ColumnHeaderClick"
                   MouseDoubleClick="EventList_MouseDoubleClick">
             <ListView.View>
                 <GridView>

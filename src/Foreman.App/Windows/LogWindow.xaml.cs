@@ -140,6 +140,36 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         if (_autoScroll) ScrollToBottom();
     }
 
+    // Click a column header to sort by it; click again to flip direction.
+    private string? _sortProp;
+    private ListSortDirection _sortDir = ListSortDirection.Descending;
+
+    private void ColumnHeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (_view is null || e.OriginalSource is not GridViewColumnHeader header) return;
+        var prop = (header.Column?.Header as string) switch
+        {
+            "Time"    => "OriginalEvent.Timestamp",
+            "Sev"     => "OriginalEvent.Severity",
+            "Source"  => "Source",
+            "Message" => "Message",
+            _         => null,
+        };
+        if (prop is null) return;   // ignore clicks on the templated padding header
+
+        if (_sortProp == prop)
+            _sortDir = _sortDir == ListSortDirection.Ascending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        else
+        {
+            _sortProp = prop;
+            _sortDir = prop == "OriginalEvent.Timestamp" ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        }
+
+        _view.SortDescriptions.Clear();
+        _view.SortDescriptions.Add(new SortDescription(_sortProp, _sortDir));
+        _view.Refresh();
+    }
+
     private void EventList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (EventList.SelectedItem is EventViewModel vm)
