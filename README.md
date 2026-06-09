@@ -81,7 +81,7 @@ Four moving parts, kept deliberately separate.
 | Alarm | a critical alert, enough unique rules or categories | notification + MCP push to the connected agent |
 | Emergency | an emergency-tier rule, or too many alerts across the major categories at once | alarm window auto-opens with Kill / Disable actions |
 
-**MCP supply-chain watch.** Foreman reads the MCP servers your agents are configured to use (e.g. Claude Code's `.claude.json`, global and per-project) and raises a medium alert when a new or changed-target server appears — a "who added this MCP server?" check. This is on by default and costs nothing: config-file reads only, no network, no elevation. Optionally (Settings → *Scan MCP tools*, off by default) Foreman can go further and connect to the HTTP/SSE servers, enumerate their tools, and flag tool names or descriptions that read like prompt injection or data exfil — a tool description is fed to the model verbatim, so it is a real injection vector. The opt-in scan is the only feature that makes outbound connections to third-party servers; stdio servers are never launched. See [`docs/oversight-model.md`](docs/oversight-model.md) for the full response model (Ask Harness vs. Send for Audit) and the supply-chain tiers.
+**MCP supply-chain watch.** Foreman reads the MCP servers your agents are configured to use (e.g. Claude Code's `.claude.json`, global and per-project, plus Codex's `~/.codex/config.toml`) and raises a medium alert when a new or changed-target server appears — a "who added this MCP server?" check. This is on by default and costs nothing: config-file reads only, no network, no elevation. Optionally (Settings → *Scan MCP tools*, off by default) Foreman can go further and connect to the HTTP/SSE servers, enumerate their tools, and flag tool names or descriptions that read like prompt injection or data exfil — a tool description is fed to the model verbatim, so it is a real injection vector. The opt-in scan is the only feature that makes outbound connections to third-party servers; stdio servers are never launched. See [`docs/oversight-model.md`](docs/oversight-model.md) for the full response model (Ask Harness vs. Send for Audit) and the supply-chain tiers.
 
 **MCP bridge.** An embedded ASP.NET Core Kestrel host runs an MCP server (ModelContextProtocol SDK) over HTTP+SSE at `http://localhost:54321/mcp`, plus a `/health` endpoint. The tools exposed to an agent:
 
@@ -140,7 +140,7 @@ dotnet publish src/Foreman.App/Foreman.App.csproj ^
 
 Foreman's MCP server listens on `http://localhost:54321/mcp` while the tray app is running. The `/mcp` endpoint requires a per-install **bearer token** (the `/health` endpoint stays open). Your token is generated on first run and stored, owner-only, at `%LocalAppData%\Foreman\mcp.token`.
 
-**Easiest — in the app:** on first run, or any time via the tray menu → **Connect agent…** (also a button on the Dashboard), Foreman opens a short guide. For Claude Code it's one click — Foreman adds the user-scope `foreman` entry to your `~/.claude.json` (token and all, with a backup). For any other MCP client it shows a copy-paste config with the URL + token. Restart the agent afterwards. The rest of this section is the manual equivalent.
+**Easiest - in the app:** on first run, or any time via the tray menu -> **Connect agent...** (also a button on the Dashboard), Foreman opens a short guide. For Claude Code and Codex it's one click: Foreman adds the user-scope `foreman` entry to `~/.claude.json` or `~/.codex/config.toml` (token and all, with a backup). For any other MCP client it shows a copy-paste config with the URL + token. Restart the agent afterwards. The rest of this section is the manual equivalent.
 
 The simplest manual way to connect Claude Code (user scope, so every project picks it up):
 
@@ -162,6 +162,15 @@ Or add it to your MCP config (`~/.claude.json` or a project `.mcp.json`) directl
     }
   }
 }
+```
+
+For Codex, add this to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.foreman]
+url = "http://localhost:54321/mcp"
+http_headers = { Authorization = "Bearer <paste-token-from-mcp.token>" }
+enabled = true
 ```
 
 Without the token the connection is refused with `401` and Foreman shows **no session** for that agent (so Ask Harness falls back to the clipboard). Any MCP client that speaks streamable HTTP can connect the same way; confirm the server is up with `GET http://localhost:54321/health`.

@@ -76,7 +76,8 @@ fallback in `ResolveAuditRoute` was removed — audit never fires for mundane ev
 Two tiers, governed by the same cost rule: anything with overhead/network is opt-in.
 
 **Tier 0 — server inventory (on by default, no cost).** `McpInventoryScanner` reads the MCP servers
-configured across harness configs (Claude Code `.claude.json`, global + per-project) and
+configured across harness configs (Claude Code `.claude.json`, global + per-project; Codex
+`~/.codex/config.toml`) and
 `McpInventoryMonitor` raises a **Medium** alert when a new or changed-target server appears — a "who
 added this MCP server?" check. Config-file reads only: no network, no elevation. First run is a silent
 baseline; the seen-set persists. Exposed to agents via the `ListMcpServers` MCP tool.
@@ -102,8 +103,8 @@ the `ListMcpToolFindings` MCP tool (read-only/cached).
 - **Tier 1 live probe is unit-verified, not field-verified.** The scanner and the scannable-target
   filter are tested; an actual connection to a real third-party MCP server needs a live setup. Servers
   that require their own auth show as "unreachable" — expected.
-- **Codex MCP config (TOML) isn't parsed yet.** The inventory currently reads Claude Code's
-  `.claude.json` only; other harness formats are the natural next extension.
+- **Other harness config formats still need adapters.** Claude Code JSON and Codex TOML are parsed;
+  OpenCode/T3-specific config discovery is the natural next extension.
 
 ## Tests
 

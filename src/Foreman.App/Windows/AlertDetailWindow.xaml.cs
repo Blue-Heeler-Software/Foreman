@@ -164,7 +164,8 @@ public partial class AlertDetailWindow : Window
                         : $"No live {harnessId} session is connected to Foreman's MCP, so the request couldn't be delivered automatically.\n\n" +
                           (clipped
                               ? $"A justify/act prompt is on your clipboard — paste it into {owner}."
-                              : "(Copying the prompt to the clipboard failed.)"),
+                              : "(Copying the prompt to the clipboard failed.)") +
+                          ConnectionHelp(harnessId),
                     title, MessageBoxButton.OK, MessageBoxImage.Information);
                 break;
         }
@@ -207,6 +208,14 @@ public partial class AlertDetailWindow : Window
     {
         try { Clipboard.SetText(text); return true; }
         catch { return false; }
+    }
+
+    private static string ConnectionHelp(string? harnessId)
+    {
+        var agent = string.Equals(harnessId, "codex", StringComparison.OrdinalIgnoreCase)
+            ? "Codex"
+            : "the agent";
+        return $"\n\nTo fix automatic delivery: open Foreman Dashboard or tray menu > Connect agent > {agent} > Connect automatically, then restart {agent}.";
     }
 
     private string BuildAuditMessage(string? targetHarnessId, AuditRouteSelection route)

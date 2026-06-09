@@ -1,12 +1,13 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace Foreman.Core.Mcp;
 
 /// <summary>
 /// Discovers the MCP servers an AI harness is configured to use, by reading its config files.
-/// Tier 0: pure file + JSON reads — no network, no elevation. Currently understands Claude Code's
-/// .claude.json shape (top-level mcpServers plus per-project mcpServers); structured so other
-/// harnesses can be added as more sources.
+/// Tier 0: pure config reads — no network, no elevation. Currently understands Claude Code's
+/// .claude.json shape and Codex's config.toml MCP tables; structured so other harnesses can be
+/// added as more sources.
 /// </summary>
 public static class McpInventoryScanner
 {
@@ -15,6 +16,7 @@ public static class McpInventoryScanner
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         yield return (Path.Combine(home, ".claude.json"), "claude-code");
+        yield return (Path.Combine(home, ".codex", "config.toml"), "codex");
     }
 
     public static List<McpServerEntry> Scan() => Scan(DefaultSources());
@@ -25,7 +27,13 @@ public static class McpInventoryScanner
         foreach (var (path, harness) in sources)
         {
             if (!File.Exists(path)) continue;
-            try { found.AddRange(ParseClaudeJson(File.ReadAllText(path), harness, path)); }
+            try
+            {
+                var text = File.ReadAllText(path);
+                found.AddRange(string.Equals(harness, "codex", StringComparison.OrdinalIgnoreCase)
+                    ? ParseCodexToml(text, harness, path)
+                    : ParseClaudeJson(text, harness, path));
+            }
             catch { /* unreadable / malformed — skip this source */ }
         }
         // A server can appear both globally and under a project; collapse by identity.
@@ -47,6 +55,57 @@ public static class McpInventoryScanner
             foreach (var project in projects)
                 AddServers(list, project.Value?["mcpServers"], harness, project.Key, sourceFile);
 
+        return list;
+    }
+
+    /// <summary>Parses Codex config.toml MCP tables: [mcp_servers.name].</summary>
+    public static List<McpServerEntry> ParseCodexToml(string toml, string harness, string sourceFile)
+    {
+        var list = new List<McpServerEntry>();
+        var lines = toml.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+
+        string? name = null;
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void Flush()
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+
+            values.TryGetValue("url", out var url);
+            values.TryGetValue("command", out var command);
+            values.TryGetValue("args", out var args);
+
+            var transport = !string.IsNullOrWhiteSpace(url)
+                ? "http"
+                : !string.IsNullOrWhiteSpace(command)
+                    ? "stdio"
+                    : "unknown";
+
+            var target = !string.IsNullOrWhiteSpace(url)
+                ? url
+                : !string.IsNullOrWhiteSpace(command)
+                    ? (command + " " + args).Trim()
+                    : "";
+
+            list.Add(new McpServerEntry(harness, name, transport, target, "global", sourceFile));
+        }
+
+        foreach (var raw in lines)
+        {
+            if (TryGetTomlHeader(raw, out var header))
+            {
+                Flush();
+                values.Clear();
+                name = TryGetCodexMcpServerName(header);
+                continue;
+            }
+
+            if (name is null) continue;
+            if (TryGetTomlAssignment(raw, out var key, out var value))
+                values[key] = value;
+        }
+
+        Flush();
         return list;
     }
 
@@ -91,4 +150,60 @@ public static class McpInventoryScanner
         try { return node?.GetValue<string>(); }
         catch { return null; }   // value wasn't a string
     }
+
+    private static bool TryGetTomlHeader(string line, out string header)
+    {
+        header = "";
+        var match = Regex.Match(line, @"^\s*\[([^\]]+)\]\s*(?:#.*)?$");
+        if (!match.Success) return false;
+        header = match.Groups[1].Value.Trim();
+        return true;
+    }
+
+    private static string? TryGetCodexMcpServerName(string header)
+    {
+        const string prefix = "mcp_servers.";
+        if (!header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var name = header[prefix.Length..].Trim();
+        if (name.Length == 0 || name.Contains('.')) return null; // child table, e.g. .env or .tools.x
+
+        return name.Trim('"', '\'');
+    }
+
+    private static bool TryGetTomlAssignment(string line, out string key, out string value)
+    {
+        key = "";
+        value = "";
+
+        var match = Regex.Match(line, @"^\s*([A-Za-z0-9_\-]+)\s*=\s*(.+?)\s*(?:#.*)?$");
+        if (!match.Success) return false;
+
+        key = match.Groups[1].Value;
+        value = ParseTomlValue(match.Groups[2].Value.Trim());
+        return true;
+    }
+
+    private static string ParseTomlValue(string raw)
+    {
+        if (raw.StartsWith('['))
+            return string.Join(" ", Regex.Matches(raw, "\"((?:\\\\.|[^\"])*)\"")
+                .Select(m => UnescapeTomlString(m.Groups[1].Value)));
+
+        if (raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"')
+            return UnescapeTomlString(raw[1..^1]);
+
+        if (raw.Length >= 2 && raw[0] == '\'' && raw[^1] == '\'')
+            return raw[1..^1];
+
+        return raw;
+    }
+
+    private static string UnescapeTomlString(string value) =>
+        value
+            .Replace("\\\"", "\"", StringComparison.Ordinal)
+            .Replace("\\\\", "\\", StringComparison.Ordinal)
+            .Replace("\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r", "\r", StringComparison.Ordinal)
+            .Replace("\\t", "\t", StringComparison.Ordinal);
 }

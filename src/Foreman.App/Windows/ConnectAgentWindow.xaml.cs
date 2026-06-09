@@ -6,8 +6,8 @@ namespace Foreman.App.Windows;
 
 /// <summary>
 /// Beginner-friendly "connect your agent" guide. Shows who's connected now (with sampling capability),
-/// a one-click connect for Claude Code, and copy-paste self-config (URL + Authorization header, token
-/// filled in) for any other MCP client.
+/// one-click connect for Claude Code and Codex, and copy-paste self-config
+/// (URL + Authorization header, token filled in) for any other MCP client.
 /// </summary>
 public partial class ConnectAgentWindow : Window
 {
@@ -27,6 +27,7 @@ public partial class ConnectAgentWindow : Window
     private void Populate()
     {
         ClaudeJsonBox.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, _token);
+        CodexTomlBox.Text = CodexMcpConnector.BuildConfigSnippet(_port, _token);
         GenericBox.Text =
             $"URL:    {ClaudeMcpConnector.Url(_port)}\r\n" +
             $"Header: Authorization: Bearer {_token}\r\n\r\n" +
@@ -64,11 +65,30 @@ public partial class ConnectAgentWindow : Window
         RefreshConnected();
     }
 
+    private void ConnectCodexClick(object sender, RoutedEventArgs e)
+    {
+        var r = CodexMcpConnector.Connect(_port, _token);
+        if (r.Status == ConnectStatus.Failed)
+            MessageBox.Show(
+                $"Couldn't update Codex's config automatically:\n\n{r.Message}\n\n" +
+                "Use the copy-paste TOML below instead.",
+                "Foreman - Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(
+                $"{r.Message}\n\nRestart Codex to connect." +
+                (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
+                "Foreman - Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshConnected();
+    }
+
     private void CopyCliClick(object sender, RoutedEventArgs e) =>
         Copy(ClaudeMcpConnector.BuildCliCommand(_port, _token), "CLI command copied — paste it into a terminal.");
 
     private void CopyClaudeJsonClick(object sender, RoutedEventArgs e) =>
         Copy(ClaudeJsonBox.Text, "Claude Code JSON copied.");
+
+    private void CopyCodexTomlClick(object sender, RoutedEventArgs e) =>
+        Copy(CodexTomlBox.Text, "Codex TOML copied.");
 
     private void CopyGenericClick(object sender, RoutedEventArgs e) =>
         Copy(GenericBox.Text, "Config copied.");

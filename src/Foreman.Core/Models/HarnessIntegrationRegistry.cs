@@ -36,16 +36,12 @@ public static class HarnessIntegrationRegistry
             "codex-default",
             [],
             [],
-            "Add Foreman's HTTP MCP endpoint to your Codex MCP configuration.",
+            "Add Foreman's HTTP MCP endpoint to ~/.codex/config.toml, or use Foreman's Connect Agent window to write it automatically.",
             """
-            {
-              "mcpServers": {
-                "foreman": {
-                  "type": "http",
-                  "url": "http://localhost:{port}/mcp"
-                }
-              }
-            }
+            [mcp_servers.foreman]
+            url = "http://localhost:{port}/mcp"
+            http_headers = { Authorization = "Bearer <token>" }
+            enabled = true
             """),
         new(
             "t3-code",

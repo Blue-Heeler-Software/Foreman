@@ -61,4 +61,46 @@ public sealed class McpInventoryScannerTests
     {
         Assert.Empty(McpInventoryScanner.ParseClaudeJson(json, "claude-code", "f"));
     }
+
+    [Fact]
+    public void Parses_Codex_Toml_HttpAndStdio_Servers()
+    {
+        const string toml = """
+        model = "gpt-5.5"
+
+        [mcp_servers.foreman]
+        url = "http://localhost:54321/mcp"
+        http_headers = { Authorization = "Bearer TOKEN" }
+        enabled = true
+
+        [mcp_servers.playwright]
+        command = "npx"
+        args = ["@playwright/mcp@latest"]
+        enabled = false
+
+        [mcp_servers.playwright.env]
+        SHOULD = "not become a server"
+        """;
+
+        var entries = McpInventoryScanner.ParseCodexToml(toml, "codex", "config.toml");
+
+        var foreman = entries.Single(e => e.Name == "foreman");
+        Assert.Equal("codex", foreman.Harness);
+        Assert.Equal("http", foreman.Transport);
+        Assert.Equal("http://localhost:54321/mcp", foreman.Target);
+        Assert.Equal("global", foreman.Scope);
+
+        var playwright = entries.Single(e => e.Name == "playwright");
+        Assert.Equal("stdio", playwright.Transport);
+        Assert.Contains("@playwright/mcp", playwright.Target);
+        Assert.DoesNotContain(entries, e => e.Name == "env");
+    }
+
+    [Fact]
+    public void DefaultSources_IncludesCodexConfig()
+    {
+        var sources = McpInventoryScanner.DefaultSources().ToArray();
+
+        Assert.Contains(sources, s => s.Harness == "codex" && s.Path.EndsWith(Path.Combine(".codex", "config.toml")));
+    }
 }
