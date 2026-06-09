@@ -102,7 +102,7 @@
         </Style>
     </Window.Resources>
 
-    <TabControl x:Name="Tabs" Padding="0,8,0,0">
+    <TabControl x:Name="Tabs" Padding="0,8,0,0" SelectionChanged="TabsSelectionChanged">
       <TabItem Header="Overview">
         <Grid>
         <Grid.RowDefinitions>

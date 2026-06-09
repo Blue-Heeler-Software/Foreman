@@ -25,6 +25,7 @@ public partial class DashboardWindow : Window, IEventSink
     private readonly ObservableCollection<DashboardAlertVm> _alerts = [];
     private readonly DispatcherTimer _refreshTimer;
     private readonly List<IDisposable> _hostedViews = [];
+    private HarnessesWindow? _harnessView;
 
     /// <summary>Wired by TrayController — Settings and Connect-agent stay as separate dialogs.</summary>
     public Action? OpenSettingsRequested { get; set; }
@@ -203,9 +204,50 @@ public partial class DashboardWindow : Window, IEventSink
         HarnessSlot.Content  = harnesses;
         BehaviorSlot.Content = behavior;
         LogSlot.Content      = log;
+        _harnessView = harnesses as HarnessesWindow;   // for the unsaved-changes prompt on navigate-away
         foreach (var v in new object?[] { processes, harnesses, behavior, log })
             if (v is IDisposable d) _hostedViews.Add(d);
     }
+
+    // Prompt to save Harnesses-tab edits when the user navigates away (switches tab) or closes.
+    private void TabsSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // TabControl SelectionChanged bubbles from child ListViews too — only react to the tabs themselves.
+        if (!ReferenceEquals(e.OriginalSource, Tabs)) return;
+        if (_harnessView is null || e.RemovedItems.Count == 0) return;
+        if (e.RemovedItems[0] is not TabItem leftTab) return;
+        if (Tabs.Items.IndexOf(leftTab) != (int)DashboardTab.Harnesses) return;
+        if (!_harnessView.HasUnsavedChanges()) return;
+
+        switch (PromptSaveHarnesses("switching tabs"))
+        {
+            case MessageBoxResult.Yes:    _harnessView.SaveChanges(); break;
+            case MessageBoxResult.No:     _harnessView.Revert();      break;
+            case MessageBoxResult.Cancel:
+                // Re-select the Harnesses tab once this event settles.
+                Dispatcher.BeginInvoke(() => Tabs.SelectedItem = leftTab);
+                break;
+        }
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (_harnessView?.HasUnsavedChanges() == true)
+        {
+            switch (PromptSaveHarnesses("closing"))
+            {
+                case MessageBoxResult.Yes:    _harnessView.SaveChanges(); break;
+                case MessageBoxResult.No:     break;                       // discard
+                case MessageBoxResult.Cancel: e.Cancel = true; return;     // stay open
+            }
+        }
+        base.OnClosing(e);
+    }
+
+    private static MessageBoxResult PromptSaveHarnesses(string action) =>
+        MessageBox.Show(
+            $"You have unsaved changes on the Harnesses tab.\n\nSave them before {action}?",
+            "Foreman — Unsaved changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
 
     private static string Version =>
         System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1";

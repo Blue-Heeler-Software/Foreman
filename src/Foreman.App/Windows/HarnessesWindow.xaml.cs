@@ -109,7 +109,10 @@ public partial class HarnessesWindow : UserControl
 
     // ── Save / Cancel ─────────────────────────────────────────────────────
 
-    private void SaveClick(object sender, RoutedEventArgs e)
+    private void SaveClick(object sender, RoutedEventArgs e) => SaveChanges();
+
+    /// <summary>Persists the current toggles + custom exes. Public so the host can save on navigate-away.</summary>
+    public void SaveChanges()
     {
         _settings.DisabledHarnesses = _items
             .Where(v => !v.IsMonitored)
@@ -126,7 +129,22 @@ public partial class HarnessesWindow : UserControl
     }
 
     // Revert: rebuild rows from the persisted settings, discarding unsaved toggles.
-    private void CancelClick(object sender, RoutedEventArgs e) => Refresh();
+    private void CancelClick(object sender, RoutedEventArgs e) => Revert();
+
+    /// <summary>Discards unsaved edits by reloading from persisted settings.</summary>
+    public void Revert() => Refresh();
+
+    /// <summary>True if the current toggles / custom-exe list diverge from what's persisted.</summary>
+    public bool HasUnsavedChanges()
+    {
+        var disabledNow = new HashSet<string>(
+            _items.Where(v => !v.IsMonitored).Select(v => v.Id), StringComparer.OrdinalIgnoreCase);
+        var customNow = new HashSet<string>(
+            _items.Where(v => v.IsCustom).Select(v => v.ExeName), StringComparer.OrdinalIgnoreCase);
+
+        return !disabledNow.SetEquals(_settings.DisabledHarnesses)
+            || !customNow.SetEquals(new HashSet<string>(_settings.CustomHarnessExes, StringComparer.OrdinalIgnoreCase));
+    }
 }
 
 /// <summary>View model for a single harness row.</summary>
