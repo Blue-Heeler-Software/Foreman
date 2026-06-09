@@ -185,8 +185,8 @@ public partial class AlertDetailWindow : Window
                     "It can reply by calling ReplyToAskHarnessRequest with the pending request id.\n\n" +
                     PendingLine(queued) + "\n\n" +
                     (clipped
-                        ? "The prompt is also on your clipboard. Paste it into that session if you want a visible answer."
-                        : "Copying the prompt to the clipboard failed, so check the live session notification."),
+                        ? "The prompt is also on your clipboard as a manual fallback."
+                        : "Clipboard fallback failed, but the live session notification was delivered."),
                     title, MessageBoxButton.OK, MessageBoxImage.Information);
                 break;
 
@@ -200,8 +200,8 @@ public partial class AlertDetailWindow : Window
                         : $"No live {harnessId} session is connected to Foreman's MCP, so the request couldn't be delivered automatically.\n\n" +
                           PendingLine(queued) + "\n\n" +
                           (clipped
-                              ? $"A justify/act prompt is on your clipboard — paste it into {owner}."
-                              : "(Copying the prompt to the clipboard failed.)") +
+                              ? $"A justify/act prompt is also on your clipboard as a manual fallback for {owner}."
+                              : "Clipboard fallback failed, but the pending request remains queued.") +
                           ConnectionHelp(harnessId),
                     title, MessageBoxButton.OK, MessageBoxImage.Information);
                 break;
@@ -216,7 +216,7 @@ public partial class AlertDetailWindow : Window
 
     // "Send for Audit": route this alert to a DIFFERENT (non-self) auditor harness/API for an
     // independent second opinion. Shown only for alarming behavior (see AuditPolicy).
-    private void SendForAuditClick(object sender, RoutedEventArgs e)
+    private async void SendForAuditClick(object sender, RoutedEventArgs e)
     {
         var targetHarnessId = ResolveTargetHarnessId();
         // A category-qualified alert (flagged command / permission hit) can be Medium; treat it as
@@ -226,6 +226,81 @@ public partial class AlertDetailWindow : Window
             : _event.Severity;
         var route  = ResolveAuditRoute(targetHarnessId, severity);
         var prompt = BuildAuditPrompt(targetHarnessId, route.Selected);
+        const string systemPrompt =
+            "You are an independent safety auditor reviewing another AI coding harness on this machine. " +
+            "Be concise and factual: decide whether the behavior is expected, risky, or malicious, " +
+            "then recommend the next operator action.";
+
+        if (route.Selected is { AuditorType: var type } selected &&
+            type.Equals("harness", StringComparison.OrdinalIgnoreCase))
+        {
+            AskHarnessRequest? queued = QueueAskHarnessRequest?.Invoke(
+                selected.AuditorId,
+                systemPrompt,
+                prompt,
+                _event.Id,
+                ResolveTargetPid(),
+                ResolveTargetProcessName());
+
+            AskOffenderResult? result = null;
+            if (AskOffender is not null)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                    result = await AskOffender(selected.AuditorId, systemPrompt, prompt, queued?.RequestId, cts.Token);
+                }
+                catch { result = null; }
+            }
+
+            var clipped = result?.Outcome is AskOutcome.Sampled or AskOutcome.Notified
+                ? false
+                : TrySetClipboard(prompt);
+
+            switch (result?.Outcome)
+            {
+                case AskOutcome.Sampled:
+                    if (queued is not null && !string.IsNullOrWhiteSpace(result.ReplyText))
+                        RecordAskHarnessReply?.Invoke(
+                            queued.RequestId,
+                            result.ReplyText,
+                            "direct auditor sampling reply",
+                            selected.AuditorId,
+                            null);
+                    EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+                        $"Audit reply received for alert [{_event.Id}] via {Blank(result.MatchedClient, selected.DisplayName)}"));
+                    MessageBox.Show(
+                        $"Asked the live {Blank(result.MatchedClient, selected.DisplayName)} session to audit this alert.\n\n" +
+                        $"Its response:\n\n{Blank(result.ReplyText, "(the auditor returned an empty response)")}\n\n" +
+                        PendingLine(queued),
+                        "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+
+                case AskOutcome.Notified:
+                    EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+                        $"Audit request delivered for alert [{_event.Id}] via {Blank(result.MatchedClient, selected.DisplayName)}"));
+                    MessageBox.Show(
+                        $"Delivered the audit request to the live {Blank(result.MatchedClient, selected.DisplayName)} MCP session.\n\n" +
+                        "This client does not support a direct query/reply round trip. It can reply by calling " +
+                        "ReplyToAskHarnessRequest with the pending request id.\n\n" +
+                        PendingLine(queued),
+                        "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+            }
+
+            EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+                $"Audit request queued for alert [{_event.Id}] via {selected.DisplayName}"));
+
+            MessageBox.Show(
+                $"Queued the audit request for {selected.DisplayName}, but no matching live MCP session is connected right now.\n\n" +
+                PendingLine(queued) + "\n\n" +
+                (clipped
+                    ? "The prompt is also on your clipboard as a manual fallback."
+                    : "Clipboard fallback failed, but the pending request remains queued.") +
+                ConnectionHelp(selected.AuditorId),
+                "Foreman - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
 
         if (!TrySetClipboard(prompt))
         {

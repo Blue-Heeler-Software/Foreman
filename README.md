@@ -28,7 +28,7 @@ AI coding agents can move quickly across shells, files, credentials, networked t
 Foreman sits in the tray and keeps that work visible. It raises explainable alerts, attributes child processes back to the harness that spawned them, and gives you two response paths:
 
 - **Ask Harness:** ask the offending agent to justify or correct its own action.
-- **Send for Audit:** route alarming behavior to a different agent or API for a second opinion.
+- **Send for Audit:** route alarming behavior to a different agent or API for a second opinion, using MCP when a reviewer harness is connected.
 
 That safety loop can also save money. Catching a runaway command or abandoned agent early means fewer wasted tokens, less CPU/GPU churn, and lower power use.
 
@@ -110,7 +110,7 @@ The easiest path is in the app:
 3. Use **Connect automatically** for Claude Code or Codex.
 4. Restart the agent.
 
-Foreman writes only its own user-scope `foreman` MCP entry and saves a backup of the original config first. For Codex, it also adds/updates a marked Foreman section in `~/.codex/AGENTS.md` so Codex knows how to receive and answer Ask Harness prompts.
+Foreman writes only its own user-scope `foreman` MCP entry and saves a backup of the original config first. For Codex, it also adds/updates a marked Foreman section in `~/.codex/AGENTS.md` so Codex knows how to receive and answer Ask Harness and audit prompts.
 
 Manual Claude Code setup:
 
@@ -139,9 +139,9 @@ When the `foreman` MCP server is available:
 
 - Identify this agent as `harnessId: "codex"` when Foreman tools accept a harness id.
 - At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
-- If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness requests, call `ListAskHarnessRequests(harnessId: "codex")`.
+- If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness or audit requests, call `ListAskHarnessRequests(harnessId: "codex")`.
 - For each pending request addressed to Codex, answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
-- Treat Ask Harness as a safety prompt: explain what you were doing, whether it was expected, and any corrective action you took.
+- Treat each request as a safety prompt: explain what happened, whether it was expected, and any corrective action you took or recommend.
 
 <!-- foreman-mcp:end -->
 ```
@@ -175,8 +175,8 @@ The embedded MCP server exposes tools including:
 | `QueryProcessDetail` | Details for one PID |
 | `ReportSuspiciousCommand` | Pre-flight a command line |
 | `ListRecentEvents` | Recent event log entries |
-| `ListAskHarnessRequests` | Receive pending Ask Harness prompts for a harness |
-| `ReplyToAskHarnessRequest` | Send Foreman a reply to an Ask Harness prompt |
+| `ListAskHarnessRequests` | Receive pending Ask Harness or audit prompts for a harness |
+| `ReplyToAskHarnessRequest` | Send Foreman a reply to a pending Ask Harness or audit prompt |
 | `AcknowledgeAlert` | Acknowledge low/medium alerts; high/critical require the UI |
 | `GetBehaviorMetrics` | Per-harness escalation state |
 | `ReportTaskStart` | Announce a task boundary |

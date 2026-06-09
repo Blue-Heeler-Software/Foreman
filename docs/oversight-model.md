@@ -15,7 +15,7 @@ different questions:
 | Target | the **offending** harness itself | a **different**, non-self agent or API |
 | Question | "justify and/or act on this" | "is this alarming? second opinion" |
 | Applies to | every alert type, incl. hangs/mess | **alarming behavior only** |
-| Delivery | the offender's own MCP session, durable MCP request queue, then clipboard | clipboard prompt for the chosen reviewer |
+| Delivery | the offender's own MCP session, durable MCP request queue, then clipboard fallback | selected reviewer harness via MCP/durable queue, API/manual route fallback |
 | Button | shown when Foreman can attribute the alert to a harness | shown only when the alert qualifies |
 
 ### Ask Harness - interrogate the offender
@@ -60,8 +60,14 @@ prompt's command line is secret-masked (`RedactSecrets`) before it leaves the wi
 
 `AlertDetailWindow.SendForAuditClick` keeps the cross-LLM routing (`ResolveAuditRoute` ->
 `FindAuditCandidates` -> `BuildAuditPrompt`), picking a non-self auditor from the user's
-`LlmTriageSettings.AuditorPreferences` (`PreventSelfAudit` excludes the offender) and copying a
+`LlmTriageSettings.AuditorPreferences` (`PreventSelfAudit` excludes the offender) and building a
 third-person *"you are an independent safety auditor"* prompt for that reviewer.
+
+If the selected reviewer is another harness, Foreman queues the request for that harness and tries
+the same live MCP delivery ladder used by Ask Harness. If the reviewer is not connected yet, the
+request remains pending for polling and the clipboard is only a manual fallback. API reviewers remain
+configuration targets for now; without an API endpoint/delivery adapter, Foreman prepares a manual
+prompt instead of launching an external service.
 
 The button is shown **only** when the alert qualifies, decided by the single gate
 `AuditPolicy.QualifiesForAudit` (Foreman.Core, pure + unit-tested):

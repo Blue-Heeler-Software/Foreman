@@ -92,7 +92,7 @@
                     <StackPanel>
                         <TextBlock Text="Codex" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
-                                   Text="Easiest: let Foreman add the entry for you. It writes a user-scope &quot;foreman&quot; server into ~/.codex/config.toml and adds a marked Foreman section to ~/.codex/AGENTS.md so Codex knows how to receive and answer Ask Harness prompts." />
+                                   Text="Easiest: let Foreman add the entry for you. It writes a user-scope &quot;foreman&quot; server into ~/.codex/config.toml and adds a marked Foreman section to ~/.codex/AGENTS.md so Codex knows how to receive and answer Ask Harness and audit prompts." />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Content="Connect automatically" Click="ConnectCodexClick" Margin="0,0,8,0"
                                     Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
