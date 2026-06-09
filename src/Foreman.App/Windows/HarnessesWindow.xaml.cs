@@ -14,6 +14,9 @@ public partial class HarnessesWindow : UserControl
     private readonly Func<IEnumerable<ProcessRecord>> _getSnapshot;
     private readonly List<HarnessVm> _items = [];
 
+    /// <summary>Opens the Connect-Agent guide. Set by the hosting DashboardWindow.</summary>
+    public Action? OpenConnectAgent { get; set; }
+
     public HarnessesWindow(ForemanSettings settings, Func<IEnumerable<ProcessRecord>> getSnapshot)
     {
         _settings = settings;
@@ -108,6 +111,8 @@ public partial class HarnessesWindow : UserControl
     }
 
     // ── Save / Cancel ─────────────────────────────────────────────────────
+
+    private void ConnectAgentClick(object sender, RoutedEventArgs e) => OpenConnectAgent?.Invoke();
 
     private void SaveClick(object sender, RoutedEventArgs e) => SaveChanges();
 

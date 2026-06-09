@@ -205,6 +205,8 @@ public partial class DashboardWindow : Window, IEventSink
         BehaviorSlot.Content = behavior;
         LogSlot.Content      = log;
         _harnessView = harnesses as HarnessesWindow;   // for the unsaved-changes prompt on navigate-away
+        if (_harnessView is not null)
+            _harnessView.OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke();
         foreach (var v in new object?[] { processes, harnesses, behavior, log })
             if (v is IDisposable d) _hostedViews.Add(d);
     }

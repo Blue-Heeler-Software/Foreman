@@ -140,12 +140,16 @@
             </Grid>
         </Border>
 
-        <!-- Save / Cancel -->
-        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="Revert" Click="CancelClick" Margin="0,0,8,0" />
-            <Button Content="Save" Click="SaveClick"
-                    Background="{StaticResource AccentBrush}"
-                    Foreground="#FF0D0F12" FontWeight="Bold" Padding="18,6" />
-        </StackPanel>
+        <!-- Connect agent / Save / Cancel -->
+        <Grid Grid.Row="8">
+            <Button Content="Connect agent…" Click="ConnectAgentClick" HorizontalAlignment="Left"
+                    ToolTip="Hook an agent up to Foreman Agent Safety's MCP server (one-click for Claude Code and Codex)" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Revert" Click="CancelClick" Margin="0,0,8,0" />
+                <Button Content="Save" Click="SaveClick"
+                        Background="{StaticResource AccentBrush}"
+                        Foreground="#FF0D0F12" FontWeight="Bold" Padding="18,6" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </UserControl>
