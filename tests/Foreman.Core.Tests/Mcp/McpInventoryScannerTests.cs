@@ -97,6 +97,60 @@ public sealed class McpInventoryScannerTests
     }
 
     [Fact]
+    public void Codex_Toml_PreservesHashInsideQuotedValue()
+    {
+        // A '#' inside a quoted value must NOT be treated as a comment — otherwise the Target (and the
+        // change-detection dedup key) is corrupted and the server re-alerts as "new" forever.
+        const string toml = """
+        [mcp_servers.frag]
+        url = "http://localhost:7000/mcp#section"   # a real trailing comment
+        """;
+
+        var entry = McpInventoryScanner.ParseCodexToml(toml, "codex", "config.toml").Single();
+
+        Assert.Equal("http://localhost:7000/mcp#section", entry.Target);
+    }
+
+    [Fact]
+    public void Codex_Toml_ParsesMultiLineArgsArray()
+    {
+        // TOML arrays can span lines; the stdio Target must keep its args (the benign-vs-suspicious signal).
+        const string toml = """
+        [mcp_servers.fs]
+        command = "npx"
+        args = [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "C:/work"
+        ]
+        """;
+
+        var entry = McpInventoryScanner.ParseCodexToml(toml, "codex", "config.toml").Single();
+
+        Assert.Equal("stdio", entry.Transport);
+        Assert.Contains("server-filesystem", entry.Target);
+        Assert.Contains("-y", entry.Target);
+    }
+
+    [Fact]
+    public void Codex_Toml_MalformedUnterminatedArray_DoesNotSwallowNextServer()
+    {
+        // A never-closed array must not eat the following [mcp_servers.*] table.
+        const string toml = """
+        [mcp_servers.broken]
+        args = [
+          "-y",
+
+        [mcp_servers.good]
+        url = "http://localhost:8080/mcp"
+        """;
+
+        var entries = McpInventoryScanner.ParseCodexToml(toml, "codex", "config.toml");
+
+        Assert.Contains(entries, e => e.Name == "good" && e.Target == "http://localhost:8080/mcp");
+    }
+
+    [Fact]
     public void DefaultSources_IncludesCodexConfig()
     {
         var sources = McpInventoryScanner.DefaultSources().ToArray();

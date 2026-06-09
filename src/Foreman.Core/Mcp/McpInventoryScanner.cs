@@ -90,8 +90,9 @@ public static class McpInventoryScanner
             list.Add(new McpServerEntry(harness, name, transport, target, "global", sourceFile));
         }
 
-        foreach (var raw in lines)
+        for (var i = 0; i < lines.Length; i++)
         {
+            var raw = lines[i];
             if (TryGetTomlHeader(raw, out var header))
             {
                 Flush();
@@ -101,7 +102,18 @@ public static class McpInventoryScanner
             }
 
             if (name is null) continue;
-            if (TryGetTomlAssignment(raw, out var key, out var value))
+
+            // Join multi-line arrays / inline tables onto one logical line so the value isn't lost.
+            // TOML lets arrays span lines:  args = [\n  "-y",\n  "@scope/server"\n]
+            var combined = raw;
+            var guard = 0;
+            while (UnclosedBracketDepth(combined) > 0 && i + 1 < lines.Length && guard++ < 500)
+            {
+                if (TryGetTomlHeader(lines[i + 1], out _)) break;   // never swallow the next table on malformed input
+                combined += " " + lines[++i].Trim();
+            }
+
+            if (TryGetTomlAssignment(combined, out var key, out var value))
                 values[key] = value;
         }
 
@@ -176,12 +188,62 @@ public static class McpInventoryScanner
         key = "";
         value = "";
 
-        var match = Regex.Match(line, @"^\s*([A-Za-z0-9_\-]+)\s*=\s*(.+?)\s*(?:#.*)?$");
+        // Capture key + the FULL right-hand side, then strip a trailing comment quote-awarely.
+        // A blind `(?:#.*)?` would wrongly cut a `#` living inside a quoted value (e.g. a URL fragment
+        // or a token), corrupting the Target and therefore the change-detection dedup key.
+        var match = Regex.Match(line, @"^\s*([A-Za-z0-9_\-]+)\s*=\s*(.+)$");
         if (!match.Success) return false;
 
         key = match.Groups[1].Value;
-        value = ParseTomlValue(match.Groups[2].Value.Trim());
+        value = ParseTomlValue(StripTomlComment(match.Groups[2].Value).Trim());
         return true;
+    }
+
+    /// <summary>Strips a trailing `# …` comment, but only when the `#` is outside single/double quotes.</summary>
+    private static string StripTomlComment(string s)
+    {
+        var quote = '\0';
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote) quote = '\0';
+            }
+            else if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c == '#')
+            {
+                return s[..i];
+            }
+        }
+        return s;
+    }
+
+    /// <summary>Net unclosed `[`/`{` depth, ignoring brackets inside quotes (and stopping at a comment).</summary>
+    private static int UnclosedBracketDepth(string s)
+    {
+        var depth = 0;
+        var quote = '\0';
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (quote != '\0')
+            {
+                if (c == quote) quote = '\0';
+                continue;
+            }
+            switch (c)
+            {
+                case '"' or '\'': quote = c; break;
+                case '[' or '{':  depth++;   break;
+                case ']' or '}':  if (depth > 0) depth--; break;
+                case '#':         return depth;   // rest of the line is a comment
+            }
+        }
+        return depth;
     }
 
     private static string ParseTomlValue(string raw)
