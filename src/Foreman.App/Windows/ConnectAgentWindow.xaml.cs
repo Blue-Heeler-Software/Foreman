@@ -72,12 +72,12 @@ public partial class ConnectAgentWindow : Window
             MessageBox.Show(
                 $"Couldn't update Codex's config automatically:\n\n{r.Message}\n\n" +
                 "Use the copy-paste TOML below instead.",
-                "Foreman - Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Foreman — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
             MessageBox.Show(
                 $"{r.Message}\n\nRestart Codex to connect." +
                 (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
-                "Foreman - Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
+                "Foreman — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
         RefreshConnected();
     }
 

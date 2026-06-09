@@ -911,7 +911,7 @@ public sealed class AlertDetailVm
                     MonitoringNoticeEvent when evt.Source.Equals("Foreman.McpInventory", StringComparison.OrdinalIgnoreCase) =>
                         "1. Confirm you expected this MCP server to be added to the harness configuration.\n" +
                         "2. If unexpected, remove it from the harness MCP config and review recent agent activity.\n" +
-                        "3. Foreman's own local MCP connector is treated as an informational event and should not appear here.",
+                        "3. Foreman's own connector registers silently (logged as info), so this alert is about another server.",
                     MonitoringNoticeEvent =>
                         "1. Review the notice and decide whether it matches an expected Foreman monitoring action.\n" +
                         "2. If unexpected, open the event log for nearby activity before acknowledging it.",

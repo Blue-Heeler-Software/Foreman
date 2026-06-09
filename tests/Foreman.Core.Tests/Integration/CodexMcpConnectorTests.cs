@@ -99,4 +99,37 @@ public sealed class CodexMcpConnectorTests : IDisposable
         Assert.False(CodexMcpConnector.IsConfigured(9999, _cfg));
         Assert.False(CodexMcpConnector.IsConfigured(54321, Path.Combine(_dir, "missing.toml")));
     }
+
+    [Fact]
+    public void Connect_LeavesExistingBearerTokenEnvVarEntryUnchanged()
+    {
+        // A user who configured the secure env-var form must not have it clobbered by a plaintext token.
+        File.WriteAllText(_cfg, """
+        [mcp_servers.foreman]
+        url = "http://localhost:54321/mcp"
+        bearer_token_env_var = "FOREMAN_TOKEN"
+        enabled = true
+        """);
+
+        var r = CodexMcpConnector.Connect(54321, "PLAINTEXT", _cfg);
+
+        Assert.Equal(ConnectStatus.Updated, r.Status);
+        var toml = File.ReadAllText(_cfg);
+        Assert.Contains("bearer_token_env_var = \"FOREMAN_TOKEN\"", toml);
+        Assert.DoesNotContain("Bearer PLAINTEXT", toml);
+    }
+
+    [Fact]
+    public void Connect_PreservesLfLineEndings()
+    {
+        // LF-only input (common on WSL/macOS, and under git) must not be rewritten to CRLF.
+        File.WriteAllText(_cfg, "model = \"x\"\n\n[mcp_servers.other]\ncommand = \"npx\"\n");
+
+        CodexMcpConnector.Connect(54321, "T", _cfg);
+
+        var raw = File.ReadAllText(_cfg);
+        Assert.DoesNotContain("\r\n", raw);
+        Assert.Contains("[mcp_servers.foreman]", raw);
+        Assert.Contains("[mcp_servers.other]", raw);
+    }
 }

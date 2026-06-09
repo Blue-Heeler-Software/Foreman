@@ -51,18 +51,40 @@ public static class CodexMcpConnector
         var path = configPath ?? DefaultConfigPath;
         try
         {
-            var original = File.Exists(path) ? File.ReadAllText(path) : "";
-            var updated = UpsertForemanSection(original, port, token, out var existed);
+            var bytes    = File.Exists(path) ? File.ReadAllBytes(path) : [];
+            var hadBom    = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            var original = bytes.Length == 0
+                ? ""
+                : new UTF8Encoding(false).GetString(hadBom ? bytes[3..] : bytes);
+
+            // Respect a user who already set up the more secure bearer_token_env_var form for this port —
+            // don't silently overwrite it with a plaintext inline token (IsConfigured accepts both forms).
+            var existingSection = ExtractForemanSection(original);
+            if (existingSection is not null &&
+                HasAssignment(existingSection, "url", Url(port)) &&
+                Regex.IsMatch(existingSection, @"(?im)^\s*bearer_token_env_var\s*=\s*""[^""]+""\s*(?:#.*)?$"))
+            {
+                return new ConnectResult(
+                    ConnectStatus.Updated,
+                    "Codex already has a foreman entry using bearer_token_env_var for this port — left it " +
+                    "unchanged (the more secure form). Update that environment variable to rotate the token.",
+                    null);
+            }
+
+            // Preserve the file's own newline + BOM so a one-click connect only changes the foreman table,
+            // not the whole file's encoding (avoids a noisy LF↔CRLF / BOM diff under git).
+            var newline = original.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            var updated = UpsertForemanSection(original, port, token, newline, out var existed);
 
             string? backup = null;
-            if (original.Length > 0)
+            if (bytes.Length > 0)
             {
                 backup = path + ".foreman-bak";
-                File.WriteAllText(backup, original);
+                File.WriteAllBytes(backup, bytes);   // verbatim copy preserves the original's exact bytes
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, updated);
+            File.WriteAllText(path, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hadBom));
 
             return new ConnectResult(
                 existed ? ConnectStatus.Updated : ConnectStatus.Added,
@@ -77,7 +99,7 @@ public static class CodexMcpConnector
         }
     }
 
-    private static string UpsertForemanSection(string original, int port, string token, out bool existed)
+    private static string UpsertForemanSection(string original, int port, string token, string newline, out bool existed)
     {
         var lines = NormalizeLines(original);
         if (lines.Count == 1 && lines[0].Length == 0)
@@ -99,7 +121,7 @@ public static class CodexMcpConnector
             lines.AddRange(section);
         }
 
-        return string.Join(Environment.NewLine, lines).TrimEnd() + Environment.NewLine;
+        return string.Join(newline, lines).TrimEnd() + newline;
     }
 
     private static string BuildSection(int port, string token) =>
