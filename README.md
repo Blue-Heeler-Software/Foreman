@@ -24,7 +24,7 @@ AI coding agents can act quickly across shells, files, credentials and networked
 
 Foreman is a safety monitor, not a sandbox or policy enforcer. It runs at medium integrity (no admin, no UAC), sits in the tray and raises explainable alerts when an agent does something worth reviewing. Its MCP bridge also lets one harness or API act as the auditor for another, so you can use a second AI to triage the first AI's actions.
 
-It can also save real money. Every runaway loop caught early is fewer paid tokens, less CPU time and a lower power bill.
+It can also save real money. Every runaway loop caught early is fewer wasted tokens, PC resources and lower power bills.
 
 ## What it does
 
@@ -33,15 +33,15 @@ It can also save real money. Every runaway loop caught early is fewer paid token
 - Tracks per-agent behavior across a session and **escalates** through four levels (Watch → Alert → Alarm → Emergency) as alerts accumulate.
 - Classifies known agents automatically (Claude Code, Codex, and others) from process name and command line; you can register custom executable names.
 - Exposes an **MCP server** an agent can call to check its own status, pre-flight a command, see whether Foreman has raised an alarm about it and announce task boundaries.
-- **Ask Harness** — prompts the *offending* agent itself to justify and/or act on an alert (any type, including hangs and mess). When that agent is connected to Foreman's MCP it's delivered to its own session — a sampling round-trip if the client supports it, otherwise a notification — and falls back to a clipboard prompt scoped to that agent.
+- **Ask Harness** — prompts the *offending* agent itself to justify and/or act on an alert (any type, including hangs and other mess). When that agent is connected to Foreman's MCP it's delivered to its own session — a sampling round-trip if the client supports it, otherwise a notification — and falls back to a clipboard prompt scoped to that agent.
 - **Send for Audit** — routes *alarming* behavior (flagged commands, permission violations, Alarm-level escalations) to a *different* agent or API from your preference list for an independent second opinion. Shown only for alerts that qualify; hangs/mess never route to a peer auditor.
 - Keeps a searchable, exportable event log and an at-a-glance dashboard, with tray notifications for critical alerts.
 
 ## Product standards
 
-Foreman is safety tooling, but it should not feel hostile or ugly. The target experience is a quiet tray app people want to keep running: clear status at a glance, explainable alerts, fast detail views and enough visual care that contributors can trust the project is maintained deliberately.
+Foreman is safety tooling, but it should not feel hostile or ugly. The target experience is a quiet tray app people want to keep running: clear status at a glance, explainable alerts, fast detail views and enough visual care that contributors and users can trust the project is maintained deliberately.
 
-That standard matters for FOSS too. Design polish, documentation, tests and installer quality are treated as first-class work alongside detection coverage.
+
 
 ## Supported agents
 
@@ -187,7 +187,7 @@ Per-session escalation thresholds (medium-alert count, high-alert count, unique-
 
 ## Project status & roadmap
 
-Honest accounting. This is alpha software on a preview runtime.
+Honest accounting. This is alpha software on a preview runtime. At the time of this writing only Claude and Codex desktop have been tested.
 
 Built and working:
 
