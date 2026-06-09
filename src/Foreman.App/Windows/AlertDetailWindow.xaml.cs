@@ -72,9 +72,14 @@ public partial class AlertDetailWindow : Window
     }
 
     /// <summary>Opens an AlertDetailWindow for the given event and forces it to the foreground.</summary>
-    public static void ShowFor(ForemanEvent evt)
+    public static void ShowFor(ForemanEvent evt, Window? owner = null)
     {
         var w = new AlertDetailWindow(evt);
+        if (owner?.IsVisible == true)
+        {
+            w.Owner = owner;
+            w.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        }
         w.Show();
         WindowActivation.Surface(w);
     }

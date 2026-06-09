@@ -6,6 +6,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -148,13 +149,39 @@ public partial class DashboardWindow : Window, IEventSink
 
     // ── UI event handlers ─────────────────────────────────────────────────────
 
-    private void AlertList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void AlertList_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (AlertList.SelectedItem is DashboardAlertVm vm)
+        var item = FindAncestor<ListViewItem>(e.OriginalSource as DependencyObject);
+        if (item?.DataContext is not DashboardAlertVm vm) return;
+
+        OpenAlertDetail(vm);
+        e.Handled = true;
+    }
+
+    private void AlertList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Enter or Key.Space)) return;
+        if (AlertList.SelectedItem is not DashboardAlertVm vm) return;
+
+        OpenAlertDetail(vm);
+        e.Handled = true;
+    }
+
+    private void OpenAlertDetail(DashboardAlertVm vm)
+    {
+        AlertList.SelectedItem = null;
+        AlertDetailWindow.ShowFor(vm.OriginalEvent, this);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current is not null)
         {
-            AlertList.SelectedItem = null;  // clear immediately so the row can be re-clicked
-            AlertDetailWindow.ShowFor(vm.OriginalEvent);
+            if (current is T match) return match;
+            current = VisualTreeHelper.GetParent(current);
         }
+
+        return null;
     }
 
     private void OpenSettingsClick(object sender, RoutedEventArgs e) =>

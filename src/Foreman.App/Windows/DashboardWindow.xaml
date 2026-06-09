@@ -323,7 +323,8 @@
                   VirtualizingPanel.IsVirtualizing="True"
                   VirtualizingPanel.VirtualizationMode="Recycling"
                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                  SelectionChanged="AlertList_SelectionChanged">
+                  MouseLeftButtonUp="AlertList_MouseLeftButtonUp"
+                  KeyDown="AlertList_KeyDown">
 
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
