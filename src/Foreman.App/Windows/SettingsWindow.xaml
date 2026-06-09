@@ -78,9 +78,14 @@
                     <Label Content="Hook jam threshold (min):" VerticalAlignment="Center" Width="210" />
                     <TextBox x:Name="HookBox" Width="80" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                     <Label Content="Alert suppress window (min):" VerticalAlignment="Center" Width="210" />
                     <TextBox x:Name="SuppressBox" Width="80" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <Label Content="Hang re-alert cooldown (min):" VerticalAlignment="Center" Width="210" />
+                    <TextBox x:Name="HangRealertBox" Width="80"
+                             ToolTip="After a hang alert for a process, wait this long before alerting on it again (stops bursty children re-firing). 0 = re-alert each idle stretch." />
                 </StackPanel>
             </StackPanel>
 
@@ -91,6 +96,7 @@
                 <CheckBox x:Name="NotifyHangCheck" Content="Notify on hang detected" />
                 <CheckBox x:Name="NotifyOrphanCheck" Content="Notify on orphaned process" />
                 <CheckBox x:Name="NotifyCriticalCheck" Content="Notify on critical command" />
+                <CheckBox x:Name="PersistLogCheck" Content="Keep the event log across restarts" />
                 <CheckBox x:Name="MonitorAllCheck" Content="Monitor all processes (not just harness children)"
                           Margin="0,12,0,4" />
                 <CheckBox x:Name="RunElevatedCheck"

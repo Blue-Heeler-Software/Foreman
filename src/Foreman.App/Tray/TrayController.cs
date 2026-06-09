@@ -24,6 +24,7 @@ public sealed class TrayController : IEventSink, IDisposable
     private int _activeAlerts;
     private SettingsWindow? _settingsWindow;
     private ConnectAgentWindow? _connectWindow;
+    private MuteManagerWindow? _muteWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -345,6 +346,8 @@ public sealed class TrayController : IEventSink, IDisposable
             : $"MCP Server: port {_settings.McpPort}  ·  no clients";
         AddMenuItem(menu, mcpLabel, null, enabled: false);
         AddMenuItem(menu, "Connect agent…", () => OpenConnectAgentWindow());
+        if (_settings.Mutes.Count > 0)
+            AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => OpenMuteManagerWindow());
         AddMenuItem(menu, "Settings…", () => OpenSettingsWindow());
         menu.Items.Add(new Separator());
         AddMenuItem(menu, "Exit", () => Application.Current.Shutdown());
@@ -372,6 +375,16 @@ public sealed class TrayController : IEventSink, IDisposable
         WindowActivation.Surface(_connectWindow);
     }
 
+    private void OpenMuteManagerWindow()
+    {
+        if (_muteWindow is null || !_muteWindow.IsLoaded)
+        {
+            _muteWindow = new MuteManagerWindow(_settings, () => SettingsStore.Save(_settings));
+            _muteWindow.Show();
+        }
+        WindowActivation.Surface(_muteWindow);
+    }
+
     private static void AddMenuItem(ContextMenu menu, string header, Action? onClick, bool enabled = true)
     {
         var item = new MenuItem { Header = header, IsEnabled = enabled };
@@ -388,6 +401,7 @@ public sealed class TrayController : IEventSink, IDisposable
         _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views
         _settingsWindow?.Close();
         _connectWindow?.Close();
+        _muteWindow?.Close();
         _tray?.Dispose();
     }
 }

@@ -1,0 +1,80 @@
+<Window x:Class="Foreman.App.Windows.MuteManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Muted alerts — Foreman"
+        Width="560" Height="460"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BackgroundBrush}"
+        TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontFamily" Value="Segoe UI, Arial" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Muted alerts" FontSize="20" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
+            <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0"
+                       Foreground="{StaticResource TextMutedBrush}" FontFamily="Segoe UI, Arial"
+                       Text="These only quiet tray popups — every muted event is still recorded in the log, counted, and feeds escalation. Protected detections (Critical / emergency / credential-network-privilege) can only be briefly snoozed, never permanently silenced." />
+        </StackPanel>
+
+        <Border Grid.Row="1" CornerRadius="8" BorderThickness="1"
+                Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}">
+            <Grid>
+                <TextBlock x:Name="EmptyLabel" Text="No alerts are muted."
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextMutedBrush}" FontFamily="Segoe UI, Arial"
+                           Visibility="Collapsed" />
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="8">
+                    <ItemsControl x:Name="MuteList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="6" Margin="0,0,0,6" Padding="10,8"
+                                        Background="{StaticResource SurfaceRaisedBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding What}" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
+                                            <TextBlock Text="{Binding Status}" FontSize="11" Margin="0,2,0,0"
+                                                       Foreground="{StaticResource TextMutedBrush}" FontFamily="Segoe UI, Arial" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="Remove" Click="RemoveClick"
+                                                Tag="{Binding Entry}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="ClearExpiredButton" Content="Clear expired" Click="ClearExpiredClick" Margin="0,0,8,0" />
+            <Button x:Name="ClearAllButton" Content="Clear all" Click="ClearAllClick" Margin="0,0,8,0" />
+            <Button Content="Close" Click="CloseClick" Padding="18,5"
+                    Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
+        </StackPanel>
+    </Grid>
+</Window>

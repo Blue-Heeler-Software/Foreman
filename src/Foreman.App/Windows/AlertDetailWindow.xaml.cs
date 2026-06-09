@@ -734,11 +734,12 @@ public partial class AlertDetailWindow : Window
         }
         else
         {
-            // Time-boxed only for now: every mute auto-expires, so none can be silently orphaned
-            // (a "mute until cleared" option waits for a mute-manager UI to clear them).
             Add("Mute 1 hour",   TimeSpan.FromHours(1));
             Add("Mute 8 hours",  TimeSpan.FromHours(8));
             Add("Mute 24 hours", TimeSpan.FromHours(24));
+            menu.Items.Add(new Separator());
+            // Safe now that the tray's "Muted alerts…" manager can list and clear it.
+            Add("Mute until I clear it", null);
         }
 
         menu.PlacementTarget = sender as UIElement;

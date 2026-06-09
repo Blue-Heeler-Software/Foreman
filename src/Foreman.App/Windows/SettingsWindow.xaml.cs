@@ -29,11 +29,13 @@ public partial class SettingsWindow : Window
         HangBox.Text       = _settings.HangThresholdMinutes.ToString();
         HookBox.Text       = _settings.HookJamThresholdMinutes.ToString();
         SuppressBox.Text   = _settings.AlertSuppressWindowMinutes.ToString();
+        HangRealertBox.Text = _settings.HangRealertCooldownMinutes.ToString();
 
         // Notifications
         NotifyHangCheck.IsChecked    = _settings.NotifyOnHang;
         NotifyOrphanCheck.IsChecked  = _settings.NotifyOnOrphan;
         NotifyCriticalCheck.IsChecked = _settings.NotifyOnCriticalCommand;
+        PersistLogCheck.IsChecked    = _settings.EventLogPersist;
         MonitorAllCheck.IsChecked    = _settings.MonitorAllProcesses;
         RunElevatedCheck.IsChecked   = _settings.RunElevated;
         ScanMcpToolsCheck.IsChecked  = _settings.ScanMcpTools;
@@ -59,6 +61,9 @@ public partial class SettingsWindow : Window
 
         if (!int.TryParse(HookBox.Text, out var hook) || hook < 1)
         { MessageBox.Show("Hook jam threshold must be ≥ 1 minute.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+        if (!int.TryParse(HangRealertBox.Text, out var hangRealert) || hangRealert < 0)
+        { MessageBox.Show("Hang re-alert cooldown must be ≥ 0 minutes.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(SuppressBox.Text, out var suppress) || suppress < 0)
         { MessageBox.Show("Alert suppress window must be ≥ 0.", "Foreman", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
@@ -96,9 +101,11 @@ public partial class SettingsWindow : Window
         _settings.HangThresholdMinutes       = hang;
         _settings.HookJamThresholdMinutes    = hook;
         _settings.AlertSuppressWindowMinutes = suppress;
+        _settings.HangRealertCooldownMinutes = hangRealert;
         _settings.NotifyOnHang               = NotifyHangCheck.IsChecked == true;
         _settings.NotifyOnOrphan             = NotifyOrphanCheck.IsChecked == true;
         _settings.NotifyOnCriticalCommand    = NotifyCriticalCheck.IsChecked == true;
+        _settings.EventLogPersist            = PersistLogCheck.IsChecked == true;
         _settings.MonitorAllProcesses        = MonitorAllCheck.IsChecked == true;
 
         _settings.AlertLevelMediumCount      = alertMed;
