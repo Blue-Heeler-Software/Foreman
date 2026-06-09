@@ -24,9 +24,9 @@ public sealed class CommandAnalyzer
     {
         if (string.IsNullOrWhiteSpace(commandLine)) return null;
 
-        if (AnalyzeKnownHarnessCommand(commandLine, profile) is { } knownHarnessMatch)
-            return knownHarnessMatch;
-
+        // PatternLibrary sorts rules severity-descending, so the first non-suppressed match is the
+        // MOST severe one. We never short-circuit this loop on a harness heuristic.
+        RuleMatch? match = null;
         foreach (var (rule, regex) in PatternLibrary.Instance.Rules)
         {
             try
@@ -36,7 +36,7 @@ public sealed class CommandAnalyzer
 
                 if (FalsePositiveFilter.IsSuppressed(rule, commandLine, processName, profile)) continue;
 
-                return new RuleMatch(
+                match = new RuleMatch(
                     rule.Id,
                     rule.Name,
                     rule.Description,
@@ -45,6 +45,7 @@ public sealed class CommandAnalyzer
                     rule.Id.Split('-')[0],
                     m.Value
                 );
+                break;
             }
             catch (RegexMatchTimeoutException)
             {
@@ -52,29 +53,37 @@ public sealed class CommandAnalyzer
             }
         }
 
-        return null;
+        // Codex's shell bridge runs `Get-ChildItem Env: … _SHELL_ENV_DELIMITER_` at startup, which trips
+        // the env-var credential-search rule (cred-013) as a false positive. Downgrade to a Low notice —
+        // but ONLY when cred-013 is the most-severe match (the rule loop already ran, so a command that
+        // also trips a higher rule like curl|bash or iex-from-web reports THAT instead) AND the process
+        // is the Codex harness. This is a scoped reclassification, never a pre-loop bypass.
+        if (match is { RuleId: "cred-013" }
+            && IsCodexHarness(profile)
+            && IsHarnessEnvironmentSnapshot(commandLine))
+        {
+            return HarnessEnvironmentSnapshotNotice();
+        }
+
+        return match;
     }
 
-    private static RuleMatch? AnalyzeKnownHarnessCommand(string commandLine, HarnessProfile? profile)
+    private static bool IsCodexHarness(HarnessProfile? profile) =>
+        profile?.Name is { Length: > 0 } name &&
+        name.Contains("codex", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsHarnessEnvironmentSnapshot(string commandLine)
     {
-        if (profile is null) return null;
-
-        try
-        {
-            if (!_harnessEnvironmentSnapshot.IsMatch(commandLine)) return null;
-        }
-        catch (RegexMatchTimeoutException)
-        {
-            return null;
-        }
-
-        return new RuleMatch(
-            "cred-013-harness",
-            "Harness environment snapshot",
-            "A known AI harness shell setup command enumerated environment variables. This can be expected client plumbing, but it is still worth noticing because environment variables often contain tokens and API keys.",
-            "1. If this was spawned by the harness shell bridge during startup or command setup, no action is usually required.\n2. Avoid storing long-lived secrets in process environment variables when running AI coding agents.\n3. If an ordinary task deliberately requested environment variables, review the output and rotate any exposed secrets.",
-            ForemanSeverity.Low,
-            "cred",
-            "Get-ChildItem Env:");
+        try { return _harnessEnvironmentSnapshot.IsMatch(commandLine); }
+        catch (RegexMatchTimeoutException) { return false; }
     }
+
+    private static RuleMatch HarnessEnvironmentSnapshotNotice() => new(
+        "cred-013-harness",
+        "Harness environment snapshot",
+        "A known AI harness shell setup command enumerated environment variables. This can be expected client plumbing, but it is still worth noticing because environment variables often contain tokens and API keys.",
+        "1. If this was spawned by the harness shell bridge during startup or command setup, no action is usually required.\n2. Avoid storing long-lived secrets in process environment variables when running AI coding agents.\n3. If an ordinary task deliberately requested environment variables, review the output and rotate any exposed secrets.",
+        ForemanSeverity.Low,
+        "cred",
+        "Get-ChildItem Env:");
 }
