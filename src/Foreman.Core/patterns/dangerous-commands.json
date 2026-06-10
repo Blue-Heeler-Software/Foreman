@@ -9,7 +9,7 @@
       "severity": "critical",
       "description": "rm -rf targeting the filesystem root or critical system directories such as /etc, /usr, /bin, or $HOME. This will immediately and irreversibly destroy the operating system or all user files.",
       "guidance": "Stop the harness immediately. Check whether any files have already been deleted. If the system is still booting, restore from a known-good snapshot or backup. Never run rm -rf / or rm -rf ~ without an explicit user prompt — no legitimate coding task requires it.",
-      "pattern": "\\brm\\s+(-[a-z]*f[a-z]*r[a-z]*|-[a-z]*r[a-z]*f[a-z]*)\\s+(--|/|~|\\$HOME|/etc|/usr|/bin|/lib|/var|\\*)",
+      "pattern": "\\brm\\b(?=(?:\\s+-\\S+)*\\s+-[a-z]*r)(?=(?:\\s+-\\S+)*\\s+-[a-z]*f)(?:\\s+-\\S+)+\\s+(--|/|~|\\$HOME|/etc|/usr|/bin|/lib|/var|\\*)",
       "platforms": ["bash", "sh", "wsl"],
       "falsePositiveTags": []
     },
@@ -49,7 +49,7 @@
       "severity": "high",
       "description": "rm -rf with a broad wildcard or relative path (~/*, ./*) — likely to destroy all user project files or the entire home directory.",
       "guidance": "Check what was deleted before taking further action. If files are missing, check git history, recycle bin, or file recovery tools. Consider rate-limiting the harness's filesystem write permissions via Foreman profiles.",
-      "pattern": "\\brm\\s+-[a-z]*r[a-z]*f[a-z]*\\s+[~./]",
+      "pattern": "\\brm\\b(?=(?:\\s+-\\S+)*\\s+-[a-z]*r)(?=(?:\\s+-\\S+)*\\s+-[a-z]*f)(?:\\s+-\\S+)+\\s+[~./]",
       "platforms": ["bash", "sh", "wsl"],
       "falsePositiveTags": ["cleanup_script_allowed"]
     },
