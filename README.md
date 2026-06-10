@@ -54,19 +54,25 @@ Tested on-machine so far:
 | --- | --- | --- |
 | `claude-code` | Claude Code | one-click MCP setup, process/profile detection |
 | `codex` | Codex CLI | one-click MCP setup, process/profile detection, Codex TOML MCP inventory |
+| `cursor` | Cursor | process detection confirmed; connect via the "Any other MCP client" config (no one-click adapter yet) |
 
 Recognized/profiled, but needs broader field testing:
 
 | ID | Agent | Notes |
 | --- | --- | --- |
-| `t3-code` | T3 Code | control-plane profile and default audit routing |
-| `opencode` | OpenCode | profile and default audit routing |
+| `opencode` | OpenCode | one-click MCP setup (opencode.json), profile + default audit routing |
+| `t3-code` | T3 Code | control-plane profile + default audit routing — see the note below |
 | `gemini-cli` | Gemini CLI | process classification |
 | `amazon-q` | Amazon Q Developer | process classification |
 | `aider` | Aider | process classification |
 | `github-copilot` | GitHub Copilot CLI | process classification |
-| `cursor` | Cursor | process classification |
 | `cline` | Cline / Continue / Roo | process classification |
+
+> **T3 Code is a control plane — there's no "T3 auth" to configure.** T3 Code runs an *underlying* agent
+> (Claude Code, Codex, OpenCode, …); that underlying agent is what holds the MCP connection and bearer token.
+> So connect the underlying agent to Foreman (its own card in Connect Agent), not T3 Code directly. Foreman
+> still monitors T3 Code itself as the control plane. T3 Code's "Connect automatically" just copies the config
+> for you to drop into whichever agent it drives.
 
 Anything else can be added in Settings as a custom harness executable name.
 
