@@ -30,6 +30,7 @@ public partial class ConnectAgentWindow : Window
     // Each agent gets a scoped, per-harness token so it can only see/act on itself.
     private string ClaudeToken   => _mint("claude-code");
     private string CodexToken    => _mint("codex");
+    private string CursorToken   => _mint("cursor");
     private string OpenCodeToken => _mint("opencode");
     private string T3Token       => _mint("t3-code");
 
@@ -37,6 +38,7 @@ public partial class ConnectAgentWindow : Window
     {
         ClaudeJsonBox.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, ClaudeToken);
         CodexTomlBox.Text = CodexMcpConnector.BuildConfigSnippet(_port, CodexToken);
+        CursorJsonBox.Text = CursorMcpConnector.BuildConfigSnippet(_port, CursorToken);
         OpenCodeJsonBox.Text = OpenCodeMcpConnector.BuildConfigSnippet(_port, OpenCodeToken);
         T3Box.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, T3Token);   // T3 uses the underlying agent's mcpServers shape
         GenericBox.Text =
@@ -93,6 +95,22 @@ public partial class ConnectAgentWindow : Window
         RefreshConnected();
     }
 
+    private void ConnectCursorClick(object sender, RoutedEventArgs e)
+    {
+        var r = CursorMcpConnector.Connect(_port, CursorToken);
+        if (r.Status == ConnectStatus.Failed)
+            MessageBox.Show(
+                $"Couldn't update Cursor's config automatically:\n\n{r.Message}\n\n" +
+                "Use the copy-paste JSON below instead.",
+                "Foreman Agent Safety — Connect Cursor", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(
+                $"{r.Message}\n\nRestart Cursor, or refresh the \"foreman\" server in Settings → Tools & MCP, to connect." +
+                (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
+                "Foreman Agent Safety — Connect Cursor", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshConnected();
+    }
+
     private void ConnectOpenCodeClick(object sender, RoutedEventArgs e)
     {
         var r = OpenCodeMcpConnector.Connect(_port, OpenCodeToken);
@@ -124,6 +142,9 @@ public partial class ConnectAgentWindow : Window
 
     private void CopyCliClick(object sender, RoutedEventArgs e) =>
         Copy(ClaudeMcpConnector.BuildCliCommand(_port, ClaudeToken), "CLI command copied — paste it into a terminal.");
+
+    private void CopyCursorJsonClick(object sender, RoutedEventArgs e) =>
+        Copy(CursorJsonBox.Text, "Cursor JSON copied.");
 
     private void CopyOpenCodeJsonClick(object sender, RoutedEventArgs e) =>
         Copy(OpenCodeJsonBox.Text, "OpenCode JSON copied.");

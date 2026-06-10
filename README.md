@@ -54,7 +54,7 @@ Tested on-machine so far:
 | --- | --- | --- |
 | `claude-code` | Claude Code | one-click MCP setup, process/profile detection |
 | `codex` | Codex CLI | one-click MCP setup, process/profile detection, Codex TOML MCP inventory |
-| `cursor` | Cursor | process detection confirmed; connect via the "Any other MCP client" config (no one-click adapter yet) |
+| `cursor` | Cursor | one-click MCP setup (~/.cursor/mcp.json), process detection confirmed |
 
 Recognized/profiled, but needs broader field testing:
 
