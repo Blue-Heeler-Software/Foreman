@@ -25,7 +25,7 @@ public sealed class AlertResponseSettings
     public EscalationAction OnEmergency { get; set; } = EscalationAction.AskHarness | EscalationAction.AdversarialAudit;
 
     /// <summary>Per-harness, per-action cooldown so an oscillating harness can't trigger a storm of asks/audits.</summary>
-    public int CooldownMinutes { get; set; } = 10;
+    public int CooldownMinutes { get; set; } = 15;
 }
 
 /// <summary>

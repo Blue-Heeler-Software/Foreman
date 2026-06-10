@@ -60,7 +60,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(rb);
 
         var hits = CaptureHangsFor(rb.Pid);
-        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10 }, tree);
 
         sut.Check(rb);
 
@@ -77,7 +77,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(child);
 
         var hits = CaptureHangsFor(child.Pid);
-        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10 }, tree);
 
         sut.Check(child);
         sut.Check(child);   // same hang episode — must NOT produce a second alert
@@ -101,7 +101,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(harness);
 
         var hits = CaptureHangsFor(harness.Pid);
-        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10 }, tree);
 
         sut.Check(harness);
 
@@ -119,7 +119,7 @@ public sealed class HangDetectorTests
 
         var hits = CaptureHangsFor(child.Pid);
         // Cooldown 0 so re-arm is immediate (this test is about the epoch re-arm, not the rate-limit).
-        var sut  = new HangDetector(_bus, new ForemanSettings { HangRealertCooldownMinutes = 0 }, tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10, HangRealertCooldownMinutes = 0 }, tree);
 
         sut.Check(child);   // first hang episode → alert #1
 
@@ -145,7 +145,7 @@ public sealed class HangDetectorTests
 
         var hits = CaptureHangsFor(child.Pid);
         // Default 60-min cooldown.
-        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10 }, tree);
 
         sut.Check(child);                                   // first idle episode → alert #1
 
@@ -167,7 +167,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(rb);
 
         var hits     = CaptureHangsFor(rb.Pid);
-        var settings = new ForemanSettings { MonitorAllProcesses = true };
+        var settings = new ForemanSettings { HangThresholdMinutes = 10, MonitorAllProcesses = true };
         var sut      = new HangDetector(_bus, settings, tree);
 
         sut.Check(rb);
@@ -189,7 +189,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(child);
 
         var hits = CaptureHangsFor(child.Pid);
-        var sut = new HangDetector(_bus, new ForemanSettings(), tree);
+        var sut = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10 }, tree);
 
         sut.Check(child);
 
@@ -215,7 +215,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(conhost);
 
         var hits = CaptureHangsFor(conhost.Pid);
-        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 10 }, tree);
 
         sut.Check(conhost);
 
@@ -230,7 +230,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(foreman);
 
         var hits = CaptureHangsFor(foreman.Pid);
-        var settings = new ForemanSettings { MonitorAllProcesses = true };
+        var settings = new ForemanSettings { HangThresholdMinutes = 10, MonitorAllProcesses = true };
         var sut = new HangDetector(_bus, settings, tree);
 
         sut.Check(foreman);

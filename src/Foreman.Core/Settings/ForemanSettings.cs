@@ -3,7 +3,13 @@ namespace Foreman.Core.Settings;
 public sealed class ForemanSettings
 {
     public int McpPort { get; set; } = 54321;
-    public int HangThresholdMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// Whole-process no-I/O minutes before a harness child counts as hung. 30 by default — AI agents
+    /// legitimately go I/O-quiet for long stretches (thinking, long builds); 10 proved too chatty in
+    /// the field. Hooks use the tighter <see cref="HookJamThresholdMinutes"/>.
+    /// </summary>
+    public int HangThresholdMinutes { get; set; } = 30;
     public int HookJamThresholdMinutes { get; set; } = 5;
 
     /// <summary>

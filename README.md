@@ -98,7 +98,14 @@ To produce the same self-contained installer payload used by the release workflo
 ```powershell
 dotnet publish .\src\Foreman.App\Foreman.App.csproj `
   -c Release -r win-x64 --self-contained true `
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -o publish
+# The elevated ETW sidecar is published separately (the single-file app can't share its runtime)
+# into the sidecar\ subfolder the app launches it from:
+dotnet publish .\src\Foreman.EtwSidecar\Foreman.EtwSidecar.csproj `
+  -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -o publish\sidecar
 ```
 
 ### Start With Windows
@@ -218,7 +225,7 @@ Settings live at `%LocalAppData%\Foreman\settings.json` and are editable from th
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `McpPort` | `54321` | MCP and health server port |
-| `HangThresholdMinutes` | `10` | No-I/O duration before a child is treated as hung |
+| `HangThresholdMinutes` | `30` | No-I/O duration before a child is treated as hung |
 | `HookJamThresholdMinutes` | `5` | No-I/O duration before a hook is treated as jammed |
 | `IoPollerIntervalSeconds` | `30` | I/O sampling interval |
 | `MonitorAllProcesses` | `false` | `false` means harness children only |

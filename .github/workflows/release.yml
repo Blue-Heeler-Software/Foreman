@@ -54,6 +54,23 @@ jobs:
           -p:DebugType=none -p:DebugSymbols=false
           -o publish
 
+      # The app's CopyEtwSidecar target only stages the sidecar for *builds* (bin\), not publish —
+      # and the self-contained single-file app can't share its bundled runtime anyway. So the sidecar
+      # is published separately, itself self-contained, into the sidecar\ subfolder the app launches
+      # from (<app>\sidecar\Foreman.EtwSidecar.exe).
+      - name: Publish elevated ETW sidecar (self-contained)
+        run: >
+          dotnet publish src/Foreman.EtwSidecar/Foreman.EtwSidecar.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none -p:DebugSymbols=false
+          -o publish/sidecar
+
+      - name: Tidy publish payload
+        shell: pwsh
+        run: Remove-Item publish/Foreman.EtwSidecar.* -ErrorAction SilentlyContinue   # stray P2P leftovers at root
+
       # --- Sign the app payload (Foreman.exe + sidecar/Foreman.EtwSidecar.exe) BEFORE building the
       #     installer, so the installer embeds already-signed binaries. SignPath signs only the files
       #     named in the "app" artifact configuration and passes everything else through untouched.
