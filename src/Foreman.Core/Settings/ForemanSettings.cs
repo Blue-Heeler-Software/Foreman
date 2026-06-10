@@ -135,6 +135,13 @@ public sealed class ForemanSettings
     /// only these non-destructive actions are possible — no auto-kill or auto-mute.
     /// </summary>
     public Foreman.Core.Alerts.AlertResponseSettings AlertResponses { get; set; } = new();
+
+    /// <summary>
+    /// Game mode: when a fullscreen game/app is detected, pause Foreman's on-screen popups + alarm windows
+    /// (it keeps detecting/logging silently and shows a digest when you exit). See
+    /// <see cref="Foreman.Core.Models.GameModePolicy"/>.
+    /// </summary>
+    public Foreman.Core.Models.GameModeSettings GameMode { get; set; } = new();
 }
 
 public sealed class LlmTriageSettings

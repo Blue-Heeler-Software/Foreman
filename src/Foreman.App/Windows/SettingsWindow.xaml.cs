@@ -27,6 +27,8 @@ public partial class SettingsWindow : Window
         // General — the HKCU Run entry is the source of truth, not a settings field,
         // so the checkbox always reflects what Windows will actually do at sign-in.
         StartWithWindowsCheck.IsChecked = StartupManager.IsEnabled();
+        GameModeCheck.IsChecked             = _settings.GameMode.Enabled;
+        GameModeBreakThroughCheck.IsChecked = _settings.GameMode.AllowCriticalBreakThrough;
 
         // MCP
         McpPortBox.Text    = _settings.McpPort.ToString();
@@ -157,6 +159,10 @@ public partial class SettingsWindow : Window
         _settings.AlertResponses.OnAlarm     = Compose(AlarmAskCheck, AlarmAuditCheck, AlarmCleanupCheck);
         _settings.AlertResponses.OnEmergency = Compose(EmergencyAskCheck, EmergencyAuditCheck, EmergencyCleanupCheck);
         _settings.AlertResponses.CooldownMinutes = arCooldown;
+
+        // Game mode (live: the tray watcher reads this same settings instance).
+        _settings.GameMode.Enabled                   = GameModeCheck.IsChecked == true;
+        _settings.GameMode.AllowCriticalBreakThrough = GameModeBreakThroughCheck.IsChecked == true;
 
         SettingsStore.Save(_settings);
 

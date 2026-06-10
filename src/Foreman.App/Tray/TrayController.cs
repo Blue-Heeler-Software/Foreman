@@ -31,6 +31,11 @@ public sealed class TrayController : IEventSink, IDisposable
     // guard: only show one Emergency window per harness per session
     private readonly HashSet<string> _emergencyWindowShown = new(StringComparer.OrdinalIgnoreCase);
 
+    // Game mode: pauses on-screen popups while a fullscreen game/app is detected; counts what was held.
+    private GameModeWatcher? _gameMode;
+    private int _gmSuppressedTotal;
+    private int _gmSuppressedCritical;
+
     /// <summary>Injected from App so the Harnesses window can show live running status.</summary>
     public Func<IEnumerable<Foreman.Core.Models.ProcessRecord>>? GetProcessSnapshot { get; set; }
 
@@ -107,10 +112,44 @@ public sealed class TrayController : IEventSink, IDisposable
         // wire up the "Open Log" button in DashboardWindow
         // (set when the window is created — see OpenDashboardWindow)
 
+        // Game mode: pause on-screen popups while a fullscreen game/app is detected.
+        _gameMode = new GameModeWatcher();
+        _gameMode.Changed += OnGameModeChanged;
+
         // ForceCreate() initialises the native Shell_NotifyIcon for code-behind
         // TaskbarIcon instances that are not part of the XAML visual tree.
         _tray.ForceCreate();
     }
+
+    // ── Game mode ─────────────────────────────────────────────────────────────
+
+    private bool GameModeActive => _gameMode?.IsActive == true;
+
+    /// <summary>Whether an alert of this severity may surface on screen right now (false = held by game mode).</summary>
+    private bool SurfaceAllowed(ForemanSeverity severity) =>
+        GameModePolicy.ShouldSurface(severity, _settings.GameMode, GameModeActive);
+
+    private void OnGameModeChanged(bool active) =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            if (active)
+            {
+                _gmSuppressedTotal = 0;
+                _gmSuppressedCritical = 0;
+            }
+            else if (_gmSuppressedTotal > 0)
+            {
+                // Deferred digest: the on-screen interruptions we held are surfaced now that the game is gone.
+                _lastBalloonEvent = null;   // clicking the digest opens the log
+                var crit = _gmSuppressedCritical > 0 ? $", {_gmSuppressedCritical} critical" : "";
+                _tray?.ShowNotification("Foreman Agent Safety — game mode ended",
+                    $"Held {_gmSuppressedTotal} on-screen alert(s){crit} while you were in a game. Click to review the log.",
+                    _gmSuppressedCritical > 0 ? H.NotifyIcon.Core.NotificationIcon.Error : H.NotifyIcon.Core.NotificationIcon.Warning);
+                _gmSuppressedTotal = 0;
+                _gmSuppressedCritical = 0;
+            }
+            RefreshAlertState();   // refresh the tooltip's game-mode indicator
+        });
 
     /// <summary>
     /// Opens the AlertDetailWindow for the most recent balloon event,
@@ -156,6 +195,7 @@ public sealed class TrayController : IEventSink, IDisposable
         // Alarm level: send MCP push (done via EventBus → SseSessionManager already)
         // Emergency level: auto-show the alarm window (once per harness per session)
         if (esc.NewLevel == EscalationLevel.Emergency
+            && SurfaceAllowed(esc.Severity)               // game mode: don't pop a window over a fullscreen game
             && _emergencyWindowShown.Add(esc.HarnessId))
         {
             EscalationAlarmWindow.ShowFor(
@@ -175,6 +215,15 @@ public sealed class TrayController : IEventSink, IDisposable
         if (!_settings.NotifyOnOrphan && evt is OrphanDetectedEvent) return;
         if (!_settings.NotifyOnCriticalCommand && evt is CommandAlertEvent) return;
         if (evt is InfoEvent) return;
+
+        // Game mode: hold the on-screen popup (it's already logged/counted/escalated). Tally it so the
+        // digest on game-mode exit can tell the operator what was held.
+        if (!SurfaceAllowed(evt.Severity))
+        {
+            _gmSuppressedTotal++;
+            if (evt.Severity >= ForemanSeverity.Critical) _gmSuppressedCritical++;
+            return;
+        }
 
         // For escalation events, use a distinct balloon format
         if (evt is EscalationEvent esc)
@@ -223,7 +272,8 @@ public sealed class TrayController : IEventSink, IDisposable
         var escalationStr = _highestEscalation > EscalationLevel.Watch
             ? $" · {_highestEscalation.ToString().ToUpperInvariant()}"
             : "";
-        _tray.ToolTipText = $"Foreman Agent Safety — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}";
+        var gameStr = GameModeActive && _settings.GameMode.Enabled ? " · 🎮 game mode (popups paused)" : "";
+        _tray.ToolTipText = $"Foreman Agent Safety — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}{gameStr}";
         _tray.ContextMenu = BuildMenu();
     }
 
@@ -405,6 +455,7 @@ public sealed class TrayController : IEventSink, IDisposable
 
     public void Dispose()
     {
+        _gameMode?.Dispose();
         _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views
         _settingsWindow?.Close();
         _connectWindow?.Close();
