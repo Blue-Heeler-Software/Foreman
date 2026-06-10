@@ -68,6 +68,23 @@
             <Setter Property="Margin" Value="0,2,0,0" />
         </Style>
 
+        <!-- Clickable metric tile. Background/BorderBrush live in the style (not locally on each
+             Border) so the hover trigger can actually win — a local value would override it. -->
+        <Style x:Key="MetricCard" TargetType="Border">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF222632" />
+                    <Setter Property="BorderBrush" Value="#FF4A5160" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <!-- ── Dark-themed tabs ─────────────────────────────────────────────── -->
         <Style TargetType="TabControl">
             <Setter Property="Background" Value="{StaticResource BackgroundBrush}" />
@@ -205,10 +222,12 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" CornerRadius="8"
-                        Background="{StaticResource SurfaceRaisedBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="14,10">
+                <!-- Each tile is clickable and deep-links to the most useful view for that number.
+                     The nested "Acknowledge all" button still wins clicks on itself (Button marks
+                     MouseLeftButtonUp handled, so the tile handler doesn't also fire). -->
+                <Border Grid.Column="0" Style="{StaticResource MetricCard}"
+                        MouseLeftButtonUp="ActiveAlertsTileClick"
+                        ToolTip="Open the event log filtered to alerts">
                     <StackPanel>
                         <TextBlock x:Name="ActiveAlertCountLabel"
                                    Text="0"
@@ -225,10 +244,9 @@
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Column="2" CornerRadius="8"
-                        Background="{StaticResource SurfaceRaisedBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="14,10">
+                <Border Grid.Column="2" Style="{StaticResource MetricCard}"
+                        MouseLeftButtonUp="AgentsTileClick"
+                        ToolTip="Open the Processes tab to see what's running">
                     <StackPanel>
                         <TextBlock x:Name="HarnessCountLabel"
                                    Text="0"
@@ -238,10 +256,9 @@
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Column="4" CornerRadius="8"
-                        Background="{StaticResource SurfaceRaisedBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="14,10">
+                <Border Grid.Column="4" Style="{StaticResource MetricCard}"
+                        MouseLeftButtonUp="HighCriticalTileClick"
+                        ToolTip="Open the event log filtered to High and Critical">
                     <StackPanel>
                         <TextBlock x:Name="HighAlertCountLabel"
                                    Text="0"
@@ -251,10 +268,9 @@
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Column="6" CornerRadius="8"
-                        Background="{StaticResource SurfaceRaisedBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="14,10">
+                <Border Grid.Column="6" Style="{StaticResource MetricCard}"
+                        MouseLeftButtonUp="LastEventTileClick"
+                        ToolTip="Open the most recent event's details">
                     <StackPanel>
                         <TextBlock x:Name="LastEventLabel"
                                    Text="none"
@@ -267,10 +283,8 @@
                     </StackPanel>
                 </Border>
 
-                <Border x:Name="McpClientsCard" Grid.Column="8" CornerRadius="8"
-                        Background="{StaticResource SurfaceRaisedBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="14,10"
+                <Border x:Name="McpClientsCard" Grid.Column="8" Style="{StaticResource MetricCard}"
+                        MouseLeftButtonUp="McpClientsTileClick"
                         ToolTipService.ShowDuration="20000">
                     <StackPanel>
                         <TextBlock x:Name="McpClientsLabel"
@@ -281,10 +295,9 @@
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Column="10" CornerRadius="8"
-                        Background="{StaticResource SurfaceRaisedBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="14,10">
+                <Border Grid.Column="10" Style="{StaticResource MetricCard}"
+                        MouseLeftButtonUp="NetworkTileClick"
+                        ToolTip="Per-process network capture (elevated sidecar) — click to open Settings">
                     <StackPanel>
                         <TextBlock x:Name="NetCaptureLabel"
                                    Text="Off"

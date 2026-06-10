@@ -119,6 +119,21 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         ApplyFilter();
     }
 
+    /// <summary>
+    /// Deep-link entry point (dashboard metric tiles): pre-sets the minimum-severity dropdown.
+    /// Drives the ComboBox rather than _minSeverity directly so the visible filter UI stays in sync.
+    /// </summary>
+    public void SetMinimumSeverity(ForemanSeverity? min) =>
+        SeverityFilter.SelectedIndex = min switch
+        {
+            null                   => 0,   // All levels
+            ForemanSeverity.Info   => 1,
+            ForemanSeverity.Low    => 2,
+            ForemanSeverity.Medium => 3,
+            ForemanSeverity.High   => 4,
+            _                      => 5,   // Critical only
+        };
+
     private void SeverityFilter_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         _minSeverity = SeverityFilter.SelectedIndex switch

@@ -27,6 +27,7 @@ public partial class DashboardWindow : Window, IEventSink
     private readonly DispatcherTimer _refreshTimer;
     private readonly List<IDisposable> _hostedViews = [];
     private HarnessesWindow? _harnessView;
+    private LogWindow? _logView;   // for tile deep-links that pre-set the severity filter
 
     /// <summary>Wired by TrayController — Settings and Connect-agent stay as separate dialogs.</summary>
     public Action? OpenSettingsRequested { get; set; }
@@ -133,10 +134,11 @@ public partial class DashboardWindow : Window, IEventSink
         // support the sampling round-trip that makes Ask Harness a true poll vs. a one-way notify.
         var clients = GetConnectedClients?.Invoke() ?? [];
         McpClientsCard.ToolTip = clients.Count == 0
-            ? "No agents connected to Foreman Agent Safety's MCP.\nRight-click the tray → Connect agent, or use the Connect agent button."
+            ? "No agents connected to Foreman Agent Safety's MCP.\nClick to open the Connect agent guide."
             : "Connected agents:\n" + string.Join("\n", clients.Select(c =>
                 $"  • {c.Name}{(string.IsNullOrWhiteSpace(c.Version) ? "" : $" v{c.Version}")} — " +
-                $"sampling: {(c.Sampling ? "yes (Ask Harness gets a reply)" : "no (Ask Harness notifies one-way)")}"));
+                $"sampling: {(c.Sampling ? "yes (Ask Harness gets a reply)" : "no (Ask Harness notifies one-way)")}"))
+              + "\n\nClick to open the Connect agent guide.";
 
         // ── Footer ────────────────────────────────────────────────────────────
         var meta = $"Foreman Agent Safety v{Version}  ·  up {Uptime()}  ·  MCP :{McpPort}";
@@ -193,6 +195,36 @@ public partial class DashboardWindow : Window, IEventSink
     private void ConnectAgentClick(object sender, RoutedEventArgs e) =>
         OpenConnectAgentRequested?.Invoke();
 
+    // ── Metric tile clicks ────────────────────────────────────────────────────
+    // Each tile deep-links to the most useful view for that number.
+
+    private void ActiveAlertsTileClick(object sender, MouseButtonEventArgs e)
+    {
+        _logView?.SetMinimumSeverity(ForemanSeverity.Low);   // alerts, without Info noise
+        ShowTab(DashboardTab.Log);
+    }
+
+    private void AgentsTileClick(object sender, MouseButtonEventArgs e) =>
+        ShowTab(DashboardTab.Processes);
+
+    private void HighCriticalTileClick(object sender, MouseButtonEventArgs e)
+    {
+        _logView?.SetMinimumSeverity(ForemanSeverity.High);
+        ShowTab(DashboardTab.Log);
+    }
+
+    private void LastEventTileClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_alerts.FirstOrDefault() is { } vm)
+            AlertDetailWindow.ShowFor(vm.OriginalEvent, this);
+    }
+
+    private void McpClientsTileClick(object sender, MouseButtonEventArgs e) =>
+        OpenConnectAgentRequested?.Invoke();
+
+    private void NetworkTileClick(object sender, MouseButtonEventArgs e) =>
+        OpenSettingsRequested?.Invoke();
+
     // Bulk acknowledge: events are shared instances across EventBus history, ForemanState,
     // and the views, so flipping Acknowledged here clears the tray, the MCP counts, and this
     // dashboard together. The InfoEvent is the audit trail (and pokes event-driven refreshes).
@@ -232,6 +264,7 @@ public partial class DashboardWindow : Window, IEventSink
         BehaviorSlot.Content = behavior;
         LogSlot.Content      = log;
         _harnessView = harnesses as HarnessesWindow;   // for the unsaved-changes prompt on navigate-away
+        _logView     = log as LogWindow;               // for tile deep-links with a pre-set severity filter
         if (_harnessView is not null)
             _harnessView.OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke();
         foreach (var v in new object?[] { processes, harnesses, behavior, log })
