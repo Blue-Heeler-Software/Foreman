@@ -19,55 +19,10 @@ public partial class AlertDetailWindow : Window
     public static Action? OpenLogRequested { get; set; }
 
     /// <summary>
-    /// Wired up by App.xaml.cs. Resolves a live ProcessRecord from a PID so the alert
-    /// can display which process and harness type triggered the rule.
+    /// The data + action dependencies, set once by the App composition root (see <see cref="AlertDetailServices"/>).
+    /// Replaces ~11 separate static hooks; required members make a missing dependency a compile error.
     /// </summary>
-    public static Func<int, ProcessRecord?>? GetProcessByPid { get; set; }
-
-    /// <summary>
-    /// Wired up by App.xaml.cs. Resolves the BehaviorProfile for a harness key so the
-    /// alert can display the current escalation level and session alert count.
-    /// </summary>
-    public static Func<string, BehaviorProfile?>? GetProfileByHarness { get; set; }
-
-    /// <summary>
-    /// Wired up by App.xaml.cs. Walks the process tree to find the harness a process belongs
-    /// to, so a hook or spawned shell (which matches no harness rule itself) is still
-    /// attributed to its harness rather than shown as "not a tracked harness".
-    /// </summary>
-    public static Func<int, ProcessRecord?>? GetHarnessAncestorByPid { get; set; }
-
-    /// <summary>Wired up by App.xaml.cs. Provides a live snapshot for auditor availability checks.</summary>
-    public static Func<IEnumerable<ProcessRecord>>? GetProcessSnapshot { get; set; }
-
-    /// <summary>Wired up by App.xaml.cs. Provides the user-defined LLM triage routing preferences.</summary>
-    public static Func<LlmTriageSettings>? GetLlmTriageSettings { get; set; }
-
-    /// <summary>
-    /// Wired up by App.xaml.cs. Terminates the alert target. The second argument is the target's
-    /// captured start time (identity pin) so the kill is refused if the PID was since recycled.
-    /// </summary>
-    public static Func<int, DateTimeOffset?, bool>? KillProcessByPid { get; set; }
-
-    /// <summary>Wired by App — persists an operator mute (notification suppression only).</summary>
-    public static Action<MuteEntry>? AddMute { get; set; }
-
-    /// <summary>Wired by App — the emergency-tier rule ids, so the mute guardrail can protect them.</summary>
-    public static Func<IReadOnlyList<string>>? GetEmergencyRuleIds { get; set; }
-
-    /// <summary>
-    /// Wired up by App.xaml.cs. "Ask Harness": deliver a justify/act prompt to the OFFENDING harness's
-    /// own MCP session (sampling round-trip → targeted notification). Returns how it was delivered;
-    /// <see cref="AskOutcome.NoSession"/> means the caller falls back to the clipboard.
-    /// Args: (harnessId, systemPrompt, userPrompt, requestId, cancellationToken).
-    /// </summary>
-    public static Func<string, string, string, string?, CancellationToken, Task<AskOffenderResult>>? AskOffender { get; set; }
-
-    /// <summary>Queues a durable Ask Harness request so MCP clients that cannot receive pushes can poll/reply.</summary>
-    public static Func<string, string, string, string, int?, string?, AskHarnessRequest>? QueueAskHarnessRequest { get; set; }
-
-    /// <summary>Records a reply against a queued Ask Harness request.</summary>
-    public static Func<string, string, string?, string?, int?, bool>? RecordAskHarnessReply { get; set; }
+    public static AlertDetailServices? Services { get; set; }
 
     private AlertDetailWindow(ForemanEvent evt)
     {
@@ -140,18 +95,18 @@ public partial class AlertDetailWindow : Window
             "This is a self-audit. Answer honestly and briefly: say what you were doing and whether it " +
             "is expected, then either justify it or take the corrective action requested.";
         var queued = !string.IsNullOrWhiteSpace(harnessId)
-            ? QueueAskHarnessRequest?.Invoke(harnessId!, systemPrompt, prompt, _event.Id, pid, processName)
+            ? Services?.QueueAskHarnessRequest(harnessId!, systemPrompt, prompt, _event.Id, pid, processName)
             : null;
 
         // Try to deliver to the offender's own live MCP session. Bounded so a slow or declining client
         // can't hang the UI; any failure falls through to the clipboard.
         AskOffenderResult? result = null;
-        if (AskOffender is not null && !string.IsNullOrWhiteSpace(harnessId))
+        if (Services is not null && !string.IsNullOrWhiteSpace(harnessId))
         {
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                result = await AskOffender(harnessId!, systemPrompt, prompt, queued?.RequestId, cts.Token);
+                result = await Services.AskOffender(harnessId!, systemPrompt, prompt, queued?.RequestId, cts.Token);
             }
             catch { result = null; }
         }
@@ -163,7 +118,7 @@ public partial class AlertDetailWindow : Window
         {
             case AskOutcome.Sampled:
                 if (queued is not null && !string.IsNullOrWhiteSpace(result.ReplyText))
-                    RecordAskHarnessReply?.Invoke(
+                    Services?.RecordAskHarnessReply(
                         queued.RequestId,
                         result.ReplyText,
                         "direct sampling reply",
@@ -246,7 +201,7 @@ public partial class AlertDetailWindow : Window
         if (route.Selected is { AuditorType: var type } selected &&
             type.Equals("harness", StringComparison.OrdinalIgnoreCase))
         {
-            AskHarnessRequest? queued = QueueAskHarnessRequest?.Invoke(
+            AskHarnessRequest? queued = Services?.QueueAskHarnessRequest(
                 selected.AuditorId,
                 systemPrompt,
                 prompt,
@@ -255,12 +210,12 @@ public partial class AlertDetailWindow : Window
                 ResolveTargetProcessName());
 
             AskOffenderResult? result = null;
-            if (AskOffender is not null)
+            if (Services is not null)
             {
                 try
                 {
                     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                    result = await AskOffender(selected.AuditorId, systemPrompt, prompt, queued?.RequestId, cts.Token);
+                    result = await Services.AskOffender(selected.AuditorId, systemPrompt, prompt, queued?.RequestId, cts.Token);
                 }
                 catch { result = null; }
             }
@@ -273,7 +228,7 @@ public partial class AlertDetailWindow : Window
             {
                 case AskOutcome.Sampled:
                     if (queued is not null && !string.IsNullOrWhiteSpace(result.ReplyText))
-                        RecordAskHarnessReply?.Invoke(
+                        Services?.RecordAskHarnessReply(
                             queued.RequestId,
                             result.ReplyText,
                             "direct auditor sampling reply",
@@ -384,7 +339,7 @@ public partial class AlertDetailWindow : Window
     private string BuildSelfJustifyPrompt(string? harnessId, int? pid, string? processName)
     {
         var vm = DataContext as AlertDetailVm;
-        var liveProcess = pid is int p ? GetProcessByPid?.Invoke(p) : null;
+        var liveProcess = pid is int p ? Services?.GetProcessByPid(p) : null;
         var commandLine = ResolveTargetCommandLine(liveProcess);
 
         var sb = new StringBuilder();
@@ -472,7 +427,7 @@ public partial class AlertDetailWindow : Window
 
         if (result != MessageBoxResult.Yes) return;
 
-        var killed = KillProcessByPid?.Invoke(pid.Value, _event.ProcessStartTime) ?? false;
+        var killed = Services?.KillProcessByPid(pid.Value, _event.ProcessStartTime) ?? false;
         if (!killed)
         {
             EventBus.Instance.Publish(new InfoEvent(
@@ -507,7 +462,7 @@ public partial class AlertDetailWindow : Window
         var vm = DataContext as AlertDetailVm;
         var targetPid = ResolveTargetPid();
         var processName = ResolveTargetProcessName();
-        var liveProcess = targetPid is int pid ? GetProcessByPid?.Invoke(pid) : null;
+        var liveProcess = targetPid is int pid ? Services?.GetProcessByPid(pid) : null;
         var commandLine = ResolveTargetCommandLine(liveProcess);
 
         var sb = new StringBuilder();
@@ -626,7 +581,7 @@ public partial class AlertDetailWindow : Window
 
     private AuditRouteSelection ResolveAuditRoute(string? targetHarnessId, ForemanSeverity severity)
     {
-        var settings = GetLlmTriageSettings?.Invoke();
+        var settings = Services?.GetLlmTriageSettings();
         if (settings is null)
             return new AuditRouteSelection(null, "No LLM triage settings are available.", false);
         if (!settings.Enabled)
@@ -644,7 +599,7 @@ public partial class AlertDetailWindow : Window
         ForemanSeverity severity,
         bool honorSeverity)
     {
-        var snapshot = GetProcessSnapshot?.Invoke().ToList() ?? [];
+        var snapshot = Services?.GetProcessSnapshot().ToList() ?? [];
         var targetKnown = !string.IsNullOrWhiteSpace(targetHarnessId);
         var severityRank = (int)severity;
 
@@ -691,10 +646,10 @@ public partial class AlertDetailWindow : Window
 
     private string? ResolveTargetProcessName() => _event switch
     {
-        CommandAlertEvent cmd => GetProcessByPid?.Invoke(cmd.ProcessId)?.Name ?? ExtractProcessNameFromSource(cmd.Source),
+        CommandAlertEvent cmd => Services?.GetProcessByPid(cmd.ProcessId)?.Name ?? ExtractProcessNameFromSource(cmd.Source),
         HangDetectedEvent hang => hang.ProcessName,
         OrphanDetectedEvent orphan => orphan.ProcessName,
-        PermissionViolationEvent perm => GetProcessByPid?.Invoke(perm.ProcessId)?.Name ?? ExtractProcessNameFromSource(perm.Source),
+        PermissionViolationEvent perm => Services?.GetProcessByPid(perm.ProcessId)?.Name ?? ExtractProcessNameFromSource(perm.Source),
         NonzeroExitEvent exit => exit.ProcessName,
         EscalationEvent esc => esc.HarnessDisplayName,
         _ => null,
@@ -728,11 +683,11 @@ public partial class AlertDetailWindow : Window
     {
         if (pid <= 0) return null;
 
-        var rec = GetProcessByPid?.Invoke(pid);
+        var rec = Services?.GetProcessByPid(pid);
         if (!string.IsNullOrWhiteSpace(rec?.HarnessType))
             return rec.HarnessType;
 
-        var ancestor = GetHarnessAncestorByPid?.Invoke(pid);
+        var ancestor = Services?.GetHarnessAncestorByPid(pid);
         return string.IsNullOrWhiteSpace(ancestor?.HarnessType) ? null : ancestor.HarnessType;
     }
 
@@ -781,7 +736,7 @@ public partial class AlertDetailWindow : Window
     // everything else can be muted for longer or until cleared. Muting never stops detection.
     private void MuteClick(object sender, RoutedEventArgs e)
     {
-        var emergency = GetEmergencyRuleIds?.Invoke() ?? [];
+        var emergency = Services?.GetEmergencyRuleIds() ?? [];
         var menu = new ContextMenu();
 
         void Add(string header, TimeSpan? duration)
@@ -823,7 +778,7 @@ public partial class AlertDetailWindow : Window
             return;
         }
 
-        AddMute?.Invoke(mute);
+        Services?.AddMute(mute);
         var when = mute.Until is { } u ? $"until {u.ToLocalTime():t}" : "until you clear it";
         EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
             $"Muted {mute.Label} {when} — notifications only; still logged, counted and escalated."));
@@ -906,7 +861,7 @@ public sealed class AlertDetailVm
                 // Resolve the originating process from the live process tree
                 if (cmd.ProcessId > 0)
                 {
-                    var rec = AlertDetailWindow.GetProcessByPid?.Invoke(cmd.ProcessId);
+                    var rec = AlertDetailWindow.Services?.GetProcessByPid(cmd.ProcessId);
                     ProcessInfoVisibility = Visibility.Visible;
 
                     string? harnessKey;
@@ -929,7 +884,7 @@ public sealed class AlertDetailVm
                             // The process matched no harness rule itself — but it may be a child
                             // of one (e.g. a PowerShell hook or shell spawned by claude-code).
                             // Walk the process tree to attribute it.
-                            ancestorHt = AlertDetailWindow.GetHarnessAncestorByPid?.Invoke(cmd.ProcessId)?.HarnessType;
+                            ancestorHt = AlertDetailWindow.Services?.GetHarnessAncestorByPid(cmd.ProcessId)?.HarnessType;
                             HarnessLine = ancestorHt is not null
                                 ? $"Child of {ancestorHt} harness  ·  parent pid {rec.ParentPid}"
                                 : $"Unclassified (not a tracked harness)  ·  parent pid {rec.ParentPid}";
@@ -950,7 +905,7 @@ public sealed class AlertDetailVm
                     }
 
                     // Show the harness's current escalation level and session alert totals
-                    var profile = AlertDetailWindow.GetProfileByHarness?.Invoke(harnessKey);
+                    var profile = AlertDetailWindow.Services?.GetProfileByHarness(harnessKey);
                     if (profile is not null)
                     {
                         EscalationLineVisibility = Visibility.Visible;
@@ -1133,7 +1088,7 @@ public sealed class AlertDetailVm
 
         if (hang.SpawnerPid is int spawnerPid)
         {
-            var spawner = AlertDetailWindow.GetProcessByPid?.Invoke(spawnerPid);
+            var spawner = AlertDetailWindow.Services?.GetProcessByPid(spawnerPid);
             var spawnerName = spawner?.Name ?? hang.SpawnerName;
             if (hang.ParentHarnessPid == spawnerPid && !string.IsNullOrWhiteSpace(hang.ParentHarnessType))
             {
@@ -1151,7 +1106,7 @@ public sealed class AlertDetailVm
 
         if (hang.ParentHarnessPid is int hp && hp != hang.SpawnerPid)
         {
-            var rec = AlertDetailWindow.GetProcessByPid?.Invoke(hp);
+            var rec = AlertDetailWindow.Services?.GetProcessByPid(hp);
             var harnessType = rec?.HarnessType ?? hang.ParentHarnessType;
             var processName = rec?.Name ?? hang.ParentHarnessName;
 

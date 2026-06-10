@@ -84,26 +84,28 @@ public partial class App : Application
         _tray.MintHarnessToken              = id => _mcpHost.MintHarnessToken(id);
         _tray.GetConnectedClients           = () => _mcpHost.Sessions.DescribeSessions();
 
-        // allow AlertDetailWindow to resolve a live ProcessRecord from a PID
-        // so the ORIGINATING PROCESS section can show process name + harness type
-        AlertDetailWindow.GetProcessByPid      = pid => _monitor.Tree.GetByPid(pid);
-        // allow it to also show the harness's current escalation level + session alert count
-        AlertDetailWindow.GetProfileByHarness  = id  => _monitor.Behavior.GetProfile(id);
-        // attribute hook / spawned-shell processes to the harness they descend from
-        AlertDetailWindow.GetHarnessAncestorByPid = pid => _monitor.Tree.FindHarnessTypeAncestor(pid);
-        AlertDetailWindow.GetProcessSnapshot = () => _monitor.Tree.GetAll();
-        AlertDetailWindow.GetLlmTriageSettings = () => settings.LlmTriage;
-        AlertDetailWindow.KillProcessByPid = (pid, startTime) => _monitor.Tree.KillProcess(pid, startTime);
-        // Click-to-mute: persist an operator mute (notification suppression only; guardrailed by MutePolicy).
-        AlertDetailWindow.AddMute = m => { settings.Mutes.Add(m); SettingsStore.Save(settings); };
-        AlertDetailWindow.GetEmergencyRuleIds = () => settings.EmergencyRuleIds;
-        AlertDetailWindow.QueueAskHarnessRequest = (harnessId, sys, usr, alertId, pid, processName) =>
-            _mcpHost.State.CreateAskHarnessRequest(harnessId, sys, usr, alertId, pid, processName);
-        AlertDetailWindow.RecordAskHarnessReply = (requestId, reply, actionTaken, harnessId, pid) =>
-            _mcpHost.State.ReplyToAskHarnessRequest(requestId, reply, actionTaken, harnessId, pid).Ok;
-        // Ask Harness delivers a justify/act prompt to the offender's own MCP session when reachable.
-        AlertDetailWindow.AskOffender = (harnessId, sys, usr, requestId, ct) =>
-            _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId, ct);
+        // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a
+        // forgotten one is a compile error). The ORIGINATING PROCESS section, escalation/profile display,
+        // kill, mute, and Ask Harness all flow through these.
+        AlertDetailWindow.Services = new AlertDetailServices
+        {
+            GetProcessByPid         = pid => _monitor.Tree.GetByPid(pid),
+            GetProfileByHarness     = id  => _monitor.Behavior.GetProfile(id),
+            GetHarnessAncestorByPid = pid => _monitor.Tree.FindHarnessTypeAncestor(pid),
+            GetProcessSnapshot      = () => _monitor.Tree.GetAll(),
+            GetLlmTriageSettings    = () => settings.LlmTriage,
+            KillProcessByPid        = (pid, startTime) => _monitor.Tree.KillProcess(pid, startTime),
+            // Click-to-mute: persist an operator mute (notification suppression only; guardrailed by MutePolicy).
+            AddMute                 = m => { settings.Mutes.Add(m); SettingsStore.Save(settings); },
+            GetEmergencyRuleIds     = () => settings.EmergencyRuleIds,
+            QueueAskHarnessRequest  = (harnessId, sys, usr, alertId, pid, processName) =>
+                _mcpHost.State.CreateAskHarnessRequest(harnessId, sys, usr, alertId, pid, processName),
+            RecordAskHarnessReply   = (requestId, reply, actionTaken, harnessId, pid) =>
+                _mcpHost.State.ReplyToAskHarnessRequest(requestId, reply, actionTaken, harnessId, pid).Ok,
+            // Ask Harness delivers a justify/act prompt to the offender's own MCP session when reachable.
+            AskOffender             = (harnessId, sys, usr, requestId, ct) =>
+                _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId, ct),
+        };
 
         // Idle Harness self-cleanup: detector (Monitor) ↔ Ask-Harness mailbox + live push (McpServer).
         // The cleanup request rides the same mailbox agents already poll (ListAskHarnessRequests).

@@ -152,9 +152,9 @@ public partial class BehaviorMetricsWindow : UserControl, IDisposable
     private static bool ResolvesToHarness(int pid, string harnessId)
     {
         if (pid <= 0) return false;
-        var rec = AlertDetailWindow.GetProcessByPid?.Invoke(pid);
+        var rec = AlertDetailWindow.Services?.GetProcessByPid(pid);
         if (string.Equals(rec?.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase)) return true;
-        var ancestor = AlertDetailWindow.GetHarnessAncestorByPid?.Invoke(pid);
+        var ancestor = AlertDetailWindow.Services?.GetHarnessAncestorByPid(pid);
         return string.Equals(ancestor?.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase);
     }
 
