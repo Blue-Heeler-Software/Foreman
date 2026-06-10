@@ -41,8 +41,13 @@ public sealed class BehaviorTracker : IEventSink
 
     void IEventSink.OnEvent(ForemanEvent evt)
     {
-        if (evt is CommandAlertEvent cmd)
+        // "test-*" rules are synthetic (tray → Send test alert): they must light up the
+        // notification path without feeding escalation — a drill is not behavior.
+        if (evt is CommandAlertEvent cmd &&
+            !cmd.RuleId.StartsWith("test-", StringComparison.OrdinalIgnoreCase))
+        {
             ProcessCommandAlert(cmd);
+        }
     }
 
     // ── Core logic ───────────────────────────────────────────────────────────

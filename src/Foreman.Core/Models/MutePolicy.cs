@@ -66,7 +66,7 @@ public static class MutePolicy
     /// <summary>
     /// Builds a mute for THIS alert at the requested duration (null = permanent), clamped by the
     /// guardrail. Returns null if the request is disallowed (permanent or over-cap on a protected alert)
-    /// so the caller can refuse. Scopes to the specific rule when there is one, else the event source.
+    /// so the caller can refuse. Scopes as narrowly as the event allows: rule > category > source.
     /// </summary>
     public static MuteEntry? CreateMute(
         ForemanEvent evt, TimeSpan? duration, IEnumerable<string> emergencyRuleIds, DateTimeOffset now)
@@ -78,9 +78,14 @@ public static class MutePolicy
         if (duration is { } d0 && d0 <= TimeSpan.Zero) return null;
 
         var (ruleId, category, source) = Describe(evt);
+        // Hang/orphan/exit alerts all share Source "Foreman.Monitor", so a source-scoped mute
+        // would silence all three when the user only asked to quiet one kind — category keeps
+        // them distinct. Source remains the last resort for events with no category at all.
         var (scope, value, label) = ruleId is not null
-            ? ("rule",   ruleId, $"rule {ruleId}")
-            : ("source", source, $"{category ?? "events"} from {source}");
+            ? ("rule",     ruleId,   $"rule {ruleId}")
+            : category is not null
+            ? ("category", category, $"{category} alerts")
+            : ("source",   source,   $"events from {source}");
 
         return new MuteEntry
         {

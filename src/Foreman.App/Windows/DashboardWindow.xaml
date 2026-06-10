@@ -215,6 +215,13 @@
                                    Style="{StaticResource MetricValue}" />
                         <TextBlock Text="ACTIVE ALERTS"
                                    Style="{StaticResource MetricCaption}" />
+                        <Button x:Name="AckAllButton" Content="Acknowledge all"
+                                Click="AcknowledgeAllClick" Visibility="Collapsed"
+                                FontSize="10" Padding="8,2" Margin="0,6,0,0"
+                                HorizontalAlignment="Left" Cursor="Hand"
+                                Background="#FF1E2028" BorderBrush="#FF303540"
+                                Foreground="{StaticResource TextPrimaryBrush}"
+                                ToolTip="Mark every current alert as acknowledged (they stay in the log; the tray clears)" />
                     </StackPanel>
                 </Border>
 

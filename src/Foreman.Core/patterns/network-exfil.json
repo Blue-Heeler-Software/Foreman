@@ -9,7 +9,7 @@
       "severity": "critical",
       "description": "Fetch a remote script with curl or wget and pipe it directly into a shell interpreter. The script executes with full permissions before you can inspect it — the canonical drive-by install attack.",
       "guidance": "Never pipe untrusted URLs directly into bash/sh. Always download first, inspect the file, then run. Review what was downloaded and whether it ran. Check for new cron jobs, services, or backdoors the downloaded script may have installed.",
-      "pattern": "\\b(curl|wget)\\b[^|\\n]*\\|\\s*(bash|sh|zsh|fish|dash|ksh|ash|busybox)",
+      "pattern": "\\b(curl|wget)\\b[^\\n]*\\|\\s*(?:[^|\\n]*\\|\\s*)*(bash|sh|zsh|fish|dash|ksh|ash|busybox)\\b",
       "platforms": ["bash", "sh", "wsl", "cmd"],
       "falsePositiveTags": []
     },

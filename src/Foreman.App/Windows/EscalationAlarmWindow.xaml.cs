@@ -33,8 +33,9 @@ public partial class EscalationAlarmWindow : Window
         Action<string> disableHarness)
     {
         var w = new EscalationAlarmWindow(evt, killHarness, disableHarness);
-        w.Show();
-        w.Activate();
+        // Surface, not bare Activate: from a tray app, Activate() loses to foreground-lock
+        // and the EMERGENCY window can open silently *behind* the user's editor.
+        WindowActivation.Surface(w);
     }
 
     private void KillClick(object sender, RoutedEventArgs e)

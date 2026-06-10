@@ -137,6 +137,37 @@ public sealed class ForemanMcpToolsTests : IDisposable
         Assert.Contains("waiting for a command", answeredRequest.GetProperty("ReplyText").GetString());
     }
 
+    [Fact]
+    public void AnonymousReply_IsRejected()
+    {
+        // Regression: an anonymous reply (no harnessId/processId) used to short-circuit the
+        // ownership check, letting any connected client answer any harness's request —
+        // including forging "I cleaned up" for idle-cleanup asks.
+        var request = _state.CreateAskHarnessRequest(
+            "codex", "system", "wrap up please", "alert-2", _harness.Pid, "codex.exe");
+
+        var (ok, reason, _) = _state.ReplyToAskHarnessRequest(
+            request.RequestId, "all done!", actionTaken: null, harnessId: null, processId: null);
+
+        Assert.False(ok);
+        Assert.Contains("Identify yourself", reason);
+        Assert.Equal("pending", _state.GetAskHarnessRequest(request.RequestId)!.Status);
+    }
+
+    [Fact]
+    public void AlertStore_IsBounded()
+    {
+        // A connected agent can mint alert-bearing events; the store must stay capped so
+        // counts/memory can't be inflated without limit (acknowledged evict first).
+        for (var i = 0; i < 1_200; i++)
+        {
+            _state.AddEvent(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "test", $"flood {i}"));
+        }
+
+        Assert.True(_state.ActiveAlerts <= 1_000, $"ActiveAlerts={_state.ActiveAlerts} exceeded the cap");
+    }
+
     [Theory]
     [InlineData("t3-code", "t3-code-default")]
     [InlineData("opencode", "opencode-default")]

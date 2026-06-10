@@ -115,6 +115,7 @@ public partial class DashboardWindow : Window, IEventSink
             : $"{active.Count} active alert{(active.Count == 1 ? "" : "s")}";
 
         ActiveAlertCountLabel.Text = active.Count.ToString(CultureInfo.InvariantCulture);
+        AckAllButton.Visibility = active.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         HarnessCountLabel.Text = (GetRunningAgentCount?.Invoke() ?? allProfiles.Count)
             .ToString(CultureInfo.InvariantCulture);
         HighAlertCountLabel.Text = active
@@ -190,6 +191,31 @@ public partial class DashboardWindow : Window, IEventSink
 
     private void ConnectAgentClick(object sender, RoutedEventArgs e) =>
         OpenConnectAgentRequested?.Invoke();
+
+    // Bulk acknowledge: events are shared instances across EventBus history, ForemanState,
+    // and the views, so flipping Acknowledged here clears the tray, the MCP counts, and this
+    // dashboard together. The InfoEvent is the audit trail (and pokes event-driven refreshes).
+    private void AcknowledgeAllClick(object sender, RoutedEventArgs e)
+    {
+        var acked = 0;
+        foreach (var evt in EventBus.Instance.GetHistory())
+        {
+            if (evt.Severity > ForemanSeverity.Info && !evt.Acknowledged)
+            {
+                evt.Acknowledged = true;
+                acked++;
+            }
+        }
+
+        if (acked > 0)
+        {
+            EventBus.Instance.Publish(new InfoEvent(
+                DateTimeOffset.UtcNow, "Foreman.Dashboard",
+                $"Operator acknowledged all alerts ({acked})."));
+        }
+
+        Refresh();
+    }
 
     // ── Tabs / hosted views ───────────────────────────────────────────────────
 

@@ -13,7 +13,8 @@ namespace Foreman.App;
 
 public partial class App : Application
 {
-    private static readonly Mutex _singleInstance = new(true, "ForemanSingleInstanceMutex");
+    private static Mutex? _singleInstance;
+    private static bool _ownsSingleInstance;
     private TrayController? _tray;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
@@ -23,7 +24,10 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        if (!_singleInstance.WaitOne(0, false))
+        // Track ownership explicitly: the second instance must NOT call ReleaseMutex in
+        // OnExit (releasing an unowned mutex throws and crashed the duplicate on exit).
+        _singleInstance = new Mutex(initiallyOwned: true, "ForemanSingleInstanceMutex", out _ownsSingleInstance);
+        if (!_ownsSingleInstance)
         {
             MessageBox.Show("Foreman Agent Safety is already running.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
@@ -154,8 +158,11 @@ public partial class App : Application
         _tray.ApplyScanMcpTools = ApplyScanMcpTools;
         ApplyScanMcpTools(settings.ScanMcpTools);
 
-        // start MCP on a background thread so we don't block the WPF message pump
-        _ = _mcpHost.StartAsync(_cts.Token);
+        // Start MCP on a background thread so we don't block the WPF message pump — but never
+        // silently: a bind failure (port in use) used to leave Foreman looking healthy with no
+        // MCP at all. Surface it as a High notice so the tray goes red and the log explains.
+        var mcpPort = settings.McpPort;
+        _ = StartMcpSurfacingFailureAsync(_mcpHost, mcpPort, _cts.Token);
 
         // publish startup event — this ensures the log window always has at least one entry
         EventBus.Instance.Publish(new InfoEvent(
@@ -172,6 +179,23 @@ public partial class App : Application
             () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _mcpHost.Sessions.DescribeSessions()));
     }
 
+    private static async Task StartMcpSurfacingFailureAsync(McpServerHost host, int port, CancellationToken ct)
+    {
+        try
+        {
+            await host.StartAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { /* normal shutdown */ }
+        catch (Exception ex)
+        {
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Mcp",
+                $"MCP server failed to start on port {port}: {ex.Message} " +
+                "Agent connections, Ask Harness, and audits are unavailable. " +
+                "Is another Foreman instance or app using the port? Change the port in Settings and restart."));
+        }
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
         _cts?.Cancel();
@@ -180,7 +204,7 @@ public partial class App : Application
         _mcpHost?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
         _monitor?.Dispose();
         _tray?.Dispose();
-        _singleInstance.ReleaseMutex();
+        if (_ownsSingleInstance) _singleInstance?.ReleaseMutex();
         base.OnExit(e);
     }
 }

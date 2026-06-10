@@ -8,7 +8,7 @@
       "name": "PowerShell encoded command",
       "severity": "high",
       "description": "-EncodedCommand flag with a base64 payload indicates obfuscation",
-      "pattern": "powershell(?:\\.exe)?\\s+(?:[^\\n]*\\s+)?-(?:e|enc|encoded|encodedCommand)\\s+[A-Za-z0-9+/]{20,}={0,2}",
+      "pattern": "(?:powershell|pwsh)(?:\\.exe)?\\s+(?:[^\\n]*\\s+)?-(?:e|en|enc|enco|encod|encode|encoded|encodedc|encodedcommand)\\s+['\"]?[A-Za-z0-9+/]{16,}={0,2}",
       "platforms": ["cmd", "powershell"],
       "falsePositiveTags": ["encoded_cmd_allowed"]
     },

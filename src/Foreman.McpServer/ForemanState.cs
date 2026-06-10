@@ -17,6 +17,7 @@ public sealed class ForemanState : IEventSink
     private readonly ConcurrentDictionary<string, ForemanEvent> _alertById = new();
     private readonly ConcurrentDictionary<string, AskHarnessRequest> _askRequests = new();
     private const int MaxEvents = 1000;
+    private const int MaxAlerts = 1000;
     private const int MaxAskHarnessRequests = 200;
 
     public DateTimeOffset StartTime { get; } = DateTimeOffset.UtcNow;
@@ -46,7 +47,24 @@ public sealed class ForemanState : IEventSink
     void IEventSink.OnEvent(ForemanEvent evt)
     {
         if (evt.Severity > ForemanSeverity.Info)
+        {
             _alertById[evt.Id] = evt;
+
+            // Bound the alert store like the event queue — a connected agent can mint events,
+            // so an uncapped dictionary is attacker-inflatable memory + count poisoning.
+            // Evict acknowledged first, then oldest, so live signal survives the longest.
+            if (_alertById.Count > MaxAlerts)
+            {
+                foreach (var stale in _alertById.Values
+                    .OrderBy(static a => a.Acknowledged ? 0 : 1)
+                    .ThenBy(static a => a.Timestamp)
+                    .Take(_alertById.Count - MaxAlerts)
+                    .ToList())
+                {
+                    _alertById.TryRemove(stale.Id, out _);
+                }
+            }
+        }
         _eventLog.Enqueue(evt);
 
         // prune old events
@@ -211,9 +229,18 @@ public sealed class ForemanState : IEventSink
         if (!_askRequests.TryGetValue(requestId, out var request))
             return (false, "No Ask Harness request exists with that id.", null);
 
+        // Identity is required: an anonymous reply (no harnessId/processId) previously
+        // short-circuited the ownership check, letting any connected client answer any
+        // harness's request — including forging "I cleaned up" for idle-cleanup asks.
         var resolvedHarness = ResolveHarnessId(harnessId, processId);
-        if (!string.IsNullOrWhiteSpace(resolvedHarness) &&
-            !string.Equals(request.HarnessId, resolvedHarness, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(resolvedHarness))
+        {
+            return (false,
+                $"Identify yourself to reply: pass harnessId (\"{request.HarnessId}\") or a processId belonging to it.",
+                request);
+        }
+
+        if (!string.Equals(request.HarnessId, resolvedHarness, StringComparison.OrdinalIgnoreCase))
         {
             return (false,
                 $"Request {requestId} belongs to '{request.HarnessId}', not '{resolvedHarness}'.",

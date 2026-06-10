@@ -129,7 +129,9 @@ public sealed class McpServerHost : IAsyncDisposable
         });
 
         _app.MapMcp("/mcp");
-        _app.MapGet("/health", () => new { status = "ok", port = _settings.McpPort, sessions = Sessions.Count });
+        // Liveness only — no session count: /health is unauthenticated, so it shouldn't
+        // tell a local prober how many agents are connected.
+        _app.MapGet("/health", () => new { status = "ok", port = _settings.McpPort });
 
         await _app.StartAsync(ct).ConfigureAwait(false);
     }

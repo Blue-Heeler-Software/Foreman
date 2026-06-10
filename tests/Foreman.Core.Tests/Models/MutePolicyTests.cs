@@ -51,8 +51,20 @@ public sealed class MutePolicyTests
         var m = MutePolicy.CreateMute(Hang(), duration: null, Emergency, Now);
         Assert.NotNull(m);
         Assert.Null(m!.Until);                       // permanent allowed for a hang
-        Assert.Equal("source", m.Scope);             // no ruleId → scope by source
-        Assert.Equal("Foreman.Monitor", m.Value);
+        Assert.Equal("category", m.Scope);           // no ruleId → scope by category, NOT source —
+        Assert.Equal("hang", m.Value);               // hang/orphan/exit share Source "Foreman.Monitor"
+    }
+
+    [Fact]
+    public void HangMute_DoesNotSilenceOrphans()
+    {
+        // Regression: a hang mute used to be source-scoped ("Foreman.Monitor"), which also
+        // silenced orphan and exit alerts published from the same source.
+        var hangMute = MutePolicy.CreateMute(Hang(), duration: null, Emergency, Now)!;
+        var orphan = new OrphanDetectedEvent(Now, "Foreman.Monitor", "orphaned", 999, "bash", 1, "node", 5);
+
+        Assert.True(MutePolicy.IsSuppressed(Hang(), [hangMute], Now));
+        Assert.False(MutePolicy.IsSuppressed(orphan, [hangMute], Now));
     }
 
     // ── Suppression matching ────────────────────────────────────────────────────

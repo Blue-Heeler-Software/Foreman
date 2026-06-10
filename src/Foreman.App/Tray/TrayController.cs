@@ -298,22 +298,22 @@ public sealed class TrayController : IEventSink, IDisposable
 
     private void SendTestAlert()
     {
-        // Publish a synthetic CommandAlertEvent straight into the EventBus so it
-        // flows through the full pipeline (BehaviorTracker, TrayController, SSE push)
-        // and fires a real notification. Click the resulting notification to verify
-        // that AlertDetailWindow opens correctly.
+        // Publish a synthetic CommandAlertEvent so the notification → AlertDetailWindow path
+        // can be exercised. The rule id MUST be the dedicated "test-001": real rule ids here
+        // (this used net-001, an EmergencyRuleIds member) put the fake harness into a genuine
+        // session-long EMERGENCY escalation with the alarm window — a terrifying first-run.
+        // BehaviorTracker skips "test-*" rules, so this alerts without escalating anything.
         _bus.Publish(new CommandAlertEvent(
             DateTimeOffset.UtcNow,
             ForemanSeverity.High,
             "Foreman.Test",
-            "[TEST] curl | bash — suspicious network download detected",
-            "curl https://example.com/setup.sh | bash",
-            "net-001",
-            "curl pipe to shell",
-            "Fetch from web and pipe directly into a shell interpreter",
-            "This command downloads a script from a URL and executes it immediately, " +
-            "without giving you a chance to inspect its contents. Click the tray notification " +
-            "or double-click a log row to verify AlertDetailWindow opens correctly.",
+            "[TEST] This is a test alert — nothing was detected",
+            "curl https://example.com/setup.sh | bash   (example command, not executed)",
+            "test-001",
+            "test alert",
+            "A synthetic alert sent from the tray menu to verify notifications work",
+            "Nothing to do — this is a drill. Click the tray notification or double-click " +
+            "the log row to verify AlertDetailWindow opens, then acknowledge it.",
             0));
     }
 

@@ -212,6 +212,11 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
 
     private static string CsvEscape(string s)
     {
+        // Formula-injection guard: message/command text is agent-controlled, and Excel/Sheets
+        // execute cells starting with = + - @ (or a tab). Prefix ' so they import as text.
+        if (s.Length > 0 && s[0] is '=' or '+' or '-' or '@' or '\t')
+            s = "'" + s;
+
         // Wrap in quotes if the field contains comma, quote, or newline
         if (s.Contains(',') || s.Contains('"') || s.Contains('\n'))
             return $"\"{s.Replace("\"", "\"\"")}\"";
