@@ -103,16 +103,17 @@
         </Border>
 
         <!-- ── Event list ────────────────────────────────────────────────────── -->
-        <!-- double-click any row to see the full alert detail window -->
+        <!-- click any row to open the full alert detail deep-dive (same gesture as the dashboard feed) -->
         <ListView x:Name="EventList" Grid.Row="1"
                   Background="{StaticResource SurfaceBrush}"
                   Foreground="{StaticResource TextPrimaryBrush}"
                   BorderThickness="0"
+                  Cursor="Hand"
                   VirtualizingPanel.IsVirtualizing="True"
                   VirtualizingPanel.VirtualizationMode="Recycling"
                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
                   GridViewColumnHeader.Click="ColumnHeaderClick"
-                  MouseDoubleClick="EventList_MouseDoubleClick">
+                  MouseLeftButtonUp="EventList_RowClick">
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="Time" Width="100"

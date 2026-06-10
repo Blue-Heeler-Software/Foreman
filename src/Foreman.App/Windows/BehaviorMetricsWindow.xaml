@@ -60,7 +60,11 @@
             <ItemsControl x:Name="MetricsList">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border BorderBrush="#FF1E2028" BorderThickness="0,0,0,1" Padding="4,7">
+                        <!-- double-click a harness row to open its audit deep-dive (Ask Harness / Send for Audit / Kill / Open Log) -->
+                        <Border BorderBrush="#FF1E2028" BorderThickness="0,0,0,1" Padding="4,7"
+                                Background="Transparent" Cursor="Hand"
+                                Tag="{Binding}" MouseLeftButtonDown="Row_MouseDown"
+                                ToolTip="Double-click for audit tools (Ask Harness, Send for Audit, Kill, Open Log)">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="80"  />

@@ -170,10 +170,20 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         _view.Refresh();
     }
 
-    private void EventList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    // Single click on a row opens the full detail deep-dive — consistent with the dashboard feed,
+    // and the only thing you'd do with a log row (the column text is truncated; this shows it all).
+    private void EventList_RowClick(object sender, MouseButtonEventArgs e)
     {
-        if (EventList.SelectedItem is EventViewModel vm)
+        var dep = e.OriginalSource as System.Windows.DependencyObject;
+        while (dep is not null and not ListViewItem)
+            dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+
+        if (dep is ListViewItem { DataContext: EventViewModel vm })
+        {
+            EventList.SelectedItem = null;   // so clicking the same row again re-opens
             AlertDetailWindow.ShowFor(vm.OriginalEvent);
+            e.Handled = true;
+        }
     }
 
     private void ExportClick(object sender, RoutedEventArgs e)

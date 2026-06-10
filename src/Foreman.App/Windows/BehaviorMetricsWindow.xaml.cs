@@ -1,8 +1,10 @@
 using Foreman.Core.Behavior;
+using Foreman.Core.Events;
 using Foreman.Core.Models;
 using Foreman.Core.Settings;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -97,6 +99,63 @@ public partial class BehaviorMetricsWindow : UserControl, IDisposable
         foreach (var p in _getProfiles().ToList())
             _resetProfile(p.HarnessId);
         Refresh();
+    }
+
+    // ── Audit deep-dive (double-click a harness row) ──────────────────────────
+
+    private void Row_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2) return;   // double-click only — single clicks/selection are left alone
+        if (sender is FrameworkElement { Tag: BehaviorMetricVm vm })
+            OpenHarnessAudit(vm.HarnessId, vm.DisplayName);
+    }
+
+    // Opens the full alert-detail deep-dive (Ask Harness / Send for Audit / Kill / Open Log) for the
+    // harness's most relevant recent event — preferring its latest escalation, then any attributable alert.
+    private void OpenHarnessAudit(string harnessId, string displayName)
+    {
+        var evt = FindAuditEvent(harnessId);
+        if (evt is not null)
+            AlertDetailWindow.ShowFor(evt);
+        else
+            MessageBox.Show(
+                $"No alert detail has been recorded for '{displayName}' yet — only its escalation metrics " +
+                "(shown here). The audit tools (Ask Harness, Send for Audit) open from any of its alerts in the Event Log.",
+                "Foreman Agent Safety — Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private static ForemanEvent? FindAuditEvent(string harnessId)
+    {
+        var history = EventBus.Instance.GetHistory();
+
+        // Prefer the most recent escalation for this harness — it carries the richest context.
+        for (var i = history.Count - 1; i >= 0; i--)
+            if (history[i] is EscalationEvent esc &&
+                string.Equals(esc.HarnessId, harnessId, StringComparison.OrdinalIgnoreCase))
+                return esc;
+
+        // Else the most recent command/permission alert attributable to the harness.
+        for (var i = history.Count - 1; i >= 0; i--)
+        {
+            int? pid = history[i] switch
+            {
+                CommandAlertEvent c        => c.ProcessId,
+                PermissionViolationEvent v => v.ProcessId,
+                _                          => null,
+            };
+            if (pid is int p && ResolvesToHarness(p, harnessId))
+                return history[i];
+        }
+        return null;
+    }
+
+    private static bool ResolvesToHarness(int pid, string harnessId)
+    {
+        if (pid <= 0) return false;
+        var rec = AlertDetailWindow.GetProcessByPid?.Invoke(pid);
+        if (string.Equals(rec?.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase)) return true;
+        var ancestor = AlertDetailWindow.GetHarnessAncestorByPid?.Invoke(pid);
+        return string.Equals(ancestor?.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase);
     }
 
     // Called by the host (DashboardWindow) when it closes, since a UserControl has no OnClosed.
