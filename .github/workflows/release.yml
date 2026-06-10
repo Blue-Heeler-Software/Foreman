@@ -11,11 +11,18 @@ on:
 
 permissions:
   contents: write
+  actions: read     # SignPath downloads the build artifact via the Actions API using github.token
 
 jobs:
   release:
     name: Build installer & publish release
     runs-on: windows-latest
+    env:
+      # Code signing is OPT-IN. The SignPath steps run only once SIGNPATH_ORGANIZATION_ID is set as a
+      # repository *Variable* (Settings -> Secrets and variables -> Actions -> Variables). Until then the
+      # release builds and ships UNSIGNED with SHA-256 checksums, exactly as before — nothing breaks.
+      # One-time setup (free OSS signing via SignPath Foundation): see docs/release-checklist.md.
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +39,12 @@ jobs:
           $v = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ github.event.inputs.version }}' } else { '${{ github.ref_name }}'.TrimStart('v') }
           "version=$v" >> $env:GITHUB_OUTPUT
 
+      - name: Report signing mode
+        shell: pwsh
+        run: |
+          if ('${{ env.SIGN }}' -eq 'true') { Write-Host '::notice::SignPath signing ENABLED — app payload + installer will be signed.' }
+          else { Write-Host '::warning::SignPath not configured (SIGNPATH_ORGANIZATION_ID unset) — release will be UNSIGNED (checksums only).' }
+
       - name: Publish self-contained single-file
         run: >
           dotnet publish src/Foreman.App/Foreman.App.csproj
@@ -41,12 +54,72 @@ jobs:
           -p:DebugType=none -p:DebugSymbols=false
           -o publish
 
+      # --- Sign the app payload (Foreman.exe + sidecar/Foreman.EtwSidecar.exe) BEFORE building the
+      #     installer, so the installer embeds already-signed binaries. SignPath signs only the files
+      #     named in the "app" artifact configuration and passes everything else through untouched.
+      #     Signing identity + timestamping live in the SignPath signing policy, not here. ---
+      - name: Upload unsigned app payload
+        id: upload-app
+        if: ${{ env.SIGN == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: foreman-app-unsigned
+          path: publish
+          retention-days: 1
+
+      - name: Sign app payload (SignPath)
+        if: ${{ env.SIGN == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ vars.SIGNPATH_PROJECT_SLUG }}'
+          signing-policy-slug: '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}'
+          artifact-configuration-slug: '${{ vars.SIGNPATH_APP_ARTIFACT_CONFIG_SLUG }}'
+          github-artifact-id: '${{ steps.upload-app.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed-app
+
+      - name: Overlay signed app binaries
+        if: ${{ env.SIGN == 'true' }}
+        shell: pwsh
+        run: Copy-Item -Path signed-app/* -Destination publish -Recurse -Force
+
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer/foreman.iss
 
+      # --- Sign the installer itself LAST, after it is built from the already-signed payload. ---
+      - name: Upload unsigned installer
+        id: upload-installer
+        if: ${{ env.SIGN == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: foreman-installer-unsigned
+          path: installer/Output/*.exe
+          retention-days: 1
+
+      - name: Sign installer (SignPath)
+        if: ${{ env.SIGN == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ vars.SIGNPATH_PROJECT_SLUG }}'
+          signing-policy-slug: '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}'
+          artifact-configuration-slug: '${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIG_SLUG }}'
+          github-artifact-id: '${{ steps.upload-installer.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+
+      - name: Overlay signed installer
+        if: ${{ env.SIGN == 'true' }}
+        shell: pwsh
+        run: Copy-Item -Path signed-installer/*.exe -Destination installer/Output -Force
+
+      # Checksums run AFTER signing so they cover the final (signed) installer.
       - name: Generate checksums
         shell: pwsh
         run: |

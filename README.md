@@ -230,7 +230,7 @@ Settings live at `%LocalAppData%\Foreman\settings.json` and are editable from th
 
 ## Release Trust
 
-The installer is per-user and requires no admin prompt. Alpha installers may be unsigned; if so, the release notes should say that clearly and include SHA-256 checksums. The release workflow attaches a checksum file next to the installer.
+The installer is per-user and requires no admin prompt. Both `Foreman.exe` (and its `Foreman.EtwSidecar.exe`) and the installer are Authenticode-signed via **SignPath Foundation** (free OV signing for open source) when the release workflow is configured for it; signing is opt-in and gated on a repo variable, so until it's wired up, alpha installers ship **unsigned** and the release notes say so. Either way the release attaches **SHA-256 checksums**. Note that even when signed, a freshly-published build can still show a SmartScreen "unrecognized app" prompt until Microsoft's reputation system catches up — this is expected for a low-volume tool, which is why the checksums matter. See [docs/release-checklist.md](docs/release-checklist.md) for the signing setup.
 
 ## Roadmap
 

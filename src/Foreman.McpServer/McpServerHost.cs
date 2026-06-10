@@ -57,6 +57,10 @@ public sealed class McpServerHost : IAsyncDisposable
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseKestrel(opts =>
         {
+            // Loopback-only by design: ListenLocalhost binds 127.0.0.1 and [::1] *only*, never a routable
+            // interface — the MCP/health server is never remotely reachable. This is a deliberate trust
+            // boundary (see SECURITY.md), and it also keeps Foreman off the AV radar (a localhost listener
+            // needs no firewall rule and raises no inbound prompt). Do not switch to ListenAnyIP.
             opts.ListenLocalhost(_settings.McpPort);
         });
 
