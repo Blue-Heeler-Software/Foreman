@@ -27,14 +27,18 @@ public partial class ConnectAgentWindow : Window
         Populate();
     }
 
-    // Claude Code and Codex get scoped, per-harness tokens so each agent can only see/act on itself.
-    private string ClaudeToken => _mint("claude-code");
-    private string CodexToken  => _mint("codex");
+    // Each agent gets a scoped, per-harness token so it can only see/act on itself.
+    private string ClaudeToken   => _mint("claude-code");
+    private string CodexToken    => _mint("codex");
+    private string OpenCodeToken => _mint("opencode");
+    private string T3Token       => _mint("t3-code");
 
     private void Populate()
     {
         ClaudeJsonBox.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, ClaudeToken);
         CodexTomlBox.Text = CodexMcpConnector.BuildConfigSnippet(_port, CodexToken);
+        OpenCodeJsonBox.Text = OpenCodeMcpConnector.BuildConfigSnippet(_port, OpenCodeToken);
+        T3Box.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, T3Token);   // T3 uses the underlying agent's mcpServers shape
         GenericBox.Text =
             $"URL:    {ClaudeMcpConnector.Url(_port)}\r\n" +
             $"Header: Authorization: Bearer {_token}\r\n\r\n" +
@@ -89,8 +93,43 @@ public partial class ConnectAgentWindow : Window
         RefreshConnected();
     }
 
+    private void ConnectOpenCodeClick(object sender, RoutedEventArgs e)
+    {
+        var r = OpenCodeMcpConnector.Connect(_port, OpenCodeToken);
+        if (r.Status == ConnectStatus.Failed)
+            MessageBox.Show(
+                $"Couldn't update OpenCode's config automatically:\n\n{r.Message}\n\n" +
+                "Use the copy-paste JSON below instead.",
+                "Foreman Agent Safety — Connect OpenCode", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(
+                $"{r.Message}\n\nRestart OpenCode to connect." +
+                (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
+                "Foreman Agent Safety — Connect OpenCode", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshConnected();
+    }
+
+    private void ConnectT3Click(object sender, RoutedEventArgs e)
+    {
+        // T3 Code is a control plane — it has no MCP config of its own; you point its underlying agent at
+        // Foreman. So "connect automatically" copies the config + explains, rather than writing a file blind.
+        Copy(T3Box.Text, "T3 Code config copied.");
+        MessageBox.Show(
+            "T3 Code runs an underlying agent (Claude Code, Codex, or OpenCode) and doesn't have its own MCP " +
+            "config file. Connect that agent using its card above — T3 Code will use the same Foreman MCP " +
+            "server, and Foreman monitors T3 Code itself as the control plane.\n\n" +
+            "The config has been copied to your clipboard for whichever agent T3 Code drives.",
+            "Foreman Agent Safety — Connect T3 Code", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private void CopyCliClick(object sender, RoutedEventArgs e) =>
         Copy(ClaudeMcpConnector.BuildCliCommand(_port, ClaudeToken), "CLI command copied — paste it into a terminal.");
+
+    private void CopyOpenCodeJsonClick(object sender, RoutedEventArgs e) =>
+        Copy(OpenCodeJsonBox.Text, "OpenCode JSON copied.");
+
+    private void CopyT3Click(object sender, RoutedEventArgs e) =>
+        Copy(T3Box.Text, "T3 Code config copied.");
 
     private void CopyClaudeJsonClick(object sender, RoutedEventArgs e) =>
         Copy(ClaudeJsonBox.Text, "Claude Code JSON copied.");

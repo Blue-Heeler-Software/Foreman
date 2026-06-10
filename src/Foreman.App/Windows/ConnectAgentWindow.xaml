@@ -104,11 +104,47 @@
                     </StackPanel>
                 </Border>
 
+                <!-- OpenCode -->
+                <Border CornerRadius="8" Padding="14" Margin="0,0,0,12"
+                        Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="OpenCode" Style="{StaticResource CardTitle}" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
+                                   Text="Easiest: let Foreman Agent Safety add the entry for you — it writes a remote &quot;foreman&quot; server into the mcp object of OpenCode's opencode.json (a backup of the original is saved first)." />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="Connect automatically" Click="ConnectOpenCodeClick" Margin="0,0,8,0"
+                                    Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,4"
+                                   Text="Or merge this into opencode.json (the top-level mcp object), then restart OpenCode:" />
+                        <TextBox x:Name="OpenCodeJsonBox" Style="{StaticResource Mono}" Height="150" />
+                        <Button Content="Copy JSON" Click="CopyOpenCodeJsonClick" HorizontalAlignment="Left" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <!-- T3 Code (control plane) -->
+                <Border CornerRadius="8" Padding="14" Margin="0,0,0,12"
+                        Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="T3 Code (control plane)" Style="{StaticResource CardTitle}" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
+                                   Text="T3 Code runs an underlying agent (Claude Code, Codex, or OpenCode). Connect that agent using its card above — T3 Code uses the same MCP server, and Foreman Agent Safety monitors T3 Code itself as the control plane. 'Connect automatically' copies the config to paste into whichever agent T3 Code drives." />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="Connect automatically" Click="ConnectT3Click" Margin="0,0,8,0"
+                                    Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,4"
+                                   Text="Config for the agent T3 Code runs (merge into its mcpServers object):" />
+                        <TextBox x:Name="T3Box" Style="{StaticResource Mono}" Height="124" />
+                        <Button Content="Copy JSON" Click="CopyT3Click" HorizontalAlignment="Left" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+
                 <!-- Any other client -->
                 <Border CornerRadius="8" Padding="14"
                         Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Any other MCP client (OpenCode, T3 Code, …)" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="Any other MCP client" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
                                    Text="In your agent's MCP config, add an HTTP (streamable-HTTP) server using this URL and Authorization header:" />
                         <TextBox x:Name="GenericBox" Style="{StaticResource Mono}" Height="150" />
