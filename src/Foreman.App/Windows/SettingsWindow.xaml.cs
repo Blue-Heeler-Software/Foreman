@@ -1,5 +1,7 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Settings;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace Foreman.App.Windows;
 
@@ -53,6 +55,27 @@ public partial class SettingsWindow : Window
         AlarmCatsBox.Text      = _settings.AlarmLevelCategories.ToString();
         EmergencyTotalBox.Text = _settings.EmergencyLevelTotalAlerts.ToString();
         EmergencyRulesBox.Text = string.Join(", ", _settings.EmergencyRuleIds);
+
+        // Automatic responses per tier (Alert audit stays disabled — not audit-worthy on its own).
+        var ar = _settings.AlertResponses;
+        AlertAskCheck.IsChecked        = ar.OnAlert.HasFlag(EscalationAction.AskHarness);
+        AlertCleanupCheck.IsChecked    = ar.OnAlert.HasFlag(EscalationAction.RequestSelfCleanup);
+        AlarmAskCheck.IsChecked        = ar.OnAlarm.HasFlag(EscalationAction.AskHarness);
+        AlarmAuditCheck.IsChecked      = ar.OnAlarm.HasFlag(EscalationAction.AdversarialAudit);
+        AlarmCleanupCheck.IsChecked    = ar.OnAlarm.HasFlag(EscalationAction.RequestSelfCleanup);
+        EmergencyAskCheck.IsChecked     = ar.OnEmergency.HasFlag(EscalationAction.AskHarness);
+        EmergencyAuditCheck.IsChecked   = ar.OnEmergency.HasFlag(EscalationAction.AdversarialAudit);
+        EmergencyCleanupCheck.IsChecked = ar.OnEmergency.HasFlag(EscalationAction.RequestSelfCleanup);
+        AutoResponseCooldownBox.Text   = ar.CooldownMinutes.ToString();
+    }
+
+    private static EscalationAction Compose(CheckBox? ask, CheckBox? audit, CheckBox? cleanup)
+    {
+        var a = EscalationAction.None;
+        if (ask?.IsChecked == true)     a |= EscalationAction.AskHarness;
+        if (audit?.IsChecked == true)   a |= EscalationAction.AdversarialAudit;
+        if (cleanup?.IsChecked == true) a |= EscalationAction.RequestSelfCleanup;
+        return AlertResponsePolicy.Sanitize(a);   // clamp to the allowed non-destructive set
     }
 
     private void SaveClick(object sender, RoutedEventArgs e)
@@ -93,6 +116,9 @@ public partial class SettingsWindow : Window
         if (!int.TryParse(EmergencyTotalBox.Text, out var emergencyTotal) || emergencyTotal < 1)
         { MessageBox.Show("Emergency total threshold must be ≥ 1.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
+        if (!int.TryParse(AutoResponseCooldownBox.Text, out var arCooldown) || arCooldown < 0)
+        { MessageBox.Show("Auto-response re-fire cooldown must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
         var emergencyRules = EmergencyRulesBox.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(r => r.ToLowerInvariant())
@@ -125,6 +151,12 @@ public partial class SettingsWindow : Window
         _settings.AlarmLevelCategories       = alarmCats;
         _settings.EmergencyLevelTotalAlerts  = emergencyTotal;
         _settings.EmergencyRuleIds           = emergencyRules;
+
+        // Automatic responses (live: the runner holds this same settings instance, so no restart needed).
+        _settings.AlertResponses.OnAlert     = Compose(AlertAskCheck, null, AlertCleanupCheck);   // no Alert audit
+        _settings.AlertResponses.OnAlarm     = Compose(AlarmAskCheck, AlarmAuditCheck, AlarmCleanupCheck);
+        _settings.AlertResponses.OnEmergency = Compose(EmergencyAskCheck, EmergencyAuditCheck, EmergencyCleanupCheck);
+        _settings.AlertResponses.CooldownMinutes = arCooldown;
 
         SettingsStore.Save(_settings);
 

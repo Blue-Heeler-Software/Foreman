@@ -128,6 +128,13 @@ public sealed class ForemanSettings
     ];
 
     public LlmTriageSettings LlmTriage { get; set; } = new();
+
+    /// <summary>
+    /// Operator-configured automatic responses per escalation tier (Ask Harness / Adversarial Audit /
+    /// Request self-cleanup). Guardrailed by <see cref="Foreman.Core.Alerts.AlertResponsePolicy"/>:
+    /// only these non-destructive actions are possible — no auto-kill or auto-mute.
+    /// </summary>
+    public Foreman.Core.Alerts.AlertResponseSettings AlertResponses { get; set; } = new();
 }
 
 public sealed class LlmTriageSettings
@@ -165,6 +172,33 @@ public sealed class LlmTriageSettings
             Priority = 100,
         },
     ];
+
+    /// <summary>
+    /// Picks the preferred auditor for reviewing <paramref name="targetHarnessId"/> at the given severity:
+    /// the highest-priority enabled preference whose targets include it and whose minimum severity it
+    /// meets, with self-audit excluded when <see cref="PreventSelfAudit"/> is set. Null when triage is
+    /// off or nothing matches. Pure (preference match only) — delivery handles connected-or-not.
+    /// </summary>
+    public AuditorPreference? SelectAuditor(string targetHarnessId, Foreman.Core.Models.ForemanSeverity severity)
+    {
+        if (!Enabled || string.IsNullOrWhiteSpace(targetHarnessId)) return null;
+        return AuditorPreferences
+            .Where(p => p.Enabled)
+            .Where(p => !PreventSelfAudit || !string.Equals(p.AuditorId, targetHarnessId, StringComparison.OrdinalIgnoreCase))
+            .Where(p => p.TargetHarnessIds.Contains(targetHarnessId, StringComparer.OrdinalIgnoreCase))
+            .Where(p => MeetsMinimumSeverity(p.MinimumSeverities, severity))
+            .OrderByDescending(p => p.Priority)
+            .FirstOrDefault();
+    }
+
+    private static bool MeetsMinimumSeverity(string[] minimums, Foreman.Core.Models.ForemanSeverity severity)
+    {
+        if (minimums.Length == 0) return true;   // no floor configured = handles anything
+        foreach (var m in minimums)
+            if (Enum.TryParse<Foreman.Core.Models.ForemanSeverity>(m, ignoreCase: true, out var min) && severity >= min)
+                return true;
+        return false;
+    }
 }
 
 public sealed class AuditorPreference

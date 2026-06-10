@@ -187,6 +187,51 @@
                                FontSize="9" Foreground="{StaticResource TextMutedBrush}"
                                Margin="0,3,0,0" />
                 </StackPanel>
+
+                <!-- Automatic responses per tier -->
+                <TextBlock Text="→ AUTOMATIC RESPONSES" FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource AccentBrush}" Margin="0,14,0,4" />
+                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8"
+                           Text="When a harness reaches a tier, Foreman Agent Safety can automatically take these non-destructive actions. There is deliberately no auto-kill or auto-mute here — destructive/silencing actions stay manual and confirmed. Adversarial audit only fires for security-relevant escalations (Alarm and above)." />
+                <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Ask Harness" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
+                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Adv. Audit"  FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
+                    <TextBlock Grid.Row="0" Grid.Column="3" Text="Self-cleanup" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Alert"     VerticalAlignment="Center" FontSize="11" />
+                    <CheckBox  Grid.Row="1" Grid.Column="1" x:Name="AlertAskCheck" />
+                    <CheckBox  Grid.Row="1" Grid.Column="2" x:Name="AlertAuditCheck" IsEnabled="False"
+                               ToolTip="Adversarial audit only fires at Alarm and above (Alert isn't audit-worthy on its own)." />
+                    <CheckBox  Grid.Row="1" Grid.Column="3" x:Name="AlertCleanupCheck" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Alarm"     VerticalAlignment="Center" FontSize="11" />
+                    <CheckBox  Grid.Row="2" Grid.Column="1" x:Name="AlarmAskCheck" />
+                    <CheckBox  Grid.Row="2" Grid.Column="2" x:Name="AlarmAuditCheck" />
+                    <CheckBox  Grid.Row="2" Grid.Column="3" x:Name="AlarmCleanupCheck" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Emergency" VerticalAlignment="Center" FontSize="11" />
+                    <CheckBox  Grid.Row="3" Grid.Column="1" x:Name="EmergencyAskCheck" />
+                    <CheckBox  Grid.Row="3" Grid.Column="2" x:Name="EmergencyAuditCheck" />
+                    <CheckBox  Grid.Row="3" Grid.Column="3" x:Name="EmergencyCleanupCheck" />
+                </Grid>
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                    <Label Content="Re-fire cooldown (min):" VerticalAlignment="Center" Width="150" />
+                    <TextBox x:Name="AutoResponseCooldownBox" Width="60"
+                             ToolTip="Per harness + action: don't repeat the same auto-response within this window." />
+                </StackPanel>
             </StackPanel>
 
             <!-- ── Buttons ───────────────────────────────────────────────────── -->
