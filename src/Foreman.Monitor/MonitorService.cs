@@ -21,6 +21,7 @@ public sealed class MonitorService : IDisposable
     public BehaviorTracker    Behavior { get; }
     public ProfileMatcher     Profiles { get; }
     public McpInventoryMonitor McpInventory { get; }
+    public IdleHarnessDetector IdleCleanup { get; }
 
     public MonitorService(ForemanSettings settings, EventBus bus)
     {
@@ -40,6 +41,7 @@ public sealed class MonitorService : IDisposable
             settings, bus,
             pid => Tree.GetByPid(pid),
             pid => Tree.FindHarnessTypeAncestor(pid));
+        IdleCleanup = new IdleHarnessDetector(bus, settings, Tree);
     }
 
     public void Start()
@@ -49,6 +51,7 @@ public sealed class MonitorService : IDisposable
         _watcher.Start();
         _poller.Start();
         McpInventory.Start();
+        IdleCleanup.Start();
     }
 
     public void Dispose()
@@ -57,5 +60,6 @@ public sealed class MonitorService : IDisposable
         _watcher.Dispose();
         _profileStore.Dispose();
         McpInventory.Dispose();
+        IdleCleanup.Dispose();
     }
 }

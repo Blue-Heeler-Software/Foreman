@@ -104,6 +104,9 @@
                   VirtualizingStackPanel.IsVirtualizing="True">
             <ListView.ContextMenu>
                 <ContextMenu>
+                    <MenuItem Header="Request self-cleanup (via MCP)" Click="RequestCleanupClick"
+                              ToolTip="Ask this harness to checkpoint its work, stop leftover child processes, and reply or exit. Polite request only — nothing is killed." />
+                    <Separator />
                     <MenuItem Header="Check on VirusTotal" Click="VirusTotalClick" />
                     <MenuItem Header="Copy SHA-256"        Click="CopyHashClick" />
                     <Separator />

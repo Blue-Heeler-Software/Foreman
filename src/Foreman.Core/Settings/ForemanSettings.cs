@@ -44,6 +44,25 @@ public sealed class ForemanSettings
     /// </summary>
     public bool ScanMcpTools { get; set; } = false;
 
+    // ── Idle Harness self-cleanup ────────────────────────────────────────────
+
+    /// <summary>
+    /// Opt-in: when a harness's whole process tree has been I/O-silent past the threshold,
+    /// automatically ask it over MCP to pack up cleanly (checkpoint work, stop leftover
+    /// children, reply or exit). The manual per-harness trigger in the Process Monitor works
+    /// regardless of this setting.
+    /// </summary>
+    public bool IdleCleanupEnabled { get; set; } = false;
+
+    /// <summary>Minutes of whole-tree I/O silence before a harness counts as idle.</summary>
+    public int IdleCleanupAfterMinutes { get; set; } = 45;
+
+    /// <summary>Minutes to wait for a reply before surfacing an "unanswered cleanup request" notice.</summary>
+    public int IdleCleanupGraceMinutes { get; set; } = 15;
+
+    /// <summary>Per-harness cooldown between automatic cleanup requests, so Foreman never nags.</summary>
+    public int IdleCleanupCooldownMinutes { get; set; } = 120;
+
     public string ProfilesDirectory { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman", "profiles");
 

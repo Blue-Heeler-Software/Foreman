@@ -43,6 +43,9 @@ public sealed class TrayController : IEventSink, IDisposable
     public Action<string>?                                    KillHarness           { get; set; }
     public Action<string>?                                    DisableHarness        { get; set; }
 
+    /// <summary>Injected from App — asks a harness to pack up cleanly (Idle Harness self-cleanup).</summary>
+    public Func<string, (bool Ok, string Message)>?           RequestHarnessCleanup { get; set; }
+
     /// <summary>Injected from App — per-PID network bytes/sec from the elevated sidecar (null when off).</summary>
     public Func<int, double?>?                                GetNetRate            { get; set; }
 
@@ -265,7 +268,7 @@ public sealed class TrayController : IEventSink, IDisposable
             // composition root that holds the data providers) and hand them to the dashboard to host.
             Func<IEnumerable<Foreman.Core.Models.ProcessRecord>> snap = GetProcessSnapshot ?? (() => []);
             w.HostViews(
-                processes: new ProcessMonitorWindow(snap, GetNetRate),
+                processes: new ProcessMonitorWindow(snap, GetNetRate, RequestHarnessCleanup),
                 harnesses: new HarnessesWindow(_settings, snap),
                 behavior:  new BehaviorMetricsWindow(
                     _settings,

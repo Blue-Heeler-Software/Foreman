@@ -96,6 +96,20 @@ public partial class App : Application
         AlertDetailWindow.AskOffender = (harnessId, sys, usr, requestId, ct) =>
             _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId, ct);
 
+        // Idle Harness self-cleanup: detector (Monitor) ↔ Ask-Harness mailbox + live push (McpServer).
+        // The cleanup request rides the same mailbox agents already poll (ListAskHarnessRequests).
+        _monitor.IdleCleanup.CreateCleanupRequest = (harnessId, alertId, sys, usr, pid, name) =>
+            _mcpHost.State.CreateAskHarnessRequest(harnessId, sys, usr, alertId, pid, name).RequestId;
+        _monitor.IdleCleanup.IsRequestPending = id =>
+            _mcpHost.State.GetAskHarnessRequest(id)?.Status == "pending";
+        _monitor.IdleCleanup.PushToOffender = async (harnessId, sys, usr, requestId) =>
+        {
+            var res = await _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId).ConfigureAwait(false);
+            if (res.Outcome == AskOutcome.Sampled && !string.IsNullOrWhiteSpace(res.ReplyText))
+                _mcpHost.State.ReplyToAskHarnessRequest(requestId, res.ReplyText!, "replied via sampling round-trip", harnessId, null);
+        };
+        _tray.RequestHarnessCleanup = type => _monitor.IdleCleanup.TriggerCleanup(type);
+
         // wire behavior tracker into tray (metrics window + kill + disable actions)
         _tray.GetBehaviorProfiles   = () => _monitor.Behavior.Profiles;
         _tray.ResetBehaviorProfile  = id => _monitor.Behavior.ResetProfile(id);

@@ -13,14 +13,19 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
 {
     private readonly Func<IEnumerable<ProcessRecord>> _getSnapshot;
     private readonly Func<int, double?>? _getNetRate;
+    private readonly Func<string, (bool Ok, string Message)>? _requestCleanup;
     private readonly DispatcherTimer _timer;
     private readonly ResourceSampler _sampler = new();
     private ProcessMonitorVm? _selected;
 
-    public ProcessMonitorWindow(Func<IEnumerable<ProcessRecord>> getSnapshot, Func<int, double?>? getNetRate = null)
+    public ProcessMonitorWindow(
+        Func<IEnumerable<ProcessRecord>> getSnapshot,
+        Func<int, double?>? getNetRate = null,
+        Func<string, (bool Ok, string Message)>? requestCleanup = null)
     {
         _getSnapshot = getSnapshot;
         _getNetRate  = getNetRate;
+        _requestCleanup = requestCleanup;
         InitializeComponent();
 
         Loaded += (_, _) => Refresh();
@@ -144,6 +149,27 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
         if (_selected?.ExecutablePath is { Length: > 0 } path) Clipboard.SetText(path);
     }
 
+    // ── Idle Harness self-cleanup (right-click on a harness row) ───────────────
+
+    private void RequestCleanupClick(object sender, RoutedEventArgs e)
+    {
+        if (_requestCleanup is null) return;
+
+        var harnessId = _selected?.HarnessId;
+        if (string.IsNullOrEmpty(harnessId))
+        {
+            MessageBox.Show(
+                "Select a row that belongs to a harness first — the cleanup request goes to the whole agent, " +
+                "asking it to checkpoint work, stop leftover children, and reply or exit.",
+                "Foreman Agent Safety — Self-cleanup", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var (ok, msg) = _requestCleanup(harnessId);
+        MessageBox.Show(msg, "Foreman Agent Safety — Self-cleanup",
+            MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
     private void OpenLocationClick(object sender, RoutedEventArgs e)
     {
         if (_selected?.ExecutablePath is { Length: > 0 } path && File.Exists(path))
@@ -179,7 +205,8 @@ public sealed class ProcessMonitorVm
     public string CommandLine    { get; }        // truncated for column display
     public string CommandLineFull { get; }       // full, for detail strip
     public int    ParentPid      { get; }
-    public string HarnessType    { get; }
+    public string HarnessType    { get; }        // display label ("—" when none)
+    public string? HarnessId     { get; }        // raw harness id, null for non-harness rows
     public string StateLabel     { get; }
     public string UptimeLabel    { get; }
     public string SilentLabel    { get; }
@@ -205,6 +232,7 @@ public sealed class ProcessMonitorVm
         CommandLineFull = p.CommandLine;
         CommandLine     = Truncate(p.CommandLine, 80);
         ParentPid       = p.ParentPid;
+        HarnessId       = p.HarnessType;
         HarnessType     = p.HarnessType ?? (p.IsHarness ? "harness" : "—");
 
         ExecutablePath = p.ExecutablePath;

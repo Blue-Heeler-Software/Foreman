@@ -124,6 +124,16 @@
                 <TextBlock TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
                            Text="Periodically connects to the HTTP/SSE MCP servers your harnesses use, lists their tools, and flags tool names or descriptions that read like prompt injection or data exfil (e.g. 'ignore previous instructions', 'email the .env'). This is the only feature that makes outbound connections to third-party servers; stdio servers are never launched. Leave off unless you want this network probe." />
+                <CheckBox x:Name="IdleCleanupCheck"
+                          Content="Ask idle harnesses to clean up after themselves (opt-in)"
+                          Margin="0,12,0,0" />
+                <TextBlock TextWrapping="Wrap" FontSize="10"
+                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
+                           Text="When an agent's whole process tree has been I/O-silent past the threshold, Foreman Agent Safety asks it over MCP to pack up cleanly: checkpoint work, stop leftover child processes, and reply or exit. A polite request only — nothing is killed, and an unanswered request just raises a notice. The manual trigger (Process Monitor → right-click → Request self-cleanup) always works." />
+                <StackPanel Orientation="Horizontal" Margin="22,6,0,0">
+                    <Label Content="Consider idle after (min):" VerticalAlignment="Center" Width="188" />
+                    <TextBox x:Name="IdleCleanupAfterBox" Width="60" />
+                </StackPanel>
             </StackPanel>
 
             <!-- ── Escalation Thresholds ─────────────────────────────────────── -->

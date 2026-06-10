@@ -43,6 +43,8 @@ public partial class SettingsWindow : Window
         MonitorAllCheck.IsChecked    = _settings.MonitorAllProcesses;
         RunElevatedCheck.IsChecked   = _settings.RunElevated;
         ScanMcpToolsCheck.IsChecked  = _settings.ScanMcpTools;
+        IdleCleanupCheck.IsChecked   = _settings.IdleCleanupEnabled;
+        IdleCleanupAfterBox.Text     = _settings.IdleCleanupAfterMinutes.ToString();
 
         // Escalation thresholds
         AlertMediumBox.Text    = _settings.AlertLevelMediumCount.ToString();
@@ -71,6 +73,9 @@ public partial class SettingsWindow : Window
 
         if (!int.TryParse(SuppressBox.Text, out var suppress) || suppress < 0)
         { MessageBox.Show("Alert suppress window must be ≥ 0.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+        if (!int.TryParse(IdleCleanupAfterBox.Text, out var idleAfter) || idleAfter < 5)
+        { MessageBox.Show("Idle cleanup threshold must be ≥ 5 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         // ── Escalation thresholds ────────────────────────────────────────────
         if (!int.TryParse(AlertMediumBox.Text, out var alertMed) || alertMed < 1)
@@ -111,6 +116,8 @@ public partial class SettingsWindow : Window
         _settings.NotifyOnCriticalCommand    = NotifyCriticalCheck.IsChecked == true;
         _settings.EventLogPersist            = PersistLogCheck.IsChecked == true;
         _settings.MonitorAllProcesses        = MonitorAllCheck.IsChecked == true;
+        _settings.IdleCleanupEnabled         = IdleCleanupCheck.IsChecked == true;
+        _settings.IdleCleanupAfterMinutes    = idleAfter;
 
         _settings.AlertLevelMediumCount      = alertMed;
         _settings.AlarmLevelHighCount        = alarmHigh;
