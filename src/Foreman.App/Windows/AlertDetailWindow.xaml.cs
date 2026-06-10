@@ -1,10 +1,10 @@
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Models;
+using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using Foreman.McpServer;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -405,7 +405,7 @@ public partial class AlertDetailWindow : Window
         {
             sb.AppendLine();
             sb.AppendLine("Command line (potential secrets masked):");
-            sb.AppendLine(RedactSecrets(commandLine));
+            sb.AppendLine(SecretRedactor.Redact(commandLine));
         }
 
         AppendEventSpecificDetails(sb);
@@ -540,7 +540,7 @@ public partial class AlertDetailWindow : Window
         {
             sb.AppendLine();
             sb.AppendLine("Command line (potential secrets masked)");
-            sb.AppendLine(RedactSecrets(commandLine));
+            sb.AppendLine(SecretRedactor.Redact(commandLine));
         }
 
         AppendEventSpecificDetails(sb);
@@ -722,27 +722,6 @@ public partial class AlertDetailWindow : Window
             return cmd.CommandLine;
 
         return string.IsNullOrWhiteSpace(liveProcess?.CommandLine) ? null : liveProcess.CommandLine;
-    }
-
-    // The audit prompt is copied to the clipboard for pasting into a (possibly third-party) LLM.
-    // A flagged command line can carry credentials, so mask the obvious ones first. Best-effort
-    // hygiene, not a guarantee — the prompt header notes that masking was applied.
-    private static readonly Regex[] _secretPatterns =
-    [
-        new(@"(?i)\b(authorization:\s*(?:[a-z]+\s+)?)\S+", RegexOptions.Compiled),  // Bearer / token / Basic / none
-        new(@"(?i)(--(?:password|token|api[-_]?key|secret|access[-_]?key|client[-_]?secret)[ =]+)\S+", RegexOptions.Compiled),
-        new(@"(?i)\b((?:password|passwd|pwd|token|api[-_]?key|apikey|secret|access[-_]?key)\s*=\s*)[^\s;,""']+", RegexOptions.Compiled),
-        new(@"\bAKIA[0-9A-Z]{16}\b", RegexOptions.Compiled),
-    ];
-
-    private static string RedactSecrets(string commandLine)
-    {
-        var s = commandLine;
-        s = _secretPatterns[0].Replace(s, "$1***");
-        s = _secretPatterns[1].Replace(s, "$1***");
-        s = _secretPatterns[2].Replace(s, "$1***");
-        s = _secretPatterns[3].Replace(s, "***");
-        return s;
     }
 
     private static string? ResolveHarnessFromProcess(int pid)

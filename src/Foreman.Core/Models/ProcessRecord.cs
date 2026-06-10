@@ -31,4 +31,27 @@ public sealed class ProcessRecord
 
     // stable key: pid + start tick avoids reuse confusion
     public string Key => $"{Pid}:{StartTime.ToUnixTimeMilliseconds()}";
+
+    /// <summary>
+    /// A copy with the command line replaced — used to redact secrets at MCP egress without mutating
+    /// the live record the local UI, detector, and kill path rely on. All other fields (incl. computed
+    /// Uptime/Silent/Key) are preserved, so the serialized shape is identical.
+    /// </summary>
+    public ProcessRecord WithCommandLine(string commandLine) => new()
+    {
+        Pid = Pid,
+        StartTime = StartTime,
+        Name = Name,
+        CommandLine = commandLine,
+        ExecutablePath = ExecutablePath,
+        ParentPid = ParentPid,
+        IsHarness = IsHarness,
+        HarnessType = HarnessType,
+        ProfileName = ProfileName,
+        State = State,
+        LastReadOps = LastReadOps,
+        LastWriteOps = LastWriteOps,
+        LastIoChangeTime = LastIoChangeTime,
+        IoCountersUnavailable = IoCountersUnavailable,
+    };
 }

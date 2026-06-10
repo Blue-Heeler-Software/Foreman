@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Foreman.Core.Models;
+using Foreman.Core.Security;
 
 namespace Foreman.Core.Events;
 
@@ -34,7 +35,8 @@ public sealed class EventLogStore
     {
         try
         {
-            var line = JsonSerializer.Serialize(evt, _json);
+            // Disk is an egress boundary: mask secret-shaped text before it lands at rest.
+            var line = JsonSerializer.Serialize(SecretRedactor.RedactEvent(evt), _json);
             lock (_lock)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_file)!);

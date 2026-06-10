@@ -3,6 +3,7 @@ using Foreman.Core.Events;
 using Foreman.Core.Mcp;
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
+using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using System.Collections.Concurrent;
 
@@ -163,7 +164,7 @@ public sealed class ForemanState : IEventSink
                 timestamp = e.Timestamp,
                 severity  = e.Severity.ToString(),
                 source    = e.Source,
-                message   = e.Message,
+                message   = SecretRedactor.Redact(e.Message),   // egress to a connected agent — mask secrets
                 acked     = e.Acknowledged,
             });
     }

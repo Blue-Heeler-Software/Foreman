@@ -1,5 +1,6 @@
 using Foreman.Core.Events;
 using Foreman.Core.Models;
+using Foreman.Core.Security;
 using Microsoft.Extensions.Logging;
 
 namespace Foreman.McpServer;
@@ -34,48 +35,54 @@ public sealed class AlertDispatcher : IEventSink
         _ = _sessions.BroadcastNotificationAsync(level, "foreman", data);
     }
 
-    private static object BuildPayload(ForemanEvent evt) => evt switch
+    private static object BuildPayload(ForemanEvent evt)
     {
-        HangDetectedEvent h => new
+        // Egress to connected clients: the command-alert message embeds a (truncated) command line,
+        // so mask secret-shaped text before it leaves. The raw event in EventBus history is untouched.
+        var message = SecretRedactor.Redact(evt.Message);
+        return evt switch
         {
-            type = "hang_alert",
-            pid = h.ProcessId,
-            processName = h.ProcessName,
-            uptimeMinutes = h.UptimeMinutes,
-            silentMinutes = h.SilentMinutes,
-            spawnerPid = h.SpawnerPid,
-            spawnerName = h.SpawnerName,
-            parentHarnessPid = h.ParentHarnessPid,
-            parentHarnessType = h.ParentHarnessType,
-            parentHarnessName = h.ParentHarnessName,
-            message = h.Message,
-        },
-        OrphanDetectedEvent o => new
-        {
-            type = "orphan_alert",
-            pid = o.ProcessId,
-            processName = o.ProcessName,
-            deadParentPid = o.DeadParentPid,
-            deadParentName = o.DeadParentName,
-            message = o.Message,
-        },
-        CommandAlertEvent c => new
-        {
-            type = "command_alert",
-            pid = c.ProcessId,
-            ruleId = c.RuleId,
-            ruleName = c.RuleName,
-            severity = c.Severity.ToString(),
-            message = c.Message,
-        },
-        PermissionViolationEvent v => new
-        {
-            type = "permission_violation",
-            pid = v.ProcessId,
-            profileName = v.ProfileName,
-            violationType = v.ViolationType,
-            message = v.Message,
-        },
-        _ => new { type = "generic", message = evt.Message },
-    };
+            HangDetectedEvent h => new
+            {
+                type = "hang_alert",
+                pid = h.ProcessId,
+                processName = h.ProcessName,
+                uptimeMinutes = h.UptimeMinutes,
+                silentMinutes = h.SilentMinutes,
+                spawnerPid = h.SpawnerPid,
+                spawnerName = h.SpawnerName,
+                parentHarnessPid = h.ParentHarnessPid,
+                parentHarnessType = h.ParentHarnessType,
+                parentHarnessName = h.ParentHarnessName,
+                message,
+            },
+            OrphanDetectedEvent o => new
+            {
+                type = "orphan_alert",
+                pid = o.ProcessId,
+                processName = o.ProcessName,
+                deadParentPid = o.DeadParentPid,
+                deadParentName = o.DeadParentName,
+                message,
+            },
+            CommandAlertEvent c => new
+            {
+                type = "command_alert",
+                pid = c.ProcessId,
+                ruleId = c.RuleId,
+                ruleName = c.RuleName,
+                severity = c.Severity.ToString(),
+                message,
+            },
+            PermissionViolationEvent v => new
+            {
+                type = "permission_violation",
+                pid = v.ProcessId,
+                profileName = v.ProfileName,
+                violationType = v.ViolationType,
+                message,
+            },
+            _ => new { type = "generic", message },
+        };
+    }
 }

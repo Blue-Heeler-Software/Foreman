@@ -69,7 +69,10 @@ public static class ForemanMcpTools
         var procs = resolvedHarness is not null
             ? state.GetProcessesForHarness(resolvedHarness, includeChildren)
             : state.GetProcesses(includeChildren);
-        return new { harnessId = resolvedHarness, processes = procs };
+        // Egress to a connected agent: mask secret-shaped text in the command line (the live
+        // record stays raw for the local UI and detector). Same shape, redacted CommandLine.
+        var redacted = procs.Select(p => p.WithCommandLine(Core.Security.SecretRedactor.Redact(p.CommandLine)));
+        return new { harnessId = resolvedHarness, processes = redacted };
     }
 
     [McpServerTool, Description("Returns detailed information about a specific process by PID.")]
@@ -83,7 +86,7 @@ public static class ForemanMcpTools
         {
             pid = proc.Pid,
             name = proc.Name,
-            commandLine = proc.CommandLine,
+            commandLine = Core.Security.SecretRedactor.Redact(proc.CommandLine),
             state = proc.State.ToString(),
             uptimeMinutes = proc.UptimeMinutes,
             silentMinutes = proc.SilentMinutes,

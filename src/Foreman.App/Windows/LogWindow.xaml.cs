@@ -198,7 +198,8 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
                 sb.Append(CsvEscape(vm.Timestamp)).Append(',');
                 sb.Append(CsvEscape(vm.SeverityLabel)).Append(',');
                 sb.Append(CsvEscape(vm.Source)).Append(',');
-                sb.AppendLine(CsvEscape(vm.Message));
+                // Export is a file egress: mask secrets in the (agent-controlled) message text.
+                sb.AppendLine(CsvEscape(Core.Security.SecretRedactor.Redact(vm.Message)));
             }
 
             File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
