@@ -1,3 +1,4 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Models;
@@ -107,7 +108,7 @@ public partial class DashboardWindow : Window, IEventSink
         // MonitoringNoticeEvent at Info — from inflating the count. The header summary now mirrors this
         // exact count, so "all clear" can no longer contradict a non-zero ACTIVE ALERTS card.
         var active = history
-            .Where(static e => e.Severity > ForemanSeverity.Info && !e.Acknowledged)
+            .Where(AlertActivity.IsActive)   // the one shared definition (tray/dashboard/MCP agree)
             .ToList();
 
         SummaryLabel.Text = active.Count == 0

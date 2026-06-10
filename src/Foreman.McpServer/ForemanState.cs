@@ -1,3 +1,4 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Mcp;
@@ -39,8 +40,8 @@ public sealed class ForemanState : IEventSink
     /// <summary>Resets behavioral metrics for a specific harness ID. Returns false if not found.</summary>
     public Action<string>? ResetBehaviorProfile { get; set; }
 
-    public int ActiveAlerts => _alertById.Values.Count(e => !e.Acknowledged);
-    public bool HasCritical => _alertById.Values.Any(e => !e.Acknowledged && e.Severity >= ForemanSeverity.High);
+    public int ActiveAlerts => _alertById.Values.Count(AlertActivity.IsActive);
+    public bool HasCritical => _alertById.Values.Any(e => AlertActivity.IsActive(e) && e.Severity >= ForemanSeverity.High);
     public int ProcessCount => GetProcessSnapshot?.Invoke().Count() ?? 0;
     public int McpSessionCount => GetMcpSessionCount?.Invoke() ?? 0;
     public int PendingAskHarnessCount => _askRequests.Values.Count(static r => r.Status == "pending");

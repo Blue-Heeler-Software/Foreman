@@ -1,5 +1,6 @@
 using Foreman.App.Tray;
 using Foreman.App.Windows;
+using Foreman.Core.Alerts;
 using Foreman.Core.Events;
 using Foreman.Core.Heuristics;
 using Foreman.Core.Models;
@@ -20,6 +21,7 @@ public partial class App : Application
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
     private McpToolScanMonitor? _toolScan;
+    private AlertResolver? _alertResolver;
     private CancellationTokenSource? _cts;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -159,6 +161,15 @@ public partial class App : Application
         _tray.ApplyScanMcpTools = ApplyScanMcpTools;
         ApplyScanMcpTools(settings.ScanMcpTools);
 
+        // Alert lifecycle: periodically auto-resolve alerts whose condition has cleared (a hung process
+        // resumed I/O or exited, an orphan exited, a nonzero-exit aged out) so the tray doesn't stay
+        // amber forever. It flags the shared event instances, so tray, dashboard, and MCP all agree.
+        _alertResolver = new AlertResolver(
+            EventBus.Instance,
+            () => EventBus.Instance.GetHistory(),
+            () => _monitor.Tree.GetAll().ToList());
+        _alertResolver.Start();
+
         // Start MCP on a background thread so we don't block the WPF message pump — but never
         // silently: a bind failure (port in use) used to leave Foreman looking healthy with no
         // MCP at all. Surface it as a High notice so the tray goes red and the log explains.
@@ -207,6 +218,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _cts?.Cancel();
+        _alertResolver?.Dispose();
         _toolScan?.Dispose();
         _sidecar?.Dispose();
         _mcpHost?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));

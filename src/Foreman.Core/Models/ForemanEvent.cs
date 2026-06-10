@@ -23,6 +23,17 @@ public abstract record ForemanEvent(
     public bool Acknowledged { get; set; }
 
     /// <summary>
+    /// Set by the alert lifecycle (<see cref="Foreman.Core.Alerts.AlertResolver"/>) when the underlying
+    /// condition has cleared on its own — a hung process resumed I/O or exited, an orphan exited, a
+    /// point-in-time alert aged out. Distinct from <see cref="Acknowledged"/> (an operator action); both
+    /// drop the alert from the "active" set so the tray/dashboard/MCP stop counting it.
+    /// </summary>
+    public bool AutoResolved { get; set; }
+
+    /// <summary>Human-readable reason this alert auto-resolved (e.g. "I/O resumed"), null while open.</summary>
+    public string? ResolvedReason { get; set; }
+
+    /// <summary>
     /// WMI CreationDate of the process this alert is about, when known. Pins the kill target's
     /// identity: a later Kill validates this against the currently-tracked record for the PID,
     /// so a recycled PID (which has a different CreationDate) is refused rather than killed.

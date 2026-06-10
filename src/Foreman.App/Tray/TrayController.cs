@@ -1,4 +1,5 @@
 using Foreman.App.Windows;
+using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Integration;
@@ -229,7 +230,7 @@ public sealed class TrayController : IEventSink, IDisposable
     private void RefreshAlertState()
     {
         var active = EventBus.Instance.GetHistory()
-            .Where(static e => e is not InfoEvent && !e.Acknowledged)
+            .Where(AlertActivity.IsActive)   // the one shared definition (tray/dashboard/MCP agree)
             .ToList();
 
         _activeAlerts = active.Count;
