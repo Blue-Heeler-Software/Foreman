@@ -24,6 +24,12 @@ public sealed class WmiProcessWatcher : IDisposable
     private ManagementEventWatcher? _deleteWatcher;
     private bool _started;
 
+    private readonly object _armLock = new();
+    private volatile bool _healthy;
+    private bool _degraded;          // have we already announced degradation? (guards notice spam)
+    private Timer? _watchdog;
+    private volatile bool _disposed;
+
     public WmiProcessWatcher(
         ProcessTreeTracker tree,
         EventBus bus,
@@ -46,17 +52,93 @@ public sealed class WmiProcessWatcher : IDisposable
         // initial snapshot — detect already-running harnesses before WMI watchers start
         Task.Run(RunInitialScan);
 
-        // process creation — WITHIN 1 means polling every 1 second
-        _createWatcher = new ManagementEventWatcher(
-            new WqlEventQuery("SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process'"));
-        _createWatcher.EventArrived += OnProcessCreated;
-        _createWatcher.Start();
+        ArmWatchers();
 
-        // process termination — 2s is fine since we track final state
-        _deleteWatcher = new ManagementEventWatcher(
-            new WqlEventQuery("SELECT * FROM __InstanceDeletionEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process'"));
-        _deleteWatcher.EventArrived += OnProcessDeleted;
-        _deleteWatcher.Start();
+        // Watchdog: a WMI event sink can die silently (WMI service restart, COM fault) — which used to
+        // end process monitoring with no signal. Re-arm any stopped watcher so detection recovers instead
+        // of going quietly dark. Cheap: only does work when a watcher is known-unhealthy.
+        _watchdog = new Timer(_ => Watchdog(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>Creates (or recreates) and starts both WMI watchers. Safe to call repeatedly.</summary>
+    private void ArmWatchers()
+    {
+        lock (_armLock)
+        {
+            if (_disposed) return;
+            try
+            {
+                TeardownWatchers();   // detach + dispose any previous instances first
+
+                // process creation — WITHIN 1 means polling every 1 second
+                _createWatcher = new ManagementEventWatcher(
+                    new WqlEventQuery("SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process'"));
+                _createWatcher.EventArrived += OnProcessCreated;
+                _createWatcher.Stopped += OnWatcherStopped;
+                _createWatcher.Start();
+
+                // process termination — 2s is fine since we track final state
+                _deleteWatcher = new ManagementEventWatcher(
+                    new WqlEventQuery("SELECT * FROM __InstanceDeletionEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process'"));
+                _deleteWatcher.EventArrived += OnProcessDeleted;
+                _deleteWatcher.Stopped += OnWatcherStopped;
+                _deleteWatcher.Start();
+
+                _healthy = true;
+                if (_degraded)   // recovered from a previous failure
+                {
+                    _degraded = false;
+                    _bus.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Monitor",
+                        "Process monitoring recovered — WMI watchers restarted."));
+                }
+            }
+            catch (Exception ex)
+            {
+                _healthy = false;
+                TeardownWatchers();   // don't leave a half-armed state
+                if (!_degraded)
+                {
+                    _degraded = true;
+                    _bus.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Monitor",
+                        $"Process monitoring is DEGRADED — WMI watchers failed to start ({ex.Message}). " +
+                        "Hang/orphan/command detection is paused; Foreman will keep retrying every 30s."));
+                }
+            }
+        }
+    }
+
+    private void TeardownWatchers()
+    {
+        // Detach BEFORE Stop()/Dispose() so our own intentional teardown never trips OnWatcherStopped.
+        if (_createWatcher is not null)
+        {
+            _createWatcher.EventArrived -= OnProcessCreated;
+            _createWatcher.Stopped -= OnWatcherStopped;
+            try { _createWatcher.Stop(); } catch { }
+            _createWatcher.Dispose();
+            _createWatcher = null;
+        }
+        if (_deleteWatcher is not null)
+        {
+            _deleteWatcher.EventArrived -= OnProcessDeleted;
+            _deleteWatcher.Stopped -= OnWatcherStopped;
+            try { _deleteWatcher.Stop(); } catch { }
+            _deleteWatcher.Dispose();
+            _deleteWatcher = null;
+        }
+    }
+
+    // Fires on unexpected stops (we detach before our own teardown, so this is always involuntary).
+    // Mark unhealthy; the watchdog re-arms on its next tick.
+    private void OnWatcherStopped(object sender, StoppedEventArgs e)
+    {
+        if (!_disposed) _healthy = false;
+    }
+
+    private void Watchdog()
+    {
+        if (_disposed || _healthy) return;
+        ArmWatchers();
     }
 
     private void RunInitialScan()
@@ -288,9 +370,9 @@ public sealed class WmiProcessWatcher : IDisposable
 
     public void Dispose()
     {
-        _createWatcher?.Stop();
-        _createWatcher?.Dispose();
-        _deleteWatcher?.Stop();
-        _deleteWatcher?.Dispose();
+        _disposed = true;
+        _watchdog?.Dispose();
+        lock (_armLock)
+            TeardownWatchers();
     }
 }

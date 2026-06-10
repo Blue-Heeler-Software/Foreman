@@ -172,6 +172,12 @@ public partial class App : Application
             $"{KnownHarnesses.All.Count} built-in harness types" +
             (settings.CustomHarnessExes.Count > 0 ? $" + {settings.CustomHarnessExes.Count} custom" : "")));
 
+        // If settings.json was unreadable at launch it was quarantined and defaults loaded. Surface that
+        // now (the bus + event log are wired) so a corrupt file isn't a silent reset of security posture.
+        if (SettingsStore.LastLoadFault is { } settingsFault)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Settings", settingsFault));
+
         // first-run dialog deferred to idle so it doesn't block server startup
         var port = settings.McpPort;
         var mcpToken = _mcpHost.McpToken;
