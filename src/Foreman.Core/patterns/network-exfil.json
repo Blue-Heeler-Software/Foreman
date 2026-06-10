@@ -17,9 +17,9 @@
       "id": "net-002",
       "name": "PowerShell IEX from web",
       "severity": "critical",
-      "description": "Invoke-Expression (iex) downloading and immediately executing a web-hosted script via Invoke-WebRequest or WebClient. This is the most common PowerShell malware delivery pattern.",
+      "description": "Invoke-Expression (iex) downloading and immediately executing a web-hosted script — via Invoke-WebRequest (iwr) or a WebClient .DownloadString/.DownloadData/.DownloadFile cradle, whether the download is passed into iex (iex (... )) or piped into it (... | iex). This is the most common PowerShell malware delivery pattern.",
       "guidance": "Terminate the harness. Check what URL was targeted and what code was downloaded. Inspect recently added startup entries, scheduled tasks, and registry Run keys that the downloaded script may have created.",
-      "pattern": "(?:iex|Invoke-Expression)\\s*\\(\\s*(?:iwr|Invoke-WebRequest|\\(New-Object\\s+Net\\.WebClient\\)\\.DownloadString)",
+      "pattern": "(?:iex|Invoke-Expression)\\s*\\(\\s*(?:(?:iwr|Invoke-WebRequest)\\b|\\(?\\s*(?:New-Object\\s+(?:-TypeName\\s+)?(?:System\\.)?Net\\.WebClient|\\[(?:System\\.)?Net\\.WebClient\\])[^\\n]*?\\.Download(?:String|Data|File))|(?:New-Object\\s+(?:-TypeName\\s+)?(?:System\\.)?Net\\.WebClient|\\[(?:System\\.)?Net\\.WebClient\\])[^\\n]*?\\.Download(?:String|Data|File)[^\\n]*?\\|\\s*(?:iex|Invoke-Expression)\\b",
       "platforms": ["powershell", "cmd"],
       "falsePositiveTags": []
     },

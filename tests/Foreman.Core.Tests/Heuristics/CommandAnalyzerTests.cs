@@ -39,7 +39,10 @@ public sealed class CommandAnalyzerTests : IClassFixture<PatternLibraryFixture>
     }
 
     [Theory]
-    [InlineData("powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcA", ForemanSeverity.High, "win-001")]
+    // benign decoded payload (Write-Host 'build complete') so this row stays a pure win-001 case —
+    // an -enc payload that decodes to a download cradle now correctly surfaces net-002 (Critical),
+    // covered by CommandAnalyzerObfuscationTests.EncodedCommand_SurfacesInnerCriticalRule.
+    [InlineData("powershell -enc VwByAGkAdABlAC0ASABvAHMAdAAgACcAYgB1AGkAbABkACAAYwBvAG0AcABsAGUAdABlACcA", ForemanSeverity.High, "win-001")]
     [InlineData("powershell.exe -EncodedCommand SGVsbG8gV29ybGQgdGhpcyBpcyBhIHRlc3Q=", ForemanSeverity.High, "win-001")]
     // pwsh (PowerShell 7) and shorter payloads used to slip past
     [InlineData("pwsh -enc SQBFAFgAIABoAGkAIQ==",                ForemanSeverity.High, "win-001")]
