@@ -34,7 +34,7 @@ public sealed class WmiProcessWatcherTests
     public void IoPoller_DisposeAfterStart_DoesNotThrowOnCancellation()
     {
         var tree = new ProcessTreeTracker();
-        var hang = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var hang = new HangDetector(new EventBus(), new ForemanSettings(), tree);
         var poller = new IoPoller(
             tree,
             hang,

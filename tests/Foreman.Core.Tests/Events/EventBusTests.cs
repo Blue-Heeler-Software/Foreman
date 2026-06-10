@@ -8,13 +8,14 @@ public sealed class EventBusTests
     [Fact]
     public void Unsubscribe_HandlerStopsReceivingEvents()
     {
+        var bus = new EventBus();   // isolated — not the shared Instance
         var count = 0;
         void Handler(ForemanEvent _) => count++;
 
-        EventBus.Instance.Subscribe(Handler);
-        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "test", "before"));
-        EventBus.Instance.Unsubscribe(Handler);
-        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "test", "after"));
+        bus.Subscribe(Handler);
+        bus.Publish(new InfoEvent(DateTimeOffset.UtcNow, "test", "before"));
+        bus.Unsubscribe(Handler);
+        bus.Publish(new InfoEvent(DateTimeOffset.UtcNow, "test", "after"));
 
         Assert.Equal(1, count);
     }

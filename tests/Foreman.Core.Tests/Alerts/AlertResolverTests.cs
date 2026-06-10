@@ -14,7 +14,7 @@ public sealed class AlertResolverTests
     private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(1000);
 
     private static AlertResolver Resolver() =>
-        new(EventBus.Instance, () => [], () => []);   // providers unused; we call Evaluate directly
+        new(new EventBus(), () => [], () => []);   // isolated bus; providers unused — we call Evaluate directly
 
     private static ProcessRecord Proc(int pid, DateTimeOffset start, int silentMinutes, bool unavailable = false) => new()
     {

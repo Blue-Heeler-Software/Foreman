@@ -11,6 +11,7 @@ public sealed class ViolationDetectorTests : IClassFixture<PatternLibraryFixture
     private readonly string _profileDir = Path.Combine(Path.GetTempPath(), "foreman-profile-test-" + Guid.NewGuid().ToString("N"));
     private readonly ProfileStore _store;
     private readonly ProfileMatcher _matcher;
+    private readonly EventBus _bus = new();   // isolated per test — no shared-singleton contamination
 
     public ViolationDetectorTests()
     {
@@ -47,16 +48,16 @@ public sealed class ViolationDetectorTests : IClassFixture<PatternLibraryFixture
                 hits.Add(v);
         }
 
-        EventBus.Instance.Subscribe(Handler);
+        _bus.Subscribe(Handler);
         try
         {
-            var detector = new ViolationDetector(_matcher, EventBus.Instance, _ => harness);
+            var detector = new ViolationDetector(_matcher, _bus, _ => harness);
 
             detector.CheckCommandLine(child, match);
         }
         finally
         {
-            EventBus.Instance.Unsubscribe(Handler);
+            _bus.Unsubscribe(Handler);
         }
 
         Assert.Single(hits);
@@ -86,16 +87,16 @@ public sealed class ViolationDetectorTests : IClassFixture<PatternLibraryFixture
                 hits.Add(v);
         }
 
-        EventBus.Instance.Subscribe(Handler);
+        _bus.Subscribe(Handler);
         try
         {
-            var detector = new ViolationDetector(_matcher, EventBus.Instance);
+            var detector = new ViolationDetector(_matcher, _bus);
 
             detector.CheckCommandLine(harness, match);
         }
         finally
         {
-            EventBus.Instance.Unsubscribe(Handler);
+            _bus.Unsubscribe(Handler);
         }
 
         Assert.Empty(hits);

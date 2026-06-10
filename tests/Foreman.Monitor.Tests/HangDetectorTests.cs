@@ -18,6 +18,7 @@ namespace Foreman.Monitor.Tests;
 /// </summary>
 public sealed class HangDetectorTests
 {
+    private readonly EventBus _bus = new();   // isolated per test (xUnit makes a fresh instance per method)
     private static readonly TimeSpan Old = TimeSpan.FromMinutes(20);  // > default 10-min threshold
 
     private static ProcessRecord Idle(int pid, int parentPid, string name, bool isHarness = false, string? harnessType = null)
@@ -37,11 +38,11 @@ public sealed class HangDetectorTests
     }
 
     /// <summary>Subscribes a handler that captures HangDetectedEvents for the given PIDs only.</summary>
-    private static List<HangDetectedEvent> CaptureHangsFor(params int[] pids)
+    private List<HangDetectedEvent> CaptureHangsFor(params int[] pids)
     {
         var set = new HashSet<int>(pids);
         var hits = new List<HangDetectedEvent>();
-        EventBus.Instance.Subscribe(evt =>
+        _bus.Subscribe(evt =>
         {
             if (evt is HangDetectedEvent h && set.Contains(h.ProcessId))
             {
@@ -59,7 +60,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(rb);
 
         var hits = CaptureHangsFor(rb.Pid);
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
 
         sut.Check(rb);
 
@@ -76,7 +77,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(child);
 
         var hits = CaptureHangsFor(child.Pid);
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
 
         sut.Check(child);
         sut.Check(child);   // same hang episode — must NOT produce a second alert
@@ -100,7 +101,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(harness);
 
         var hits = CaptureHangsFor(harness.Pid);
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
 
         sut.Check(harness);
 
@@ -118,7 +119,7 @@ public sealed class HangDetectorTests
 
         var hits = CaptureHangsFor(child.Pid);
         // Cooldown 0 so re-arm is immediate (this test is about the epoch re-arm, not the rate-limit).
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings { HangRealertCooldownMinutes = 0 }, tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings { HangRealertCooldownMinutes = 0 }, tree);
 
         sut.Check(child);   // first hang episode → alert #1
 
@@ -144,7 +145,7 @@ public sealed class HangDetectorTests
 
         var hits = CaptureHangsFor(child.Pid);
         // Default 60-min cooldown.
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
 
         sut.Check(child);                                   // first idle episode → alert #1
 
@@ -167,7 +168,7 @@ public sealed class HangDetectorTests
 
         var hits     = CaptureHangsFor(rb.Pid);
         var settings = new ForemanSettings { MonitorAllProcesses = true };
-        var sut      = new HangDetector(EventBus.Instance, settings, tree);
+        var sut      = new HangDetector(_bus, settings, tree);
 
         sut.Check(rb);
 
@@ -188,7 +189,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(child);
 
         var hits = CaptureHangsFor(child.Pid);
-        var sut = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var sut = new HangDetector(_bus, new ForemanSettings(), tree);
 
         sut.Check(child);
 
@@ -214,7 +215,7 @@ public sealed class HangDetectorTests
         tree.OnProcessCreated(conhost);
 
         var hits = CaptureHangsFor(conhost.Pid);
-        var sut  = new HangDetector(EventBus.Instance, new ForemanSettings(), tree);
+        var sut  = new HangDetector(_bus, new ForemanSettings(), tree);
 
         sut.Check(conhost);
 
@@ -230,7 +231,7 @@ public sealed class HangDetectorTests
 
         var hits = CaptureHangsFor(foreman.Pid);
         var settings = new ForemanSettings { MonitorAllProcesses = true };
-        var sut = new HangDetector(EventBus.Instance, settings, tree);
+        var sut = new HangDetector(_bus, settings, tree);
 
         sut.Check(foreman);
 

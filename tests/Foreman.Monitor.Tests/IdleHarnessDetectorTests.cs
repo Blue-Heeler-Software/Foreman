@@ -14,6 +14,8 @@ namespace Foreman.Monitor.Tests;
 /// </summary>
 public sealed class IdleHarnessDetectorTests
 {
+    private readonly EventBus _bus = new();   // isolated per test
+
     private static ProcessRecord Proc(
         int pid, int parentPid, string name, string? harnessType, int silentMinutes, int uptimeMinutes = 600)
         => new()
@@ -28,7 +30,7 @@ public sealed class IdleHarnessDetectorTests
             State            = ProcessState.Active,
         };
 
-    private static (IdleHarnessDetector Sut, ProcessTreeTracker Tree, List<string> Requests) Make(
+    private (IdleHarnessDetector Sut, ProcessTreeTracker Tree, List<string> Requests) Make(
         string harnessType, ForemanSettings settings, int basePid, bool pending = true)
     {
         var tree = new ProcessTreeTracker();
@@ -36,7 +38,7 @@ public sealed class IdleHarnessDetectorTests
         tree.OnProcessCreated(Proc(basePid + 1, basePid, "bash.exe", null, silentMinutes: 90));
 
         var requests = new List<string>();
-        var sut = new IdleHarnessDetector(EventBus.Instance, settings, tree)
+        var sut = new IdleHarnessDetector(_bus, settings, tree)
         {
             CreateCleanupRequest = (harnessId, alertId, sys, usr, pid, name) =>
             {
@@ -85,7 +87,7 @@ public sealed class IdleHarnessDetectorTests
         tree.OnProcessCreated(Proc(910_301, 910_300, "bash.exe", null, silentMinutes: 2));   // busy child
 
         var requests = new List<string>();
-        var sut = new IdleHarnessDetector(EventBus.Instance, settings, tree)
+        var sut = new IdleHarnessDetector(_bus, settings, tree)
         {
             CreateCleanupRequest = (h, _, _, _, _, _) => { requests.Add(h); return "req"; },
         };
@@ -113,7 +115,7 @@ public sealed class IdleHarnessDetectorTests
         var (sut, _, requests) = Make("custom:idletest-e.exe", settings, 910_500, pending: true);
 
         var notices = new List<MonitoringNoticeEvent>();
-        EventBus.Instance.Subscribe(evt =>
+        _bus.Subscribe(evt =>
         {
             if (evt is MonitoringNoticeEvent n && n.Message.Contains("custom:idletest-e.exe"))
                 lock (notices) notices.Add(n);
@@ -137,7 +139,7 @@ public sealed class IdleHarnessDetectorTests
         var (sut, _, _) = Make("custom:idletest-f.exe", settings, 910_600, pending: false);
 
         var notices = new List<MonitoringNoticeEvent>();
-        EventBus.Instance.Subscribe(evt =>
+        _bus.Subscribe(evt =>
         {
             if (evt is MonitoringNoticeEvent n && n.Message.Contains("custom:idletest-f.exe"))
                 lock (notices) notices.Add(n);
@@ -154,7 +156,7 @@ public sealed class IdleHarnessDetectorTests
     public void ManualTrigger_NoProcesses_FailsGracefully()
     {
         var settings = new ForemanSettings();
-        var sut = new IdleHarnessDetector(EventBus.Instance, settings, new ProcessTreeTracker());
+        var sut = new IdleHarnessDetector(_bus, settings, new ProcessTreeTracker());
 
         var (ok, msg) = sut.TriggerCleanup("custom:nothere.exe");
         Assert.False(ok);

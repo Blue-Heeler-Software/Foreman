@@ -21,9 +21,14 @@ public sealed class EventBus
     private readonly ConcurrentQueue<ForemanEvent> _history = new();
     private const int MaxHistory = 1000;
 
+    /// <summary>The process-wide bus used in production (the App composition root and monitors subscribe to it).</summary>
     public static EventBus Instance { get; } = new();
 
-    private EventBus() { }
+    /// <summary>
+    /// Public so tests can use an isolated bus instead of the shared <see cref="Instance"/> — which
+    /// otherwise leaks subscriptions across tests and forced cross-class parallelization off.
+    /// </summary>
+    public EventBus() { }
 
     public void Subscribe(IEventSink sink) => _sinks.TryAdd(sink, 0);
     public void Subscribe(Action<ForemanEvent> handler) => _handlers.TryAdd(handler, 0);
