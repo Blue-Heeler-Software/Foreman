@@ -5,6 +5,7 @@
     <Project Path="src/Foreman.EtwSidecar/Foreman.EtwSidecar.csproj" />
     <Project Path="src/Foreman.McpServer/Foreman.McpServer.csproj" />
     <Project Path="src/Foreman.Monitor/Foreman.Monitor.csproj" />
+    <Project Path="src/Foreman.TestHarness/Foreman.TestHarness.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Foreman.Core.Tests/Foreman.Core.Tests.csproj" />

@@ -154,6 +154,22 @@ When the `foreman` MCP server is available:
 
 The token is generated on first run and stored at `%LocalAppData%\Foreman\mcp.token` with current-user-only ACLs where Windows allows it.
 
+### Test The MCP Loop (No Agent Needed)
+
+`Foreman.TestHarness` is a small console client that impersonates a harness and drives the Ask Harness
+round-trip end to end, so you can exercise the loop without attaching a real agent. Each tick it prints a
+**SITREP** (`foreman_status` + this harness's behaviour metrics) and **ACKs** every pending Ask Harness /
+audit request addressed to it. It connects with a real per-harness scoped token minted the same way the app
+mints them, so it tests the per-harness identity + caller-scoping path, not just the operator token.
+
+```powershell
+dotnet run --project .\src\Foreman.TestHarness\Foreman.TestHarness.csproj -- --harness claude-code
+```
+
+Then trigger an alert and click **Ask Harness** (or let an auto-response fire) in the tray, and watch the
+harness answer it. Useful flags: `--harness <id>` (codex, cursor, opencode, …), `--once` (single pass),
+`--no-ack` (observe only), `--interval <secs>`, `--token <tok>` (use a specific token). `--help` lists them all.
+
 ## Privacy And Trust Boundaries
 
 - Foreman Agent Safety is local-only. There is no hosted service, account system, or telemetry.
