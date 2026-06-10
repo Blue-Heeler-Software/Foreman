@@ -77,6 +77,7 @@ public partial class App : Application
         _tray.GetProcessSnapshot            = () => _monitor.Tree.GetAll();
         _tray.GetMcpClientCount             = () => _mcpHost.Sessions.Count;
         _tray.GetMcpToken                   = () => _mcpHost.McpToken;
+        _tray.MintHarnessToken              = id => _mcpHost.MintHarnessToken(id);
         _tray.GetConnectedClients           = () => _mcpHost.Sessions.DescribeSessions();
 
         // allow AlertDetailWindow to resolve a live ProcessRecord from a PID
@@ -182,7 +183,8 @@ public partial class App : Application
         var port = settings.McpPort;
         var mcpToken = _mcpHost.McpToken;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
-            () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _mcpHost.Sessions.DescribeSessions()));
+            () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _mcpHost.Sessions.DescribeSessions(),
+                id => _mcpHost.MintHarnessToken(id)));
     }
 
     private static async Task StartMcpSurfacingFailureAsync(McpServerHost host, int port, CancellationToken ct)

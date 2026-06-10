@@ -58,6 +58,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
 
+    /// <summary>Injected from App — mints a scoped per-harness MCP token for the Connect-Agent flow.</summary>
+    public Func<string, string>?                              MintHarnessToken      { get; set; }
+
     /// <summary>Injected from App — connected MCP clients + capabilities, for the Connect-agent guide.</summary>
     public Func<IReadOnlyList<McpClientInfo>>?                GetConnectedClients   { get; set; }
 
@@ -372,7 +375,7 @@ public sealed class TrayController : IEventSink, IDisposable
 
         if (_connectWindow is null || !_connectWindow.IsLoaded)
         {
-            _connectWindow = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients);
+            _connectWindow = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken);
             _connectWindow.Show();
         }
         WindowActivation.Surface(_connectWindow);

@@ -17,7 +17,8 @@ public static class FirstRunDetector
     public static void RunIfNeeded(
         int mcpPort,
         string mcpToken,
-        Func<IReadOnlyList<McpClientInfo>>? getClients = null)
+        Func<IReadOnlyList<McpClientInfo>>? getClients = null,
+        Func<string, string>? mintToken = null)
     {
         if (File.Exists(_flagPath)) return;
 
@@ -39,7 +40,7 @@ public static class FirstRunDetector
 
         if (choice == MessageBoxResult.Yes)
         {
-            var connect = new ConnectAgentWindow(mcpPort, mcpToken, getClients);
+            var connect = new ConnectAgentWindow(mcpPort, mcpToken, getClients, mintToken);
             WindowActivation.Surface(connect);
             return;
         }
