@@ -179,6 +179,9 @@ public partial class AlertDetailWindow : Window
                 break;
 
             case AskOutcome.Notified:
+                EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+                    $"Ask Harness: notified live {Blank(result.MatchedClient, harnessId ?? "harness")} session re alert [{_event.Id}]" +
+                    (queued is not null ? $"; pending request {queued.RequestId} awaiting reply" : "") + "."));
                 MessageBox.Show(
                     $"Delivered a justify/act request to the live {Blank(result.MatchedClient, harnessId ?? "harness")} MCP session.\n\n" +
                     "This client accepts Foreman Agent Safety's notification, but does not support a direct query/reply round trip.\n" +
@@ -191,6 +194,15 @@ public partial class AlertDetailWindow : Window
                 break;
 
             default:  // NoSession, or MCP not wired / harness unresolved
+                // Audit trail: record the attempt even when nothing was delivered, so a CRITICAL
+                // alert you asked about leaves a durable trace (event log + events.log.jsonl)
+                // instead of vanishing with the in-memory mailbox on the next restart.
+                EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+                    string.IsNullOrWhiteSpace(harnessId)
+                        ? $"Ask Harness: could not attribute alert [{_event.Id}] to a harness; no request queued."
+                        : $"Ask Harness: no live {harnessId} session connected — " +
+                          (queued is not null ? $"queued pending request {queued.RequestId} " : "") +
+                          $"for alert [{_event.Id}], clipboard fallback used."));
                 var owner = pid is int p
                     ? $"the {Blank(harnessId, "harness")} that owns pid {p}"
                     : $"the {Blank(harnessId, "offending harness")}";
