@@ -62,10 +62,16 @@ public static class ForemanMcpTools
     public static object ListMonitoredProcesses(
         [Description("Include child processes of harnesses")] bool includeChildren = true,
         [Description("Optional harness ID to scope results, e.g. 'claude-code' or 'codex'")] string? harnessId = null,
-        [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null)
+        [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
-        var resolvedHarness = state.ResolveHarnessId(harnessId, processId);
+        var caller = CallerScope.From(http);
+        // A per-harness token sees only its own tree; the requested harnessId/processId is ignored for
+        // a scoped caller so it can't enumerate a sibling's processes. Operator sees everything.
+        var resolvedHarness = caller.IsOperator
+            ? state.ResolveHarnessId(harnessId, processId)
+            : caller.HarnessId;
         var procs = resolvedHarness is not null
             ? state.GetProcessesForHarness(resolvedHarness, includeChildren)
             : state.GetProcesses(includeChildren);
@@ -76,11 +82,22 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description("Returns detailed information about a specific process by PID.")]
-    public static object QueryProcessDetail([Description("Process ID to query")] int pid)
+    public static object QueryProcessDetail(
+        [Description("Process ID to query")] int pid,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
         var proc = state.GetProcess(pid);
         if (proc is null) return new { error = $"No process found with PID {pid}" };
+
+        // A per-harness token may only inspect processes in its own tree.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator)
+        {
+            var owner = proc.HarnessType ?? state.ResolveHarnessId(null, pid);
+            if (!caller.CanAccess(owner))
+                return new { error = $"PID {pid} is outside your harness scope." };
+        }
 
         return new
         {
@@ -103,13 +120,20 @@ public static class ForemanMcpTools
         "those in the Foreman UI so a harness cannot silence a serious alert about itself.")]
     public static object AcknowledgeAlert(
         [Description("The alert ID to acknowledge")] string alertId,
-        [Description("Optional reason for acknowledgement")] string? reason = null)
+        [Description("Optional reason for acknowledgement")] string? reason = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
 
         var evt = state.GetAlert(alertId);
         if (evt is null)
             return new { acknowledged = false, reason = "No active alert with that ID." };
+
+        // A per-harness token may only acknowledge alerts about ITSELF — it can't clear a sibling's
+        // alert to hide its tracks. Unattributable alerts are operator-only.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator && !caller.CanAccess(state.ResolveAlertHarness(evt)))
+            return new { acknowledged = false, reason = "That alert does not belong to your harness." };
 
         // Operator stays authoritative over serious alerts: a (possibly adversarial) harness
         // must not be able to flip the tray green by acking its own High/Critical alert.
@@ -127,14 +151,16 @@ public static class ForemanMcpTools
     [McpServerTool, Description("Returns recent Foreman events from the event log.")]
     public static object ListRecentEvents(
         [Description("Maximum number of events to return")] int limit = 50,
-        [Description("Filter by minimum severity: Info, Low, Medium, High, Critical")] string? severity = null)
+        [Description("Filter by minimum severity: Info, Low, Medium, High, Critical")] string? severity = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
         ForemanSeverity? minSev = severity is not null
             ? Enum.TryParse<ForemanSeverity>(severity, true, out var s) ? s : null
             : null;
 
-        var events = state.GetEvents(limit, minSev);
+        // A per-harness token sees only events attributable to itself — not a sibling's command activity.
+        var events = state.GetEvents(limit, minSev, CallerScope.From(http).ScopeHarness);
         return new { events };
     }
 
@@ -227,10 +253,15 @@ public static class ForemanMcpTools
         "Returns behavioral escalation metrics for every monitored harness. " +
         "Levels: Watch (0) → Alert (1) → Alarm (2) → Emergency (3). " +
         "Use this to check whether Foreman has raised an alarm about you or a sibling harness.")]
-    public static object GetBehaviorMetrics()
+    public static object GetBehaviorMetrics(Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state    = _state ?? new ForemanState();
         var profiles = state.GetBehaviorProfiles?.Invoke() ?? [];
+
+        // A per-harness token sees only its own metrics, not a sibling's escalation state.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator)
+            profiles = profiles.Where(p => caller.CanAccess(p.HarnessId));
 
         return new
         {
@@ -253,9 +284,15 @@ public static class ForemanMcpTools
         "Call this when starting a new, unrelated task to prevent prior session activity from " +
         "contributing to escalation thresholds. Pass your own harnessId (e.g. 'claude-code').")]
     public static object ResetBehaviorMetrics(
-        [Description("The harness ID to reset, e.g. 'claude-code', 'codex', or 'proc:node'")] string harnessId)
+        [Description("The harness ID to reset, e.g. 'claude-code', 'codex', or 'proc:node'")] string harnessId,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        // A per-harness token may only reset ITS OWN metrics — it can't wipe a sibling's escalation.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator && !caller.CanAccess(harnessId))
+            return new { reset = false, harnessId, reason = "You can only reset your own harness's metrics." };
+
         ResetAndAnnounce(state, harnessId, "MCP.ResetBehaviorMetrics");
         return new { reset = true, harnessId };
     }
@@ -300,9 +337,13 @@ public static class ForemanMcpTools
         [Description("Optional harness ID to scope prompts, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
         [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null,
         [Description("Include already answered requests as well as pending ones")] bool includeAnswered = false,
-        [Description("Maximum requests to return")] int limit = 10)
+        [Description("Maximum requests to return")] int limit = 10,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        // A per-harness token sees only ITS OWN prompts; identity comes from the token, not the parameter.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; }
         var resolvedHarness = state.ResolveHarnessId(harnessId, processId);
         var requests = state.ListAskHarnessRequests(resolvedHarness ?? harnessId, processId, includeAnswered, limit);
         return new
@@ -323,11 +364,18 @@ public static class ForemanMcpTools
         [Description("Your reply to Foreman Agent Safety's prompt")] string response,
         [Description("Optional concise action taken, e.g. 'stopped pid 1234', 'left running', 'needs operator review'")] string? actionTaken = null,
         [Description("Optional harness ID, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
-        [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null)
+        [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
         if (string.IsNullOrWhiteSpace(response))
             return new { accepted = false, reason = "Response must not be empty." };
+
+        // Identity comes from the token: a per-harness caller can only answer ITS OWN prompts, and
+        // can't impersonate another harness by passing a different harnessId. (ForemanState still
+        // enforces request ownership against this resolved identity.)
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; }
 
         var result = state.ReplyToAskHarnessRequest(requestId, response.Trim(), actionTaken, harnessId, processId);
         if (!result.Ok)

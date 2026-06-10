@@ -33,6 +33,9 @@ public sealed class McpServerHost : IAsyncDisposable
     /// <summary>The per-install bearer token, so the app shell can build connect instructions/config.</summary>
     public string McpToken => _authToken.Value;
 
+    /// <summary>Mints a scoped per-harness bearer token for the Connect-Agent flow to write into a config.</summary>
+    public string MintHarnessToken(string harnessId) => _authToken.MintHarnessToken(harnessId);
+
     public McpServerHost(ForemanSettings settings, EventBus bus)
     {
         _settings = settings;
@@ -59,6 +62,7 @@ public sealed class McpServerHost : IAsyncDisposable
 
         builder.Logging.SetMinimumLevel(LogLevel.Warning); // suppress Kestrel noise from tray
 
+        builder.Services.AddHttpContextAccessor();   // lets tools read the auth-gate's resolved CallerScope
         builder.Services
             .AddSingleton(Sessions)
             .AddSingleton<AlertDispatcher>()
@@ -106,13 +110,17 @@ public sealed class McpServerHost : IAsyncDisposable
                         await Deny(ctx, StatusCodes.Status403Forbidden, "Cross-origin requests are not allowed.").ConfigureAwait(false);
                         return;
                     }
-                    if (!_authToken.Matches(ExtractToken(ctx.Request)))
+                    var auth = _authToken.Authenticate(ExtractToken(ctx.Request));
+                    if (!auth.Ok)
                     {
                         ctx.Response.Headers.WWWAuthenticate = "Bearer";
                         await Deny(ctx, StatusCodes.Status401Unauthorized,
                             "A valid Foreman MCP token is required. See mcp-setup.txt in %LocalAppData%\\Foreman.").ConfigureAwait(false);
                         return;
                     }
+                    // Carry the proven identity to the tools (read via IHttpContextAccessor). A per-harness
+                    // token scopes tools to that harness; the raw install token authenticates as operator.
+                    ctx.Items[CallerScope.HttpItemKey] = new CallerScope(auth.HarnessId, auth.IsOperator);
                 }
                 await next().ConfigureAwait(false);
             }

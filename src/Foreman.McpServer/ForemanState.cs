@@ -153,21 +153,50 @@ public sealed class ForemanState : IEventSink
         return null;
     }
 
+    /// <summary>
+    /// Resolves the harness an event concerns, for caller-scoping. CommandAlert/Hang/Orphan/Permission/
+    /// Exit resolve via their ProcessId; Escalation carries its HarnessId. Returns null when the event is
+    /// not attributable to a single harness (Info, monitoring notices) — non-operators are denied those.
+    /// </summary>
+    public string? ResolveAlertHarness(ForemanEvent evt) => evt switch
+    {
+        EscalationEvent esc          => esc.HarnessId,
+        CommandAlertEvent c          => ResolveHarnessId(null, c.ProcessId),
+        HangDetectedEvent h          => ResolveHarnessId(null, h.ParentHarnessPid ?? h.ProcessId),
+        OrphanDetectedEvent o        => ResolveHarnessId(null, o.ProcessId),
+        PermissionViolationEvent v   => ResolveHarnessId(null, v.ProcessId),
+        NonzeroExitEvent x           => ResolveHarnessId(null, x.ParentHarnessPid ?? x.ProcessId),
+        _                            => null,
+    };
+
+    /// <summary>Like <see cref="GetEvents(int, ForemanSeverity?)"/> but, when scopeHarness is set, only events attributable to it.</summary>
+    public IEnumerable<object> GetEvents(int limit, ForemanSeverity? minSeverity, string? scopeHarness)
+    {
+        if (scopeHarness is null) return GetEvents(limit, minSeverity);
+        return _eventLog
+            .Where(e => minSeverity is null || e.Severity >= minSeverity)
+            .Where(e => string.Equals(ResolveAlertHarness(e), scopeHarness, StringComparison.OrdinalIgnoreCase))
+            .TakeLast(limit)
+            .Select(ProjectEvent);
+    }
+
     public IEnumerable<object> GetEvents(int limit, ForemanSeverity? minSeverity)
     {
         return _eventLog
             .Where(e => minSeverity is null || e.Severity >= minSeverity)
             .TakeLast(limit)
-            .Select(e => new
-            {
-                id        = e.Id,
-                timestamp = e.Timestamp,
-                severity  = e.Severity.ToString(),
-                source    = e.Source,
-                message   = SecretRedactor.Redact(e.Message),   // egress to a connected agent — mask secrets
-                acked     = e.Acknowledged,
-            });
+            .Select(ProjectEvent);
     }
+
+    private static object ProjectEvent(ForemanEvent e) => new
+    {
+        id        = e.Id,
+        timestamp = e.Timestamp,
+        severity  = e.Severity.ToString(),
+        source    = e.Source,
+        message   = SecretRedactor.Redact(e.Message),   // egress to a connected agent — mask secrets
+        acked     = e.Acknowledged,
+    };
 
     public AskHarnessRequest CreateAskHarnessRequest(
         string harnessId,

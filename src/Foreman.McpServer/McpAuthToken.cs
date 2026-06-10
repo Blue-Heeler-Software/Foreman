@@ -3,6 +3,13 @@ using System.Text;
 
 namespace Foreman.McpServer;
 
+/// <summary>Outcome of authenticating a presented MCP bearer token.</summary>
+public readonly record struct McpAuthResult(bool Ok, string? HarnessId, bool IsOperator)
+{
+    public static readonly McpAuthResult Fail = new(false, null, false);
+    public static readonly McpAuthResult Operator = new(true, null, true);
+}
+
 /// <summary>
 /// A stable, per-install bearer token that gates the MCP HTTP endpoint.
 ///
@@ -65,11 +72,74 @@ public sealed class McpAuthToken
             .Replace('+', '-').Replace('/', '_').TrimEnd('=');
     }
 
-    /// <summary>Constant-time comparison of a presented token against the real one.</summary>
-    public bool Matches(string? presented)
+    /// <summary>True if a presented token is valid (operator OR a per-harness token). Back-compat shim.</summary>
+    public bool Matches(string? presented) => Authenticate(presented).Ok;
+
+    private const string HarnessTokenPrefix = "fmh1.";
+
+    /// <summary>
+    /// Mints a per-harness bearer token <c>fmh1.&lt;base64url(harnessId)&gt;.&lt;mac&gt;</c>, where mac =
+    /// HMAC-SHA256(install-secret, harnessId). Stateless: the identity is carried in the token and the
+    /// MAC proves Foreman minted it — so a connected agent's identity is unforgeable without the
+    /// (user-ACL'd) install secret, and no per-harness secret has to be stored.
+    /// </summary>
+    public string MintHarnessToken(string harnessId)
     {
-        if (string.IsNullOrEmpty(presented)) return false;
-        return FixedEquals(presented, Value) || FixedEquals(presented, ReadPersistedToken());
+        // Normalize to lower-case so the id carried in the token matches the MAC (computed over the
+        // lower-cased id) and the harness ids used everywhere else (claude-code, codex, custom:foo.exe).
+        var id = (harnessId ?? string.Empty).Trim().ToLowerInvariant();
+        var idB64 = Base64Url(Encoding.UTF8.GetBytes(id));
+        return $"{HarnessTokenPrefix}{idB64}.{ComputeMac(Value, id)}";
+    }
+
+    /// <summary>
+    /// Authenticates a presented bearer token. The raw install token authenticates as the unscoped
+    /// OPERATOR (back-compat: existing single-token agent configs keep full access). A valid per-harness
+    /// token authenticates as that harness (scoped). Anything else fails.
+    /// </summary>
+    public McpAuthResult Authenticate(string? presented)
+    {
+        if (string.IsNullOrEmpty(presented)) return McpAuthResult.Fail;
+
+        // Operator: raw install secret (in-memory or current on-disk — stale-instance safe).
+        if (FixedEquals(presented, Value) || FixedEquals(presented, ReadPersistedToken()))
+            return McpAuthResult.Operator;
+
+        // Per-harness: fmh1.<b64(harnessId)>.<mac>
+        if (presented.StartsWith(HarnessTokenPrefix, StringComparison.Ordinal))
+        {
+            var parts = presented.Split('.');
+            if (parts.Length == 3 && parts[0] == "fmh1")
+            {
+                string id;
+                try { id = Encoding.UTF8.GetString(Base64UrlDecode(parts[1])); }
+                catch { return McpAuthResult.Fail; }
+                if (string.IsNullOrEmpty(id)) return McpAuthResult.Fail;
+
+                var mac = parts[2];
+                var disk = ReadPersistedToken();
+                if (FixedEquals(mac, ComputeMac(Value, id)) ||
+                    (disk is not null && FixedEquals(mac, ComputeMac(disk, id))))
+                    return new McpAuthResult(true, id, false);
+            }
+        }
+        return McpAuthResult.Fail;
+    }
+
+    private static string ComputeMac(string secret, string harnessId)
+    {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        return Base64Url(hmac.ComputeHash(Encoding.UTF8.GetBytes(harnessId.ToLowerInvariant())));
+    }
+
+    private static string Base64Url(byte[] b) =>
+        Convert.ToBase64String(b).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+
+    private static byte[] Base64UrlDecode(string s)
+    {
+        var t = s.Replace('-', '+').Replace('_', '/');
+        t += (t.Length % 4) switch { 2 => "==", 3 => "=", _ => "" };
+        return Convert.FromBase64String(t);
     }
 
     private string? ReadPersistedToken()

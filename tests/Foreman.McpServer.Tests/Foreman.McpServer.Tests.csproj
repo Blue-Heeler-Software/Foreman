@@ -11,6 +11,11 @@
     <ProjectReference Include="..\..\src\Foreman.McpServer\Foreman.McpServer.csproj" />
   </ItemGroup>
 
+  <!-- For DefaultHttpContext when testing caller-scope on the MCP tools. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
