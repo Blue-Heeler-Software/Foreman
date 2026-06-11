@@ -23,6 +23,7 @@ public sealed class McpServerHost : IAsyncDisposable
     private readonly ForemanSettings _settings;
     private readonly EventBus _bus;
     private readonly McpAuthToken _authToken = new();
+    private readonly PairingManager _pairing = new();
     private WebApplication? _app;
 
     public ForemanState State { get; } = new();
@@ -36,6 +37,10 @@ public sealed class McpServerHost : IAsyncDisposable
 
     /// <summary>Mints a scoped per-harness bearer token for the Connect-Agent flow to write into a config.</summary>
     public string MintHarnessToken(string harnessId) => _authToken.MintHarnessToken(harnessId);
+
+    /// <summary>Begin extension pairing: mint a short on-screen code for the user to type into the Foreman
+    /// browser extension. The code is the challenge/response key and never crosses the wire. (Closed-loop spec.)</summary>
+    public string BeginExtensionPairing() => _pairing.Begin();
 
     public McpServerHost(ForemanSettings settings, EventBus bus)
     {
@@ -152,6 +157,48 @@ public sealed class McpServerHost : IAsyncDisposable
         // Liveness only — no session count: /health is unauthenticated, so it shouldn't
         // tell a local prober how many agents are connected.
         _app.MapGet("/health", () => new { status = "ok", port = _settings.McpPort });
+
+        // Extension pairing (loopback-only; no bearer — the extension has none yet. The on-screen code
+        // authenticates via challenge/response, so the code never crosses the wire). Host must be loopback.
+        _app.MapGet("/pair/challenge", (HttpContext c) =>
+        {
+            if (!LoopbackRequestPolicy.IsLoopbackHost(c.Request.Host.Value))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var challenge = _pairing.IssueChallenge();
+            return challenge is null
+                ? Results.StatusCode(StatusCodes.Status409Conflict)   // no pairing window armed
+                : Results.Json(new { challenge });
+        });
+        _app.MapPost("/pair/complete", async (HttpContext c) =>
+        {
+            if (!LoopbackRequestPolicy.IsLoopbackHost(c.Request.Host.Value))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+            string? response = null, originBody = null;
+            try
+            {
+                using var reader = new System.IO.StreamReader(c.Request.Body);
+                using var doc = System.Text.Json.JsonDocument.Parse(await reader.ReadToEndAsync().ConfigureAwait(false));
+                if (doc.RootElement.TryGetProperty("response", out var r)) response = r.GetString();
+                if (doc.RootElement.TryGetProperty("origin", out var o)) originBody = o.GetString();
+            }
+            catch { /* malformed body — Complete fails below */ }
+
+            // Prefer the browser-set Origin header (unspoofable by page JS); fall back to the body if absent.
+            var origin = c.Request.Headers.Origin.ToString();
+            if (string.IsNullOrEmpty(origin)) origin = originBody ?? "";
+
+            var result = _pairing.Complete(origin, response);
+            if (!result.Ok)
+                return Results.Json(new { ok = false, reason = result.Reason }, statusCode: StatusCodes.Status403Forbidden);
+
+            if (!_settings.PairedExtensionOrigins.Contains(result.Origin!, StringComparer.OrdinalIgnoreCase))
+            {
+                _settings.PairedExtensionOrigins.Add(result.Origin!);
+                try { SettingsStore.Save(_settings); } catch { /* in-memory allow-list still applies this session */ }
+            }
+            return Results.Json(new { ok = true, origin = result.Origin });
+        });
 
         await _app.StartAsync(ct).ConfigureAwait(false);
     }
