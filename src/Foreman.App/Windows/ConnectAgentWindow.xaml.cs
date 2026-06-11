@@ -34,6 +34,7 @@ public partial class ConnectAgentWindow : Window
     private string OpenCodeToken => _mint("opencode");
     private string CopilotToken  => _mint("github-copilot");
     private string GeminiToken   => _mint("gemini-cli");
+    private string LmStudioToken => _mint("lm-studio");
     private string T3Token       => _mint("t3-code");
 
     private void Populate()
@@ -44,6 +45,7 @@ public partial class ConnectAgentWindow : Window
         OpenCodeJsonBox.Text = OpenCodeMcpConnector.BuildConfigSnippet(_port, OpenCodeToken);
         CopilotJsonBox.Text = CopilotMcpConnector.BuildConfigSnippet(_port, CopilotToken);
         GeminiJsonBox.Text = GeminiMcpConnector.BuildConfigSnippet(_port, GeminiToken);
+        LmStudioJsonBox.Text = LmStudioMcpConnector.BuildConfigSnippet(_port, LmStudioToken);
         T3Box.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, T3Token);   // T3 uses the underlying agent's mcpServers shape
         GenericBox.Text =
             $"URL:    {ClaudeMcpConnector.Url(_port)}\r\n" +
@@ -163,6 +165,23 @@ public partial class ConnectAgentWindow : Window
         RefreshConnected();
     }
 
+    private void ConnectLmStudioClick(object sender, RoutedEventArgs e)
+    {
+        var r = LmStudioMcpConnector.Connect(_port, LmStudioToken);
+        if (r.Status == ConnectStatus.Failed)
+            MessageBox.Show(
+                $"Couldn't update LM Studio's config automatically:\n\n{r.Message}\n\n" +
+                "Use the copy-paste JSON below instead.",
+                "Foreman Agent Safety — Connect LM Studio", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(
+                $"{r.Message}\n\nLM Studio reloads mcp.json automatically. Caveat emptor: if LM Studio ignores " +
+                "the Authorization header, Foreman will reject the connection — check LM Studio's MCP panel." +
+                (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
+                "Foreman Agent Safety — Connect LM Studio", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshConnected();
+    }
+
     private void ConnectT3Click(object sender, RoutedEventArgs e)
     {
         // T3 Code is a control plane — it has no MCP config of its own; you point its underlying agent at
@@ -190,6 +209,9 @@ public partial class ConnectAgentWindow : Window
 
     private void CopyGeminiJsonClick(object sender, RoutedEventArgs e) =>
         Copy(GeminiJsonBox.Text, "Gemini CLI JSON copied.");
+
+    private void CopyLmStudioJsonClick(object sender, RoutedEventArgs e) =>
+        Copy(LmStudioJsonBox.Text, "LM Studio JSON copied.");
 
     private void CopyT3Click(object sender, RoutedEventArgs e) =>
         Copy(T3Box.Text, "T3 Code config copied.");

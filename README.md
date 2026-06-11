@@ -66,6 +66,7 @@ Recognized/profiled, but needs broader field testing:
 | `amazon-q` | Amazon Q Developer | process classification |
 | `aider` | Aider | process classification |
 | `github-copilot` | GitHub Copilot CLI | one-click MCP setup (~/.copilot/mcp-config.json), process classification |
+| `lm-studio` | LM Studio | one-click MCP setup (~/.lmstudio/mcp.json) — **caveat emptor**: header-auth support is unverified, confirm in LM Studio's MCP panel |
 | `cline` | Cline / Continue / Roo | process classification |
 
 > **T3 Code is a control plane — there's no "T3 auth" to configure.** T3 Code runs an *underlying* agent
