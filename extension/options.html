@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Foreman Agent Safety — Pair</title>
+  <style>
+    body { font-family: "Segoe UI", system-ui, sans-serif; background: #0d0f12; color: #e6e8ec; margin: 0; padding: 22px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p { color: #9aa3ad; font-size: 13px; line-height: 1.45; }
+    .row { display: flex; gap: 8px; margin: 14px 0; }
+    input { flex: 1; background: #15181d; border: 1px solid #2a2f37; color: #e6e8ec; border-radius: 6px; padding: 9px 10px; font-size: 15px; letter-spacing: 2px; text-transform: uppercase; }
+    button { background: #4ade80; color: #0d0f12; border: 0; border-radius: 6px; padding: 9px 16px; font-weight: 700; cursor: pointer; }
+    #msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+    .ok { color: #4ade80; } .err { color: #f87171; }
+    code { background: #15181d; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>🔒 Pair with Foreman Agent Safety</h1>
+  <p>In Foreman (the desktop app), open <b>Pair browser extension</b> — it shows a short code. Type it below.
+     The code never leaves your machine; this extension proves it over a loopback challenge/response.</p>
+  <div class="row">
+    <input id="code" placeholder="ABCDE-FGHJK" maxlength="11" autocomplete="off" spellcheck="false" />
+    <button id="pair">Pair</button>
+  </div>
+  <div id="msg"></div>
+  <p style="margin-top:18px">Foreman must be running locally (default <code>http://127.0.0.1:54321</code>). Everything stays on this device.</p>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -197,7 +197,10 @@ public sealed class McpServerHost : IAsyncDisposable
                 _settings.PairedExtensionOrigins.Add(result.Origin!);
                 try { SettingsStore.Save(_settings); } catch { /* in-memory allow-list still applies this session */ }
             }
-            return Results.Json(new { ok = true, origin = result.Origin });
+            // Pairing both allow-lists the origin AND issues a scoped token — /mcp still requires a bearer, and
+            // the extension has none until now. Scoped to "browser-extension" so it only sees/acts as itself.
+            var token = _authToken.MintHarnessToken("browser-extension");
+            return Results.Json(new { ok = true, origin = result.Origin, token });
         });
 
         await _app.StartAsync(ct).ConfigureAwait(false);
