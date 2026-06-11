@@ -1,0 +1,23 @@
+# Keeps SHA-pinned GitHub Actions (and NuGet deps) bumped with reviewed PRs.
+# Actions are pinned to full commit SHAs (immutable — a tag can be force-moved to
+# malicious code, as in the June-2026 Miasma / actions-cool / trivy-action hijacks);
+# Dependabot updates the SHA + the trailing "# vX" comment so pinning stays current.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
