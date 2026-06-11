@@ -57,6 +57,13 @@ public sealed class ForemanSettings
     /// </summary>
     public bool ScanMcpTools { get; set; } = false;
 
+    /// <summary>
+    /// Origins of paired Foreman browser extensions (e.g. "chrome-extension://&lt;id&gt;") allowed to reach the
+    /// MCP endpoint in addition to loopback. Empty by default — populated by the extension pairing flow.
+    /// Consumed by <see cref="Foreman.Core.Mcp.LoopbackRequestPolicy"/>. (Closed-loop spec.)
+    /// </summary>
+    public List<string> PairedExtensionOrigins { get; set; } = [];
+
     // ── Idle Harness self-cleanup ────────────────────────────────────────────
 
     /// <summary>

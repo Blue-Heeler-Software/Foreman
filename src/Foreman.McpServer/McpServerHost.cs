@@ -2,6 +2,7 @@
 // Alias avoids Foreman.McpServer namespace shadowing ModelContextProtocol.Server.McpServer
 using McpServerType = global::ModelContextProtocol.Server.McpServer;
 using Foreman.Core.Events;
+using Foreman.Core.Mcp;
 using Foreman.Core.Settings;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -109,10 +110,15 @@ public sealed class McpServerHost : IAsyncDisposable
             {
                 if (isMcpRequest)
                 {
-                    var origin = ctx.Request.Headers.Origin.ToString();
-                    if (!string.IsNullOrEmpty(origin) && !IsLoopbackOrigin(origin))
+                    // Transport gate (before the token): Host must be loopback (DNS-rebinding defence) and
+                    // Origin, if present, must be loopback or a paired extension. See LoopbackRequestPolicy.
+                    var verdict = LoopbackRequestPolicy.Evaluate(
+                        ctx.Request.Host.Value,
+                        ctx.Request.Headers.Origin.ToString(),
+                        _settings.PairedExtensionOrigins);
+                    if (!verdict.Allowed)
                     {
-                        await Deny(ctx, StatusCodes.Status403Forbidden, "Cross-origin requests are not allowed.").ConfigureAwait(false);
+                        await Deny(ctx, StatusCodes.Status403Forbidden, verdict.Reason).ConfigureAwait(false);
                         return;
                     }
                     var auth = _authToken.Authenticate(ExtractToken(ctx.Request));
@@ -157,10 +163,6 @@ public sealed class McpServerHost : IAsyncDisposable
         var x = req.Headers["X-Foreman-Token"].ToString();
         return string.IsNullOrEmpty(x) ? null : x;
     }
-
-    private static bool IsLoopbackOrigin(string origin) =>
-        Uri.TryCreate(origin, UriKind.Absolute, out var u)
-        && (u.IsLoopback || u.Host is "localhost" or "127.0.0.1" or "::1");
 
     private static async Task Deny(HttpContext ctx, int status, string message)
     {
