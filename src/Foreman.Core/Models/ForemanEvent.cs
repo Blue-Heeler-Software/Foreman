@@ -39,6 +39,18 @@ public abstract record ForemanEvent(
     /// so a recycled PID (which has a different CreationDate) is refused rather than killed.
     /// </summary>
     public DateTimeOffset? ProcessStartTime { get; init; }
+
+    /// <summary>
+    /// Append-only hash-chain link, set at WRITE TIME by <see cref="Foreman.Core.Events.EventLogStore"/>, not
+    /// in the ctor — the in-memory copy on the EventBus carries the default (null). <see cref="PrevHash"/> is
+    /// the hash of the previous on-disk record (empty string for the genesis record); <see cref="Hash"/> is
+    /// SHA-256 over (PrevHash + this record's canonical, redacted serialization). Null on a pre-chain "legacy"
+    /// record. Inert to existing readers (LogWindow/MCP only read Id/Timestamp/Severity/Source/Message).
+    /// </summary>
+    public string? PrevHash { get; init; }
+
+    /// <summary>Content+chain hash of this on-disk record (hex). See <see cref="PrevHash"/>.</summary>
+    public string? Hash { get; init; }
 }
 
 public sealed record CommandAlertEvent(

@@ -56,9 +56,18 @@ public partial class App : Application
         // session-scoped so reloading the log never resurrects old alerts as "active".
         if (settings.EventLogPersist)
         {
-            var eventLog = new EventLogStore();
+            // P1: tamper-evident hash chain (no-op head signer until P3 adds the TPM seal).
+            var eventLog = new EventLogStore(integrity: settings.LogIntegrity, signer: new NullHeadSigner());
+            // Verify the PRIOR-session chain before we append anything this session; surface tamper as a
+            // High notice rather than throwing into startup (a pre-chain "legacy" log verifies clean).
+            var integrity = eventLog.Verify();
             EventBus.Instance.Subscribe(e => eventLog.Append(e));
             LogWindow.LoadPersisted = () => eventLog.Load();
+            if (!integrity.Ok)
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.LogIntegrity",
+                    $"Event log integrity check FAILED ({integrity.Status}): {integrity.Message}. " +
+                    "The on-disk audit log may have been tampered with."));
         }
 
         _tray = new TrayController(settings, EventBus.Instance);

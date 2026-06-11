@@ -36,6 +36,13 @@ public sealed class ForemanSettings
     public bool EventLogPersist { get; set; } = true;
 
     /// <summary>
+    /// Tamper-evidence for the on-disk event log: an append-only hash chain (P1) + a TPM-sealed head (P3).
+    /// See <see cref="LogIntegritySettings"/>. The audit log is the record a rogue agent would most want to
+    /// rewrite to hide its tracks, so this makes edits/drops/reorders detectable.
+    /// </summary>
+    public LogIntegritySettings LogIntegrity { get; set; } = new();
+
+    /// <summary>
     /// Opt-in: launch an elevated, capture-only ETW sidecar so the Process Monitor can show
     /// per-process Network throughput. Off by default — only the sidecar runs elevated; the main
     /// app (UI, MCP server, kill action) stays at medium integrity. Toggling it on prompts UAC.
