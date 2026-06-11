@@ -178,6 +178,13 @@ public sealed class ForemanSettings
     public Foreman.Core.Security.DecoyCredentialSettings DecoyCredentials { get; set; } = new();
 
     /// <summary>
+    /// Presence lock (P3): require a hardware user-presence tap (Hello/PIN/passkey/YubiKey/U2F) for
+    /// watchdog-weakening actions, so a same-user agent can't silently blind Foreman. Off until enrolled.
+    /// See <see cref="Foreman.Core.Security.PresenceLockSettings"/> + <see cref="Foreman.Core.Security.PresenceLockPolicy"/>.
+    /// </summary>
+    public Foreman.Core.Security.PresenceLockSettings PresenceLock { get; set; } = new();
+
+    /// <summary>
     /// Credential-sweep burst aggregator: when one harness tree reads this many DISTINCT credential stores
     /// within <see cref="CredentialSweepWindowSeconds"/>, Foreman fires a single Critical "credential-store
     /// sweep" alert — the Miasma harvester fingerprint. Each individual read still alerts on its own.
