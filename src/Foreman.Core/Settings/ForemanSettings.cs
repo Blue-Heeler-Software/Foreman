@@ -148,6 +148,13 @@ public sealed class ForemanSettings
     /// <see cref="Foreman.Core.Models.GameModePolicy"/>.
     /// </summary>
     public Foreman.Core.Models.GameModeSettings GameMode { get; set; } = new();
+
+    /// <summary>
+    /// Decoy ("canary") credential files — opt-in honeytokens planted at credential paths you don't use, so
+    /// the Miasma-style harvester's own enumeration trips a near-zero-false-positive alert. See
+    /// <see cref="Foreman.Core.Security.DecoyCredentialSettings"/>.
+    /// </summary>
+    public Foreman.Core.Security.DecoyCredentialSettings DecoyCredentials { get; set; } = new();
 }
 
 public sealed class LlmTriageSettings

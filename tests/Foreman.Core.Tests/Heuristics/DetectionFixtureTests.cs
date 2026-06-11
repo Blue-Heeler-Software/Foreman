@@ -101,6 +101,7 @@ public sealed class DetectionFixtureTests : IClassFixture<PatternLibraryFixture>
         T("persist-001", "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v x /d c:\\m.exe"),
         T("persist-002", "schtasks /create /tn evil /tr c:\\m.exe /sc onlogon"),
         T("persist-006", "python ~/.local/share/updater/update.py"),
+        T("cred-040", "echo FOREMAN-DECOY-CANARY-npm-0000000000000000"),     // decoy value being staged
     };
 
     // Benign command lines that must fire NO rule (false-positive guard).
