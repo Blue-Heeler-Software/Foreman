@@ -155,6 +155,14 @@ public sealed class ForemanSettings
     /// <see cref="Foreman.Core.Security.DecoyCredentialSettings"/>.
     /// </summary>
     public Foreman.Core.Security.DecoyCredentialSettings DecoyCredentials { get; set; } = new();
+
+    /// <summary>
+    /// Credential-sweep burst aggregator: when one harness tree reads this many DISTINCT credential stores
+    /// within <see cref="CredentialSweepWindowSeconds"/>, Foreman fires a single Critical "credential-store
+    /// sweep" alert — the Miasma harvester fingerprint. Each individual read still alerts on its own.
+    /// </summary>
+    public int CredentialSweepDistinctThreshold { get; set; } = 4;
+    public int CredentialSweepWindowSeconds { get; set; } = 60;
 }
 
 public sealed class LlmTriageSettings

@@ -2,6 +2,7 @@ using Foreman.Core.Events;
 using Foreman.Core.Heuristics;
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
+using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using System.Collections.Generic;
 using System.Globalization;
@@ -20,6 +21,7 @@ public sealed class WmiProcessWatcher : IDisposable
     private readonly ForemanSettings _settings;
     private readonly ProfileMatcher? _profileMatcher;
     private readonly ViolationDetector? _violationDetector;
+    private readonly CredentialSweepAggregator _credSweep;
     private ManagementEventWatcher? _createWatcher;
     private ManagementEventWatcher? _deleteWatcher;
     private bool _started;
@@ -42,6 +44,8 @@ public sealed class WmiProcessWatcher : IDisposable
         _settings = settings;
         _profileMatcher = profileMatcher;
         _violationDetector = violationDetector;
+        _credSweep = new CredentialSweepAggregator(
+            settings.CredentialSweepDistinctThreshold, settings.CredentialSweepWindowSeconds);
     }
 
     public void Start()
@@ -197,18 +201,50 @@ public sealed class WmiProcessWatcher : IDisposable
                     _violationDetector?.CheckCommandLine(record, match);
                     if (match is null) return;
 
+                    var now = DateTimeOffset.UtcNow;
+                    var severity = match.Severity;
+                    var message = $"[{match.RuleId}] {match.RuleName}: {TruncateCmdLine(record.CommandLine)}";
+
+                    // #44 Layer B — a credential/network rule firing INSIDE a package-install subtree of a
+                    // harness is almost never legitimate (the Miasma / Phantom-Gyp install-time detonation):
+                    // escalate one severity and annotate. No new alert surface — it only sharpens this one.
+                    if (match.Category is "cred" or "net"
+                        && _tree.FindInstallAncestor(record.Pid) is { } install
+                        && _tree.FindHarnessTypeAncestor(record.Pid) is { } harnessOwner)
+                    {
+                        severity = Severities.EscalateOneLevel(match.Severity);
+                        message = $"[{match.RuleId}] {match.RuleName} during a package install " +
+                                  $"({TruncateCmdLine(install.CommandLine)}) under {harnessOwner.HarnessType}: " +
+                                  TruncateCmdLine(record.CommandLine);
+                    }
+
                     _bus.Publish(new CommandAlertEvent(
-                        DateTimeOffset.UtcNow,
-                        match.Severity,
-                        $"{record.Name} (pid {record.Pid})",
-                        $"[{match.RuleId}] {match.RuleName}: {TruncateCmdLine(record.CommandLine)}",
-                        record.CommandLine,
-                        match.RuleId,
-                        match.RuleName,
-                        match.Description,
-                        match.Guidance,
-                        record.Pid
-                    ) { ProcessStartTime = record.StartTime });
+                        now, severity, $"{record.Name} (pid {record.Pid})", message,
+                        record.CommandLine, match.RuleId, match.RuleName, match.Description, match.Guidance,
+                        record.Pid) { ProcessStartTime = record.StartTime });
+
+                    // #43 burst aggregator — several DISTINCT credential stores read by one harness tree in a
+                    // short window is the Miasma harvester fingerprint; fire a single Critical sweep alert.
+                    if (match.Category == "cred")
+                    {
+                        var owner = _tree.FindHarnessTypeAncestor(record.Pid);
+                        var treeKey = (owner ?? record).Key;
+                        if (_credSweep.Observe(treeKey, match.RuleId, now) is { } swept)
+                        {
+                            var who = owner?.HarnessType ?? record.Name;
+                            _bus.Publish(new CommandAlertEvent(
+                                now, ForemanSeverity.Critical, $"{who} (pid {record.Pid})",
+                                $"Credential-store sweep: {swept.Count} distinct credential stores read by {who} " +
+                                $"within {_settings.CredentialSweepWindowSeconds}s ({string.Join(", ", swept)}) — " +
+                                "the behaviour of an automated credential harvester, not normal development.",
+                                record.CommandLine, "cred-sweep", "Credential-store sweep",
+                                "A single harness tree read several different credential stores in quick succession. " +
+                                "Each read may look benign alone, but the burst is the signature of a credential-stealing payload.",
+                                "Treat as an active credential-theft incident: identify and stop the process, then rotate " +
+                                "every credential it could have read (cloud keys, SSH/GPG keys, tokens).",
+                                record.Pid) { ProcessStartTime = record.StartTime });
+                        }
+                    }
                 });
             }
         }

@@ -107,6 +107,15 @@ public sealed class ProcessTreeTracker
     /// </summary>
     public ProcessRecord? FindProfileAncestor(int pid) => WalkAncestors(pid, static r => r.ProfileName is not null);
 
+    /// <summary>
+    /// Nearest ancestor (including the process itself) whose command line is a package install
+    /// (npm/pnpm/yarn/bun install, node-gyp, pip/uv install, python setup.py). Used to escalate a
+    /// credential/network rule that fires INSIDE an install subtree — the Miasma / Phantom-Gyp
+    /// install-time detonation, where such a read is almost never legitimate.
+    /// </summary>
+    public ProcessRecord? FindInstallAncestor(int pid) =>
+        WalkAncestors(pid, static r => Foreman.Core.Security.InstallSubtree.IsPackageInstall(r.CommandLine));
+
     public void UpdateIoCounters(int pid, ulong readOps, ulong writeOps)
     {
         if (!_pidIndex.TryGetValue(pid, out var key)) return;
