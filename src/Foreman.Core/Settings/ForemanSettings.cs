@@ -150,6 +150,13 @@ public sealed class ForemanSettings
     public LlmTriageSettings LlmTriage { get; set; } = new();
 
     /// <summary>
+    /// Proactive cross-harness auditing — periodically have a different connected model review a harness's
+    /// recent behavior, on a cadence (events and/or minutes). Auditor chosen via <see cref="LlmTriage"/>
+    /// (auditor != audited). See <see cref="ScheduledAuditSettings"/>. Off by default.
+    /// </summary>
+    public ScheduledAuditSettings ScheduledAudit { get; set; } = new();
+
+    /// <summary>
     /// Operator-configured automatic responses per escalation tier (Ask Harness / Adversarial Audit /
     /// Request self-cleanup). Guardrailed by <see cref="Foreman.Core.Alerts.AlertResponsePolicy"/>:
     /// only these non-destructive actions are possible — no auto-kill or auto-mute.
