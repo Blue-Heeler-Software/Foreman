@@ -32,6 +32,8 @@ public partial class ConnectAgentWindow : Window
     private string CodexToken    => _mint("codex");
     private string CursorToken   => _mint("cursor");
     private string OpenCodeToken => _mint("opencode");
+    private string CopilotToken  => _mint("github-copilot");
+    private string GeminiToken   => _mint("gemini-cli");
     private string T3Token       => _mint("t3-code");
 
     private void Populate()
@@ -40,6 +42,8 @@ public partial class ConnectAgentWindow : Window
         CodexTomlBox.Text = CodexMcpConnector.BuildConfigSnippet(_port, CodexToken);
         CursorJsonBox.Text = CursorMcpConnector.BuildConfigSnippet(_port, CursorToken);
         OpenCodeJsonBox.Text = OpenCodeMcpConnector.BuildConfigSnippet(_port, OpenCodeToken);
+        CopilotJsonBox.Text = CopilotMcpConnector.BuildConfigSnippet(_port, CopilotToken);
+        GeminiJsonBox.Text = GeminiMcpConnector.BuildConfigSnippet(_port, GeminiToken);
         T3Box.Text = ClaudeMcpConnector.BuildClaudeConfigSnippet(_port, T3Token);   // T3 uses the underlying agent's mcpServers shape
         GenericBox.Text =
             $"URL:    {ClaudeMcpConnector.Url(_port)}\r\n" +
@@ -127,6 +131,38 @@ public partial class ConnectAgentWindow : Window
         RefreshConnected();
     }
 
+    private void ConnectCopilotClick(object sender, RoutedEventArgs e)
+    {
+        var r = CopilotMcpConnector.Connect(_port, CopilotToken);
+        if (r.Status == ConnectStatus.Failed)
+            MessageBox.Show(
+                $"Couldn't update GitHub Copilot CLI's config automatically:\n\n{r.Message}\n\n" +
+                "Use the copy-paste JSON below instead.",
+                "Foreman Agent Safety — Connect Copilot CLI", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(
+                $"{r.Message}\n\nRestart Copilot CLI (or run /mcp) to connect." +
+                (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
+                "Foreman Agent Safety — Connect Copilot CLI", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshConnected();
+    }
+
+    private void ConnectGeminiClick(object sender, RoutedEventArgs e)
+    {
+        var r = GeminiMcpConnector.Connect(_port, GeminiToken);
+        if (r.Status == ConnectStatus.Failed)
+            MessageBox.Show(
+                $"Couldn't update Gemini CLI's config automatically:\n\n{r.Message}\n\n" +
+                "Use the copy-paste JSON below instead.",
+                "Foreman Agent Safety — Connect Gemini CLI", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(
+                $"{r.Message}\n\nRestart Gemini CLI to connect." +
+                (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
+                "Foreman Agent Safety — Connect Gemini CLI", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshConnected();
+    }
+
     private void ConnectT3Click(object sender, RoutedEventArgs e)
     {
         // T3 Code is a control plane — it has no MCP config of its own; you point its underlying agent at
@@ -148,6 +184,12 @@ public partial class ConnectAgentWindow : Window
 
     private void CopyOpenCodeJsonClick(object sender, RoutedEventArgs e) =>
         Copy(OpenCodeJsonBox.Text, "OpenCode JSON copied.");
+
+    private void CopyCopilotJsonClick(object sender, RoutedEventArgs e) =>
+        Copy(CopilotJsonBox.Text, "Copilot CLI JSON copied.");
+
+    private void CopyGeminiJsonClick(object sender, RoutedEventArgs e) =>
+        Copy(GeminiJsonBox.Text, "Gemini CLI JSON copied.");
 
     private void CopyT3Click(object sender, RoutedEventArgs e) =>
         Copy(T3Box.Text, "T3 Code config copied.");

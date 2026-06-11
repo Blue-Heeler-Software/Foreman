@@ -62,10 +62,10 @@ Recognized/profiled, but needs broader field testing:
 | --- | --- | --- |
 | `opencode` | OpenCode | one-click MCP setup (opencode.json), profile + default audit routing |
 | `t3-code` | T3 Code | control-plane profile + default audit routing — see the note below |
-| `gemini-cli` | Gemini CLI | process classification |
+| `gemini-cli` | Gemini CLI | one-click MCP setup (~/.gemini/settings.json — note `httpUrl` for streamable HTTP), process classification |
 | `amazon-q` | Amazon Q Developer | process classification |
 | `aider` | Aider | process classification |
-| `github-copilot` | GitHub Copilot CLI | process classification |
+| `github-copilot` | GitHub Copilot CLI | one-click MCP setup (~/.copilot/mcp-config.json), process classification |
 | `cline` | Cline / Continue / Roo | process classification |
 
 > **T3 Code is a control plane — there's no "T3 auth" to configure.** T3 Code runs an *underlying* agent
