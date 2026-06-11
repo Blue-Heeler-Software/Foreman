@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Foreman.Core\Foreman.Core.csproj" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+    <PackageReference Include="System.Diagnostics.EventLog" />
   </ItemGroup>
 
 </Project>

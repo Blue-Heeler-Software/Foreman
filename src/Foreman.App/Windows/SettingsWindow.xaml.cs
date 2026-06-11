@@ -11,14 +11,17 @@ public partial class SettingsWindow : Window
     private readonly ForemanSettings _settings;
     private readonly Action<bool>? _onRunElevatedChanged;
     private readonly Action<bool>? _onScanMcpToolsChanged;
+    private readonly Action? _onDecoyAuditChanged;
 
     public SettingsWindow(ForemanSettings settings,
                           Action<bool>? onRunElevatedChanged = null,
-                          Action<bool>? onScanMcpToolsChanged = null)
+                          Action<bool>? onScanMcpToolsChanged = null,
+                          Action? onDecoyAuditChanged = null)
     {
         _settings = settings;
         _onRunElevatedChanged = onRunElevatedChanged;
         _onScanMcpToolsChanged = onScanMcpToolsChanged;
+        _onDecoyAuditChanged = onDecoyAuditChanged;
         InitializeComponent();
         Populate();
     }
@@ -54,6 +57,7 @@ public partial class SettingsWindow : Window
         // Decoy credentials
         var dc = _settings.DecoyCredentials;
         DecoyCredsCheck.IsChecked     = dc.Enabled;
+        DecoyReadAuditCheck.IsChecked = dc.EnableReadAuditing;
         DecoyAwsCanaryCheck.IsChecked = dc.IncludeAwsCanaryToken;
         DecoyAwsKeyIdBox.Text         = dc.AwsCanaryAccessKeyId ?? string.Empty;
         DecoyAwsSecretBox.Text        = dc.AwsCanarySecretAccessKey ?? string.Empty;
@@ -216,8 +220,10 @@ public partial class SettingsWindow : Window
     {
         var dc = _settings.DecoyCredentials;
         var wasEnabled = dc.Enabled;
+        var wasAuditing = dc.Enabled && dc.EnableReadAuditing;
 
         dc.Enabled                   = DecoyCredsCheck.IsChecked == true;
+        dc.EnableReadAuditing        = DecoyReadAuditCheck.IsChecked == true;
         dc.IncludeAwsCanaryToken     = DecoyAwsCanaryCheck.IsChecked == true;
         dc.AwsCanaryAccessKeyId      = string.IsNullOrWhiteSpace(DecoyAwsKeyIdBox.Text)  ? null : DecoyAwsKeyIdBox.Text.Trim();
         dc.AwsCanarySecretAccessKey  = string.IsNullOrWhiteSpace(DecoyAwsSecretBox.Text) ? null : DecoyAwsSecretBox.Text.Trim();
@@ -252,6 +258,11 @@ public partial class SettingsWindow : Window
             MessageBox.Show($"Couldn't update decoy credentials: {ex.Message}",
                 "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+
+        // (Re)launch or stop the elevated auditor only when the read-auditing state actually changed —
+        // so an unrelated save doesn't re-prompt UAC.
+        if ((dc.Enabled && dc.EnableReadAuditing) != wasAuditing)
+            _onDecoyAuditChanged?.Invoke();
     }
 
     private void CancelClick(object sender, RoutedEventArgs e) => Close();

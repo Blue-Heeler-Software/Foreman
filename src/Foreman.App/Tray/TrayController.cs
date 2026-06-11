@@ -61,6 +61,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — applies the Scan MCP tools toggle (start/stop the opt-in outbound probe).</summary>
     public Action<bool>?                                      ApplyScanMcpTools     { get; set; }
 
+    /// <summary>Injected from App — re-applies decoy read-auditing (re-launch the elevated sidecar with the decoy paths).</summary>
+    public Action?                                            ApplyDecoyAuditing    { get; set; }
+
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
 
@@ -300,7 +303,10 @@ public sealed class TrayController : IEventSink, IDisposable
 
     private void OpenDashboardWindow()
     {
-        if (_dashboardWindow is null || !_dashboardWindow.IsLoaded)
+        // Guard on the reference, not IsLoaded: during lag a window that's constructed but not yet
+        // Loaded would fail an IsLoaded check, so a rapid second tray click would spawn a duplicate.
+        // We assign the field BEFORE Show() (so a re-entrant click sees it) and clear it on Closed.
+        if (_dashboardWindow is null)
         {
             var w = new DashboardWindow(GetBehaviorProfiles ?? (() => []));
             w.OpenSettingsRequested = () => OpenSettingsWindow();
@@ -332,8 +338,9 @@ public sealed class TrayController : IEventSink, IDisposable
                     KillHarness           ?? (_ => { })),
                 log: new LogWindow());
 
+            w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
+            _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap
             w.Show();
-            _dashboardWindow = w;  // assign only after Show() succeeds
         }
         WindowActivation.Surface(_dashboardWindow);
     }
@@ -373,10 +380,12 @@ public sealed class TrayController : IEventSink, IDisposable
 
     private void OpenSettingsWindow()
     {
-        if (_settingsWindow is null || !_settingsWindow.IsLoaded)
+        if (_settingsWindow is null)
         {
-            _settingsWindow = new SettingsWindow(_settings, ApplyRunElevated, ApplyScanMcpTools);
-            _settingsWindow.Show();
+            var w = new SettingsWindow(_settings, ApplyRunElevated, ApplyScanMcpTools, ApplyDecoyAuditing);
+            w.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow = w;
+            w.Show();
         }
         WindowActivation.Surface(_settingsWindow);
     }
@@ -424,20 +433,24 @@ public sealed class TrayController : IEventSink, IDisposable
             return;
         }
 
-        if (_connectWindow is null || !_connectWindow.IsLoaded)
+        if (_connectWindow is null)
         {
-            _connectWindow = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken);
-            _connectWindow.Show();
+            var w = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken);
+            w.Closed += (_, _) => _connectWindow = null;
+            _connectWindow = w;
+            w.Show();
         }
         WindowActivation.Surface(_connectWindow);
     }
 
     private void OpenMuteManagerWindow()
     {
-        if (_muteWindow is null || !_muteWindow.IsLoaded)
+        if (_muteWindow is null)
         {
-            _muteWindow = new MuteManagerWindow(_settings, () => SettingsStore.Save(_settings));
-            _muteWindow.Show();
+            var w = new MuteManagerWindow(_settings, () => SettingsStore.Save(_settings));
+            w.Closed += (_, _) => _muteWindow = null;
+            _muteWindow = w;
+            w.Show();
         }
         WindowActivation.Surface(_muteWindow);
     }

@@ -27,6 +27,22 @@ public sealed class ElevatedSidecarController : IDisposable
     private CancellationTokenSource? _cts;
     private volatile Dictionary<int, double> _rates = new();
     private volatile bool _connected;
+    private bool _captureNet = true;
+    private IReadOnlyList<string> _decoyPaths = [];
+    private string? _decoyPathsFile;
+
+    /// <summary>
+    /// Sets what the next launch does: per-PID network capture and/or SACL read-auditing of the given decoy
+    /// paths. Call before <see cref="Start"/> / <see cref="Restart"/>.
+    /// </summary>
+    public void Configure(bool captureNet, IReadOnlyList<string>? decoyPaths)
+    {
+        _captureNet = captureNet;
+        _decoyPaths = decoyPaths ?? [];
+    }
+
+    /// <summary>Stop and start with the current configuration (re-prompts UAC if elevated).</summary>
+    public void Restart() { Stop(); Start(); }
 
     public bool IsRunning { get; private set; }
     public bool IsConnected => _connected;
@@ -88,8 +104,8 @@ public sealed class ElevatedSidecarController : IDisposable
             }
         }
         catch (OperationCanceledException) { }
-        catch { /* pipe/launch failure — Net simply stays n/a */ }
-        finally { _connected = false; }
+        catch { /* pipe/launch failure — features simply stay n/a */ }
+        finally { _connected = false; CleanupDecoyPathsFile(); }
     }
 
     // Each pipe line is self-describing via a "Kind" field; route net frames to the rate table and
@@ -121,22 +137,42 @@ public sealed class ElevatedSidecarController : IDisposable
             inBufferSize: 0, outBufferSize: 0, security);
     }
 
-    private static bool LaunchSidecar(string pipeName, string nonce)
+    private bool LaunchSidecar(string pipeName, string nonce)
     {
         var exe = Path.Combine(AppContext.BaseDirectory, "sidecar", "Foreman.EtwSidecar.exe");
         if (!File.Exists(exe)) return false;
+
+        var args = $"--pipe {pipeName} --nonce {nonce} --parent {Environment.ProcessId}";
+        if (_captureNet) args += " --capture-net";
+
+        _decoyPathsFile = null;
+        if (_decoyPaths.Count > 0)
+        {
+            try
+            {
+                // The decoy paths (not secret) are passed via a temp file rather than a long arg list.
+                _decoyPathsFile = Path.Combine(Path.GetTempPath(), "foreman-decoys-" + Guid.NewGuid().ToString("N") + ".txt");
+                File.WriteAllLines(_decoyPathsFile, _decoyPaths);
+                args += $" --audit-decoys \"{_decoyPathsFile}\"";
+            }
+            catch { _decoyPathsFile = null; }
+        }
+
         try
         {
             // UseShellExecute=true is required for the sidecar's requireAdministrator manifest to
-            // raise the UAC prompt. If the user declines, Process.Start throws (1223) — Net stays n/a.
-            Process.Start(new ProcessStartInfo(exe)
-            {
-                Arguments = $"--pipe {pipeName} --nonce {nonce} --parent {Environment.ProcessId}",
-                UseShellExecute = true,
-            });
+            // raise the UAC prompt. If the user declines, Process.Start throws (1223) — features stay n/a.
+            Process.Start(new ProcessStartInfo(exe) { Arguments = args, UseShellExecute = true });
             return true;
         }
         catch { return false; }
+    }
+
+    private void CleanupDecoyPathsFile()
+    {
+        if (_decoyPathsFile is null) return;
+        try { if (File.Exists(_decoyPathsFile)) File.Delete(_decoyPathsFile); } catch { }
+        _decoyPathsFile = null;
     }
 
     public void Dispose() => Stop();

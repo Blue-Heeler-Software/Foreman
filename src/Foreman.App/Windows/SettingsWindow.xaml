@@ -149,6 +149,11 @@
                 <TextBlock TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
                            Text="Plants believable FAKE credential files only at paths you don't already use (~/.aws/credentials, ~/.npmrc, ~/.ssh/id_rsa, .git-credentials, …) so a Miasma-style harvester's own enumeration trips a near-zero-false-positive alert. A working credential file is never shadowed, and removing a decoy never deletes a real file. If you later need one of those paths for real credentials, just write them there — Foreman detects the decoy is gone and retires that slot automatically, never touching your real file. (Turning this off removes Foreman's decoys.)" />
+                <CheckBox x:Name="DecoyReadAuditCheck"
+                          Content="…and audit READS of decoys (elevated — catches the silent fopen)"
+                          Margin="40,6,0,0" />
+                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="62,2,0,0"
+                           Text="Runs the elevated sidecar (one UAC prompt) to place a Windows audit rule on each decoy and tail the Security log, so even a direct file read (no shell command) by a harvester fires a Critical alert. The audit rule + policy change are reverted when you turn this off. Applies on next launch / when toggled." />
                 <CheckBox x:Name="DecoyAwsCanaryCheck"
                           Content="Embed an AWS canarytoken (beacons when a stolen decoy key is used)"
                           Margin="40,6,0,0" />

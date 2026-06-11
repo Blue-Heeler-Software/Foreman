@@ -150,15 +150,26 @@ public partial class App : Application
             "Treat as active credential theft: identify and stop the reading process, then rotate the real " +
             "credentials adjacent to the decoy paths.",
             d.Pid));
-        if (settings.RunElevated) _sidecar.Start();
+        // The one elevated helper serves both opt-ins: per-PID network capture (Run elevated) and SACL
+        // read-auditing of planted decoys (Decoy credentials → read auditing). Configure from current
+        // settings and (re)launch only when at least one is on. Re-applying on a toggle re-prompts UAC.
+        void ApplySidecarState()
+        {
+            var auditDecoys = settings.DecoyCredentials is { Enabled: true, EnableReadAuditing: true }
+                ? settings.DecoyCredentials.PlantedPaths
+                : new List<string>();
+            _sidecar!.Configure(settings.RunElevated, auditDecoys);
+            if (settings.RunElevated || auditDecoys.Count > 0) _sidecar.Restart();
+            else _sidecar.Stop();
+        }
+
+        ApplySidecarState();
         _tray.GetNetRate = pid => _sidecar.GetRate(pid);
         _tray.GetNetCaptureActive = () => _sidecar?.IsConnected ?? false;
-        // SettingsWindow already persists the flag; this just starts/stops the sidecar
-        // (enabling raises the UAC prompt for the sidecar).
-        _tray.ApplyRunElevated = on =>
-        {
-            if (on) _sidecar.Start(); else _sidecar.Stop();
-        };
+        // SettingsWindow persists the flags; these just re-apply the sidecar state (enabling an elevated
+        // feature raises the UAC prompt).
+        _tray.ApplyRunElevated  = _ => ApplySidecarState();
+        _tray.ApplyDecoyAuditing = () => ApplySidecarState();
 
         // Tier 1 (opt-in): MCP tool-description injection scan. Constructed always so the Settings
         // toggle can start/stop it at runtime, but it only connects out when enabled. When off, the
