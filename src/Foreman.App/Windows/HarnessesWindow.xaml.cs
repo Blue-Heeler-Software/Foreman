@@ -101,6 +101,17 @@ public partial class HarnessesWindow : UserControl
         }
     }
 
+    // Open the per-harness settings dialog (Trust + modalities). Both apply live; refresh on save to update
+    // the row's Trust badge.
+    private void SettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: HarnessVm vm })
+        {
+            var w = new HarnessSettingsWindow(vm.Id, vm.DisplayName, _settings) { Owner = Window.GetWindow(this) };
+            if (w.ShowDialog() == true) Refresh();
+        }
+    }
+
     // ── Placeholder visibility ────────────────────────────────────────────
 
     private void AddExeBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -165,7 +176,9 @@ public sealed class HarnessVm : INotifyPropertyChanged
     public string  Description { get; }
     public bool    IsCustom    { get; }
     public bool    IsRunning   { get; }
+    public int     TrustLevel  { get; }
 
+    public string  TrustButtonText => $"⚙ Trust {TrustLevel} · settings";
     public Visibility DeleteVisibility => IsCustom ? Visibility.Visible : Visibility.Collapsed;
 
     public bool IsMonitored
@@ -192,6 +205,7 @@ public sealed class HarnessVm : INotifyPropertyChanged
         Description = description;
         IsCustom    = isCustom;
         IsRunning   = running.Contains(id);
+        TrustLevel  = settings.HarnessTrust.TryGetValue(id, out var t) ? Math.Clamp(t, 1, 5) : 3;
         _isMonitored = !settings.DisabledHarnesses.Contains(id);
     }
 }
