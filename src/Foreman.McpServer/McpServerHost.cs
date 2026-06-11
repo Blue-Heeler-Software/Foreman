@@ -88,7 +88,8 @@ public sealed class McpServerHost : IAsyncDisposable
                     }
                 };
             })
-            .WithToolsFromAssembly(typeof(ForemanMcpTools).Assembly);
+            .WithToolsFromAssembly(typeof(ForemanMcpTools).Assembly)
+            .WithPromptsFromAssembly(typeof(ForemanMcpTools).Assembly);   // /checkyaself etc.
 
         _app = builder.Build();
 
