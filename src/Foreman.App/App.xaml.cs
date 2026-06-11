@@ -5,6 +5,7 @@ using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Heuristics;
 using Foreman.Core.Models;
+using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using Foreman.McpServer;
 using Foreman.Monitor;
@@ -155,9 +156,14 @@ public partial class App : Application
         // settings and (re)launch only when at least one is on. Re-applying on a toggle re-prompts UAC.
         void ApplySidecarState()
         {
+            // Read-audit only the BAIT decoys + canonical .npmrc — NOT every planted path. Canonical cred
+            // paths (.netrc, .git-credentials, .aws/credentials, …) are read by real tools (git over HTTPS
+            // reads ~/.netrc on every push), so SACL-auditing them produces guaranteed false positives.
             var auditDecoys = settings.DecoyCredentials is { Enabled: true, EnableReadAuditing: true }
-                ? settings.DecoyCredentials.PlantedPaths
-                : new List<string>();
+                ? DecoyCredentialPolicy.ReadAuditPaths(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    settings.DecoyCredentials.PlantedPaths)
+                : (IReadOnlyList<string>)new List<string>();
             _sidecar!.Configure(settings.RunElevated, auditDecoys);
             if (settings.RunElevated || auditDecoys.Count > 0) _sidecar.Restart();
             else _sidecar.Stop();

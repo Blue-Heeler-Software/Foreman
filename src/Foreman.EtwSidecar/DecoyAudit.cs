@@ -77,7 +77,7 @@ internal sealed class DecoyAudit : IDisposable
         {
             var (objectName, pid, image) = ParseAccessEvent(e.EventRecord.ToXml());
             if (pid == 0) return;
-            if (!DecoyAuditPolicy.IsDecoyRead(objectName, pid, _decoyPaths, _excludedPids)) return;
+            if (!DecoyAuditPolicy.IsDecoyRead(objectName, pid, image, _decoyPaths, _excludedPids)) return;
             _hits.Enqueue(new DecoyReadMessage
             {
                 TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),

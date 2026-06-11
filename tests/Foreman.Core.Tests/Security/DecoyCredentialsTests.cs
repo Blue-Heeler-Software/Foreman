@@ -139,4 +139,36 @@ public sealed class DecoyCredentialsTests
         Assert.False(s.EnableReadAuditing);
         Assert.False(s.IncludeAwsCanaryToken);
     }
+
+    [Fact]
+    public void ReadAuditPaths_IncludesBaitAndCanonicalNpmrc_ExcludesToolReadCanonical()
+    {
+        const string home = "HOME";
+        var planted = new DecoyCredentialManager(new FakeFs { HomeDirectory = home }).Plant(new DecoyCredentialSettings()).Planted;
+
+        var audited = DecoyCredentialPolicy.ReadAuditPaths(home, planted);
+
+        // canonical .npmrc (foreign reader still trips it) + every bait decoy are read-audited
+        Assert.Contains(Full(home, ".npmrc"), audited);
+        Assert.Contains(Full(home, ".npmrc.bak"), audited);
+        Assert.Contains(Full(home, ".aws/credentials.bak"), audited);
+        Assert.Contains(Full(home, ".ssh/id_rsa.old"), audited);
+        Assert.Contains(Full(home, "secrets.env"), audited);
+        Assert.Contains(Full(home, "credentials.txt"), audited);
+        Assert.Contains(Full(home, "vault.txt"), audited);
+
+        // the false-positive-prone canonical paths (read by git/aws/ssh/etc.) are NOT read-audited
+        Assert.DoesNotContain(Full(home, ".netrc"), audited);
+        Assert.DoesNotContain(Full(home, ".git-credentials"), audited);
+        Assert.DoesNotContain(Full(home, ".aws/credentials"), audited);
+        Assert.DoesNotContain(Full(home, ".ssh/id_rsa"), audited);
+        Assert.DoesNotContain(Full(home, ".kube/config"), audited);
+        Assert.DoesNotContain(Full(home, ".pypirc"), audited);
+        Assert.DoesNotContain(Full(home, ".docker/config.json"), audited);
+    }
+
+    [Fact]
+    public void GenericSecret_ContentCarriesSentinel_SoItStaysRemovable() =>
+        Assert.True(DecoyCredentialPolicy.IsDecoyContent(
+            DecoyCredentialPolicy.GenerateContent(DecoyKind.GenericSecret, new DecoyCredentialSettings())));
 }

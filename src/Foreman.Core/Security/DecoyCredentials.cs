@@ -52,10 +52,20 @@ public enum DecoyKind
     PypiRc,
     NetRc,
     DockerConfig,
+    GenericSecret,
 }
 
+/// <summary>
+/// Whether a decoy sits at a CANONICAL credential path (one that real tools also read — git over HTTPS reads
+/// ~/.netrc on every push, npm/node read ~/.npmrc, ssh reads ~/.ssh/id_rsa — so its read-auditing needs the
+/// expected-reader allowlist in <see cref="DecoyAuditPolicy"/> to avoid false positives) or is pure BAIT at a
+/// path nothing legitimate ever reads (so ANY read is harvester behaviour and it is read-audited
+/// image-agnostically). See <see cref="DecoyCredentialPolicy.ReadAuditPaths"/>.
+/// </summary>
+public enum DecoyRole { Canonical, Bait }
+
 /// <summary>One candidate decoy location, relative to the user's home directory.</summary>
-public sealed record DecoySpec(string RelativePath, DecoyKind Kind);
+public sealed record DecoySpec(string RelativePath, DecoyKind Kind, DecoyRole Role = DecoyRole.Canonical);
 
 /// <summary>The outcome of planning placements: what to plant vs. what was skipped because a real file exists.</summary>
 public sealed record DecoyPlacement(string FullPath, DecoyKind Kind, string Content);
@@ -113,6 +123,19 @@ public static class DecoyCredentialPolicy
         new(".pypirc",               DecoyKind.PypiRc),
         new(".netrc",                DecoyKind.NetRc),
         new(".docker/config.json",   DecoyKind.DockerConfig),
+
+        // Pure-BAIT decoys: paths NO legitimate tool reads, so any read is harvester behaviour. These are
+        // read-audited image-agnostically (no expected-reader allowlist) and restore the direct-fopen
+        // tripwire that the canonical paths must give up — git/aws/etc. read those constantly, so auditing
+        // them produces guaranteed false positives (see ReadAuditPaths). The .bak/.old siblings sit right
+        // next to a real (decoy) credential so a harvester enumerating ~/.aws or ~/.ssh grabs them too; the
+        // home-root files catch harvesters that scan $HOME for *.env / secret / cred filenames.
+        new(".aws/credentials.bak",  DecoyKind.AwsCredentials, DecoyRole.Bait),
+        new(".ssh/id_rsa.old",       DecoyKind.SshPrivateKey,  DecoyRole.Bait),
+        new(".npmrc.bak",            DecoyKind.Npmrc,          DecoyRole.Bait),
+        new("secrets.env",           DecoyKind.GenericSecret,  DecoyRole.Bait),
+        new("credentials.txt",       DecoyKind.GenericSecret,  DecoyRole.Bait),
+        new("vault.txt",             DecoyKind.GenericSecret,  DecoyRole.Bait),
     ];
 
     /// <summary>
@@ -178,6 +201,16 @@ public static class DecoyCredentialPolicy
                 Convert.ToBase64String(Encoding.ASCII.GetBytes("decoy:" + SentinelMarker)) +
                 "\"\n    }\n  },\n  \"_\": \"" + SentinelMarker + "\"\n}\n",
 
+            // Freeform "env/dump" bait for the home-root decoys (secrets.env, credentials.txt, vault.txt) —
+            // the shape a careless dev's secrets file or a harvester's staged loot takes. Carries the
+            // sentinel so removal stays gated on IsDecoyContent.
+            DecoyKind.GenericSecret =>
+                $"# {SentinelMarker} (decoy; do not use)\n" +
+                $"AWS_SECRET_ACCESS_KEY={SentinelMarker}/wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLE\n" +
+                $"DATABASE_URL=postgres://admin:{SentinelMarker}@db.internal:5432/prod\n" +
+                $"GITHUB_TOKEN={SentinelGitHubToken}\n" +
+                $"API_TOKEN={SentinelMarker}-0000000000000000\n",
+
             _ => SentinelMarker + "\n",
         };
     }
@@ -191,6 +224,30 @@ public static class DecoyCredentialPolicy
 
     /// <summary>Absolute path of a candidate decoy under the given home directory.</summary>
     public static string FullPath(string home, DecoySpec spec) => JoinHome(home, spec.RelativePath);
+
+    /// <summary>
+    /// The subset of <paramref name="plantedPaths"/> that should get an elevated read-audit SACL: every BAIT
+    /// decoy (any read = harvester) plus the canonical <c>.npmrc</c> (a foreign reader like powershell still
+    /// trips it, while npm/node are filtered by the expected-reader allowlist). The other canonical paths
+    /// (<c>.netrc</c>, <c>.git-credentials</c>, <c>.aws/credentials</c>, …) are deliberately NOT read-audited:
+    /// legitimate tools read them constantly — git over HTTPS reads <c>~/.netrc</c> on every push, AWS SDKs
+    /// read <c>~/.aws/credentials</c> — so auditing them is a guaranteed false-positive source. They keep the
+    /// command-line sentinel layer (<c>cred-040</c>) instead. The bait <c>.bak</c>/<c>.old</c> siblings restore
+    /// a direct-read tripwire next to each of those paths.
+    /// </summary>
+    public static IReadOnlyList<string> ReadAuditPaths(string home, IEnumerable<string> plantedPaths)
+    {
+        var byPath = new Dictionary<string, DecoySpec>(StringComparer.OrdinalIgnoreCase);
+        foreach (var spec in Candidates)
+            byPath[DecoyAuditPolicy.Normalize(FullPath(home, spec))] = spec;
+
+        var result = new List<string>();
+        foreach (var p in plantedPaths)
+            if (byPath.TryGetValue(DecoyAuditPolicy.Normalize(p), out var spec)
+                && (spec.Role == DecoyRole.Bait || spec.Kind == DecoyKind.Npmrc))
+                result.Add(p);
+        return result;
+    }
 
     private static string JoinHome(string home, string relative) =>
         Path.Combine(home, relative.Replace('/', Path.DirectorySeparatorChar));
