@@ -1,0 +1,68 @@
+{
+  "$schema": "https://foreman.local/pattern-schema/v1",
+  "category": "persistence",
+  "version": "1.0",
+  "comment": "Durability / auto-start mechanisms an AI agent (or a worm running under it) can establish so its code keeps running across reboots and sessions — the Miasma worm's persistence stage. These are legitimate when an installer does them, so each is medium/high with a suppress tag; the real signal is an AGENT'S child establishing autostart (escalated by the harness-tree correlation layer).",
+  "rules": [
+    {
+      "id": "persist-001",
+      "name": "Run-key autostart entry",
+      "severity": "high",
+      "description": "Writing a Windows Run / RunOnce registry key, the most common user-level autostart persistence. A program added here launches at every sign-in.",
+      "guidance": "1. Confirm an installer you trust made this entry. An AI agent or its shell adding a Run key is rarely legitimate.\n2. Inspect HKCU/HKLM \\Software\\Microsoft\\Windows\\CurrentVersion\\Run for the new value and delete it if unexpected.",
+      "pattern": "(?:reg(?:\\.exe)?\\s+add|New-ItemProperty|Set-ItemProperty)\\s+[^\\n]*\\\\(?:CurrentVersion\\\\Run(?:Once)?|Windows\\\\CurrentVersion\\\\Run)",
+      "platforms": ["cmd", "powershell"],
+      "falsePositiveTags": ["startup_config_allowed"]
+    },
+    {
+      "id": "persist-002",
+      "name": "scheduled task creation",
+      "severity": "high",
+      "description": "Creating a Windows Scheduled Task, a robust persistence and (with 'highest privileges') a UAC-bypassing autostart mechanism.",
+      "guidance": "1. Confirm the task is expected. Agents establishing scheduled tasks is a persistence red flag.\n2. Review `schtasks /query` (or Task Scheduler) for the new task and delete it if unexpected.",
+      "pattern": "schtasks(?:\\.exe)?\\s+[^\\n]*/create\\b|Register-ScheduledTask\\b|New-ScheduledTaskAction\\b",
+      "platforms": ["cmd", "powershell"],
+      "falsePositiveTags": ["scheduled_task_allowed"]
+    },
+    {
+      "id": "persist-003",
+      "name": "Windows service creation",
+      "severity": "high",
+      "description": "Creating a Windows service — a SYSTEM-level, auto-starting persistence mechanism.",
+      "guidance": "1. Service creation by an AI agent is almost never legitimate.\n2. Review `sc query` / Services.msc for the new service and remove it if unexpected.",
+      "pattern": "\\bsc(?:\\.exe)?\\s+create\\b|New-Service\\b",
+      "platforms": ["cmd", "powershell"],
+      "falsePositiveTags": ["service_install_allowed"]
+    },
+    {
+      "id": "persist-004",
+      "name": "git hook write",
+      "severity": "medium",
+      "description": "Writing an executable Git hook (pre-commit, post-checkout, post-merge, pre-push). Git hooks run automatically on ordinary git operations, giving a worm a foothold that fires the next time anyone uses the repo.",
+      "guidance": "1. Confirm a tool you installed (husky, pre-commit) created the hook.\n2. Inspect .git/hooks for an unexpected script — especially one that fetches or runs remote code.",
+      "pattern": "(?:Set-Content|Out-File|Add-Content|echo|printf|tee|cp|copy|Copy-Item)\\s+[^\\n]*\\.git[/\\\\]hooks[/\\\\](?:pre-commit|post-checkout|post-merge|pre-push|post-commit|post-rewrite)",
+      "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
+      "falsePositiveTags": ["git_hooks_allowed"]
+    },
+    {
+      "id": "persist-005",
+      "name": "shell profile / rc autostart append",
+      "severity": "medium",
+      "description": "Appending to a shell startup file ($PROFILE, .bashrc, .zshrc, .bash_profile). Code added here runs on every new shell — a quiet persistence and re-infection vector.",
+      "guidance": "1. Confirm the append was an expected dev-environment setup step.\n2. Inspect the named profile for an added line that fetches or executes remote code, and remove it.",
+      "pattern": "(?:Add-Content|Out-File|tee)\\s+[^\\n]*(?:\\$PROFILE|\\.bashrc|\\.zshrc|\\.bash_profile|\\.profile|Microsoft\\.PowerShell_profile\\.ps1)|>>\\s*(?:~|\\$HOME)?[/\\\\]?\\.(?:bashrc|zshrc|bash_profile|profile)\\b",
+      "platforms": ["bash", "sh", "wsl", "powershell"],
+      "falsePositiveTags": ["shell_profile_allowed"]
+    },
+    {
+      "id": "persist-006",
+      "name": "Miasma persistence artifact",
+      "severity": "high",
+      "description": "A persistence artifact specific to the Miasma worm: the ~/.local/share/updater/update.py updater, the gh-token-monitor dead-man-switch, or the pgsql-monitor systemd service it installs.",
+      "guidance": "Treat the host as compromised. Remove the artifact, then rotate ALL credentials via web consoles (do not invalidate the GitHub token in place — it has a dead-man switch) and reinstall affected packages from clean lockfiles.",
+      "pattern": "\\.local[/\\\\]share[/\\\\]updater[/\\\\]update\\.py|gh-token-monitor|pgsql-monitor\\.service|\\.config[/\\\\]gh-token-monitor",
+      "platforms": ["bash", "sh", "wsl", "powershell"],
+      "falsePositiveTags": []
+    }
+  ]
+}

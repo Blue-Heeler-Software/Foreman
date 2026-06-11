@@ -132,6 +132,16 @@
       "pattern": "\\bssh\\b[^\\n]*(-L\\s+\\d|(-R|--remote)\\s+\\d|\\bDynamicForward\\b|\\b-D\\s+\\d)",
       "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
       "falsePositiveTags": ["dev_tunnel_allowed"]
+    },
+    {
+      "id": "net-014",
+      "name": "Miasma / Shai-Hulud C2 endpoint",
+      "severity": "critical",
+      "description": "Contacting a known June-2026 Miasma / Shai-Hulud command-and-control or exfiltration endpoint (git-service.com, m-kosche.com, or the api.anthropic.com/v1/api decoy path the worm uses for camouflage). Any connection here means the worm's payload is running and shipping stolen credentials.",
+      "guidance": "Isolate the host from the network now. Treat all local credentials as stolen and rotate them via web consoles — but do NOT just invalidate the GitHub token in place (the malware reacts to invalidation with a wiper); revoke and reissue. Check your GitHub account for an attacker-created public repo and any unexpected workflow commits.",
+      "pattern": "(?:check\\.)?git-service\\.com\\b|\\bt\\.m-kosche\\.com\\b|\\bm-kosche\\.com\\b|api\\.anthropic\\.com/v1/api\\b",
+      "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
+      "falsePositiveTags": []
     }
   ]
 }

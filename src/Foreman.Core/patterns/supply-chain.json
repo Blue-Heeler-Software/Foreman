@@ -1,0 +1,58 @@
+{
+  "$schema": "https://foreman.local/pattern-schema/v1",
+  "category": "supply-chain",
+  "version": "1.0",
+  "comment": "Install-time detonation signatures of the June-2026 Miasma / Mini Shai-Hulud worm as they surface in the process tree under a watched agent: Phantom-Gyp build-time exec, the .github/setup.js dropper / bun-run install hooks, the pinned Bun runtime fetch, the CI runner-memory secret scrape, and the worm's literal IOC marker strings. Network C2 domains live as net-010 in network-exfil.json.",
+  "rules": [
+    {
+      "id": "pkg-001",
+      "name": "Phantom Gyp build-time code execution",
+      "severity": "high",
+      "description": "A node-gyp binding.gyp command-substitution that runs a top-level index.js/setup.js at native-build time. This is the 'Phantom Gyp' evasion (Miasma v2): the package ships NO preinstall/postinstall script, so postinstall scanners see nothing, and instead detonates inside `npm install` when node-gyp shells out the gyp `<!(...)` expression.",
+      "guidance": "1. Do not run the build. Inspect the package's binding.gyp 'sources' for a `<!(node ...)` that runs index.js/setup.js.\n2. Pin the dependency to a known-good version and reinstall from a clean lockfile.\n3. If it already ran, assume credential theft — rotate npm/cloud/GitHub tokens.",
+      "pattern": "<!\\(\\s*(?:node|bun)\\s+[^)]*?\\b(?:index|setup)\\.(?:js|mjs|cjs)\\b",
+      "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
+      "falsePositiveTags": ["native_build_allowed"]
+    },
+    {
+      "id": "pkg-002",
+      "name": "agent-config dropper / bun-run install hook",
+      "severity": "high",
+      "description": "Execution of the Miasma dropper `node .github/setup.js` (or a `bun run index.js` install hook). The dropper is a multi-megabyte obfuscated script that decrypts a credential-stealer payload and runs it under Bun. It is launched by a planted .claude/.gemini/.cursor/.vscode config when a repo is opened in an agent/IDE, or by a package's preinstall hook.",
+      "guidance": "1. Treat the repository as hostile. Do not open it again in an agent/IDE.\n2. Inspect .github/setup.js (expect a huge single-line obfuscated blob) and the planted .claude/settings.json / .vscode/tasks.json trigger.\n3. If it ran, rotate every credential on the host and check your GitHub account for a new public 'Miasma' repo.",
+      "pattern": "\\bnode\\s+[^\\n]*[/\\\\]?\\.github[/\\\\]setup\\.(?:js|mjs|cjs)\\b|\\bbun\\s+run\\s+(?:index|setup)\\.(?:js|mjs|cjs)\\b",
+      "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
+      "falsePositiveTags": []
+    },
+    {
+      "id": "pkg-003",
+      "name": "pinned Bun runtime fetch (Miasma payload loader)",
+      "severity": "high",
+      "description": "Downloading the specific Bun runtime version (v1.3.13) the Miasma worm pins to execute its decrypted payload. A package install or repo-open step fetching this exact Bun build is the worm's runtime-bootstrap signature.",
+      "guidance": "1. A dependency install fetching a Bun runtime is not normal — stop the install.\n2. Check %TEMP% (or /tmp) for a downloaded bun/bun.exe and a transient p<random>.js payload.\n3. If present, isolate the host and rotate credentials.",
+      "pattern": "oven-sh/bun/releases/download/[^\\s'\"]*bun-v1\\.3\\.13",
+      "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
+      "falsePositiveTags": []
+    },
+    {
+      "id": "pkg-005",
+      "name": "CI runner-memory secret scrape",
+      "severity": "critical",
+      "description": "Reading a GitHub Actions Runner.Worker process memory (/proc/<pid>/mem) to recover masked CI/CD secrets in plaintext. Masking only hides secrets in logs — they remain in process memory, and this technique scrapes GITHUB_TOKEN, cloud keys, and signing tokens directly.",
+      "guidance": "1. This is an active CI/CD credential theft. Treat all secrets exposed to the workflow as compromised and rotate them immediately (GITHUB_TOKEN is auto-scoped, but rotate cloud keys, signing tokens, package tokens).\n2. Review the workflow run for unexpected steps and pin all actions to full commit SHAs.",
+      "pattern": "(?:Runner\\.Worker|/proc/\\d+/mem)[^\\n]*isSecret|isSecret[^\\n]*(?:Runner\\.Worker|/proc/\\d+/mem)",
+      "platforms": ["bash", "sh", "wsl"],
+      "falsePositiveTags": []
+    },
+    {
+      "id": "pkg-006",
+      "name": "Miasma / Shai-Hulud IOC marker string",
+      "severity": "high",
+      "description": "A literal indicator-of-compromise string baked into the Miasma / Shai-Hulud worm payloads and dead-drop infrastructure. Any appearance in a command line means the worm's code is present on the host.",
+      "guidance": "Treat the host as compromised. Rotate ALL credentials (npm, PyPI, GitHub, AWS/Azure/GCP, SSH, GPG), but do NOT simply invalidate the GitHub token in place — the malware has a dead-man switch keyed on token invalidation; revoke and reissue via the web console. Then reinstall from clean, pinned lockfiles.",
+      "pattern": "Miasma:?\\s*The Spreading Blight|IfYouInvalidateThisTokenItWillNukeTheComputerOfTheOwner|DontRevokeOrItGoesBoom|TheBeautifulSandsOfTime|thebeautifulmarchoftime|firedalazer|Shai-?Hulud:?\\s*(?:The Second Coming|Here We Go Again)",
+      "platforms": ["bash", "sh", "wsl", "cmd", "powershell"],
+      "falsePositiveTags": []
+    }
+  ]
+}
