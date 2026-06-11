@@ -25,6 +25,8 @@ public sealed class ForemanState : IEventSink
     public DateTimeOffset StartTime { get; } = DateTimeOffset.UtcNow;
     public int McpPort { get; set; } = 54321;
     public LlmTriageSettings LlmTriage { get; set; } = new();
+    /// <summary>Per-harness enabled modality ids (the restricted "sysprompt"); empty → catalog defaults.</summary>
+    public Dictionary<string, List<string>> HarnessModalities { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // injected from MonitorService / BehaviorTracker after construction
     public Func<IEnumerable<ProcessRecord>>?       GetProcessSnapshot  { get; set; }

@@ -194,6 +194,20 @@ public sealed class ForemanSettings
         => HarnessTrust.TryGetValue(harnessId, out var lvl)
             ? TrustPreset.Thresholds(lvl, this)
             : EscalationThresholds.FromGlobal(this);
+
+    /// <summary>
+    /// Per-harness enabled "modalities" — the restricted system prompt: which basic, tiny-model-friendly
+    /// operations (log-report, self-check, …) a harness is instructed to honour, delivered over MCP. Absent →
+    /// the default agent-facing set, so nothing changes until set. Keyed by harness Id, case-insensitive.
+    /// Editing this is a lock-protected action (P3). (Closed-loop spec.)
+    /// </summary>
+    public Dictionary<string, List<string>> HarnessModalities { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The agent-facing modality ids a harness honours: its explicit selection, or the default set.</summary>
+    public IReadOnlyList<string> EnabledModalities(string harnessId)
+        => HarnessModalities.TryGetValue(harnessId, out var ids) && ids.Count > 0
+            ? ids
+            : Foreman.Core.Mcp.ModalityCatalog.DefaultAgentModalities;
 }
 
 public sealed class LlmTriageSettings

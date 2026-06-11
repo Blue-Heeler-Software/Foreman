@@ -43,6 +43,7 @@ public sealed class McpServerHost : IAsyncDisposable
         _bus = bus;
         State.McpPort = settings.McpPort;
         State.LlmTriage = settings.LlmTriage;
+        State.HarnessModalities = settings.HarnessModalities;
         State.GetMcpSessionCount = () => Sessions.Count;
         State.GetMcpClients = () => Sessions.DescribeSessions();
     }

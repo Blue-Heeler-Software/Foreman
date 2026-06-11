@@ -474,6 +474,37 @@ public static class ForemanMcpTools
         };
     }
 
+    [McpServerTool, Description(
+        "Returns the basic self-service modalities (house-rules) the calling harness should honour — small, " +
+        "structured operations like log-report and self-check, designed to run even on a tiny local model.")]
+    public static object GetMyInstructions(
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null,
+        [Description("Optional harness ID; defaults to the caller's token identity")] string? harnessId = null,
+        [Description("Optional caller process ID")] int? processId = null)
+    {
+        var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        var resolved = state.ResolveHarnessId(harnessId ?? caller.ScopeHarness, processId);
+
+        var enabledIds = resolved is not null
+            && state.HarnessModalities.TryGetValue(resolved, out var ids) && ids.Count > 0
+            ? (IReadOnlyList<string>)ids
+            : ModalityCatalog.DefaultAgentModalities;
+
+        var modalities = enabledIds
+            .Select(id => ModalityCatalog.Get(id))
+            .Where(m => m is { Audience: ModalityAudience.Agent })
+            .Select(m => new { id = m!.Id, title = m.Title, instruction = m.Instruction })
+            .ToArray();
+
+        return new
+        {
+            harnessId = resolved,
+            note = "Honour these when asked, or proactively. Keep replies terse — don't pad.",
+            modalities,
+        };
+    }
+
     [McpServerTool, Description("Returns setup instructions for connecting a supported harness to Foreman Agent Safety's MCP server.")]
     public static object GetIntegrationInstructions(
         [Description("Harness ID, e.g. 'claude-code' or 'codex'")] string harnessId)
