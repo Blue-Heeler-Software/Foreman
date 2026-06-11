@@ -170,6 +170,23 @@ public sealed class ForemanSettings
     /// </summary>
     public int CredentialSweepDistinctThreshold { get; set; } = 4;
     public int CredentialSweepWindowSeconds { get; set; } = 60;
+
+    // ── Per-harness Trust ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Per-harness Trust level (1=locked-down … 5=hands-off) that applies a <see cref="TrustPreset"/> over the
+    /// global baseline. Absent = level 3 = today's global behavior (so nothing changes until a slider moves).
+    /// Keyed by harness Id (KnownHarnesses Id or "custom:exe.exe"), case-insensitive — the same key as
+    /// <see cref="DisabledHarnesses"/> and BehaviorTracker's harness key.
+    /// </summary>
+    public Dictionary<string, int> HarnessTrust { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Effective escalation thresholds for a harness: its Trust preset over the global baseline, or
+    /// the global baseline when no Trust override is set. Consumed by BehaviorTracker per harness.</summary>
+    public EscalationThresholds EffectiveThresholds(string harnessId)
+        => HarnessTrust.TryGetValue(harnessId, out var lvl)
+            ? TrustPreset.Thresholds(lvl, this)
+            : EscalationThresholds.FromGlobal(this);
 }
 
 public sealed class LlmTriageSettings

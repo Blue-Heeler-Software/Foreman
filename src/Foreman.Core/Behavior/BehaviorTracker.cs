@@ -21,6 +21,7 @@ public sealed class BehaviorTracker : IEventSink
     private readonly EventBus _bus;
     private readonly Func<int, ProcessRecord?> _lookupByPid;
     private readonly Func<int, ProcessRecord?> _findHarnessAncestor;
+    private readonly Func<string, EscalationThresholds> _resolveThresholds;
 
     public IEnumerable<BehaviorProfile> Profiles => _profiles.Values;
 
@@ -28,12 +29,15 @@ public sealed class BehaviorTracker : IEventSink
         ForemanSettings settings,
         EventBus bus,
         Func<int, ProcessRecord?> lookupByPid,
-        Func<int, ProcessRecord?> findHarnessAncestor)
+        Func<int, ProcessRecord?> findHarnessAncestor,
+        Func<string, EscalationThresholds>? resolveThresholds = null)
     {
         _settings            = settings;
         _bus                 = bus;
         _lookupByPid         = lookupByPid;
         _findHarnessAncestor = findHarnessAncestor;
+        // Per-harness Trust thresholds; defaults to the flat global baseline (unchanged behavior + tests).
+        _resolveThresholds   = resolveThresholds ?? (_ => EscalationThresholds.FromGlobal(settings));
         bus.Subscribe(this);
     }
 
@@ -72,13 +76,18 @@ public sealed class BehaviorTracker : IEventSink
 
     private EscalationLevel Evaluate(BehaviorProfile p)
     {
+        // Per-harness Trust thresholds (level 3 / unset == the global baseline). The unconditional clauses
+        // below (cred+priv+net, Critical>=2, Critical>=1, High>=1, 2 categories) are deliberately NOT
+        // Trust-tunable — they're the floor that holds even for a "hands-off" harness.
+        var t = _resolveThresholds(p.HarnessId);
+
         // ── Emergency ────────────────────────────────────────────────────────
         // specific high-risk rules always jump straight to Emergency
-        if (_settings.EmergencyRuleIds.Any(id => p.HasRule(id)))
+        if (t.EmergencyRuleIds.Any(id => p.HasRule(id)))
             return EscalationLevel.Emergency;
 
         // pure volume threshold
-        if (p.TotalAlerts >= _settings.EmergencyLevelTotalAlerts)
+        if (p.TotalAlerts >= t.EmergencyLevelTotalAlerts)
             return EscalationLevel.Emergency;
 
         // all 3 major categories: credential + privilege + network = comprehensive attack
@@ -93,20 +102,20 @@ public sealed class BehaviorTracker : IEventSink
         if (p.GetSeverityCount("Critical") >= 1)
             return EscalationLevel.Alarm;
 
-        if (p.UniqueRulesCount >= _settings.AlarmLevelUniqueRules)
+        if (p.UniqueRulesCount >= t.AlarmLevelUniqueRules)
             return EscalationLevel.Alarm;
 
-        if (p.CategoryCount >= _settings.AlarmLevelCategories)
+        if (p.CategoryCount >= t.AlarmLevelCategories)
             return EscalationLevel.Alarm;
 
-        if (p.GetSeverityCount("High") >= _settings.AlarmLevelHighCount)
+        if (p.GetSeverityCount("High") >= t.AlarmLevelHighCount)
             return EscalationLevel.Alarm;
 
         // ── Alert ────────────────────────────────────────────────────────────
         if (p.GetSeverityCount("High") >= 1)
             return EscalationLevel.Alert;
 
-        if (p.GetSeverityCount("Medium") >= _settings.AlertLevelMediumCount)
+        if (p.GetSeverityCount("Medium") >= t.AlertLevelMediumCount)
             return EscalationLevel.Alert;
 
         // two threat categories simultaneously = Alert

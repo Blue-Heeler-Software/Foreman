@@ -40,7 +40,8 @@ public sealed class MonitorService : IDisposable
         Behavior  = new BehaviorTracker(
             settings, bus,
             pid => Tree.GetByPid(pid),
-            pid => Tree.FindHarnessTypeAncestor(pid));
+            pid => Tree.FindHarnessTypeAncestor(pid),
+            settings.EffectiveThresholds);   // per-harness Trust thresholds (level 3 == global baseline)
         IdleCleanup = new IdleHarnessDetector(bus, settings, Tree);
     }
 

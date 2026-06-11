@@ -34,8 +34,12 @@ public sealed class AlertResponseRunner : IEventSink
         if (esc.NewLevel <= esc.OldLevel) return;            // only on escalation UP, not on re-publish/decay
         if (esc.NewLevel < EscalationLevel.Alert) return;    // Watch never auto-acts
 
+        // Per-harness Trust selects the auto-response tier; an unset harness uses the global settings.
+        var tier = _settings.HarnessTrust.TryGetValue(esc.HarnessId, out var lvl)
+            ? TrustPreset.Responses(lvl)
+            : _settings.AlertResponses;
         var actions = AlertResponsePolicy.Effective(
-            AlertResponsePolicy.ForLevel(_settings.AlertResponses, esc.NewLevel), esc);
+            AlertResponsePolicy.ForLevel(tier, esc.NewLevel), esc);
         if (actions == EscalationAction.None) return;
 
         if (actions.HasFlag(EscalationAction.AskHarness))         Fire(esc, "ask",     AskHarness);
