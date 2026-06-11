@@ -221,6 +221,12 @@ public partial class SettingsWindow : Window
         var dc = _settings.DecoyCredentials;
         var wasEnabled = dc.Enabled;
         var wasAuditing = dc.Enabled && dc.EnableReadAuditing;
+        var wasCanary = (dc.IncludeAwsCanaryToken, dc.AwsCanaryAccessKeyId, dc.AwsCanarySecretAccessKey);
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // Snapshot the audited path set BEFORE any change so we can re-apply the sidecar iff it actually changes.
+        var wasAuditPaths = wasAuditing
+            ? DecoyCredentialPolicy.ReadAuditPaths(home, dc.PlantedPaths)
+            : (IReadOnlyList<string>)[];
 
         dc.Enabled                   = DecoyCredsCheck.IsChecked == true;
         dc.EnableReadAuditing        = DecoyReadAuditCheck.IsChecked == true;
@@ -228,12 +234,17 @@ public partial class SettingsWindow : Window
         dc.AwsCanaryAccessKeyId      = string.IsNullOrWhiteSpace(DecoyAwsKeyIdBox.Text)  ? null : DecoyAwsKeyIdBox.Text.Trim();
         dc.AwsCanarySecretAccessKey  = string.IsNullOrWhiteSpace(DecoyAwsSecretBox.Text) ? null : DecoyAwsSecretBox.Text.Trim();
 
+        // Re-plant only when content/placement could actually differ (enabled flip or canary change) — an
+        // unrelated Settings save must not churn files/SACLs or pop a "Planted N" dialog.
+        var contentChanged = dc.Enabled != wasEnabled
+            || (dc.IncludeAwsCanaryToken, dc.AwsCanaryAccessKeyId, dc.AwsCanarySecretAccessKey) != wasCanary;
+
         try
         {
             var mgr = new DecoyCredentialManager(new SystemDecoyFileSystem());
             var reval = mgr.Revalidate(dc.PlantedPaths);   // retire slots reclaimed for real credentials (never deleted)
 
-            if (dc.Enabled)
+            if (dc.Enabled && contentChanged)
             {
                 mgr.Remove(reval.StillDecoys);             // clear our own decoys so re-plant reflects current settings
                 var plant = mgr.Plant(dc);
@@ -243,6 +254,12 @@ public partial class SettingsWindow : Window
                 MessageBox.Show(
                     $"Planted {plant.Planted.Count} decoy credential file(s); skipped {plant.SkippedExisting.Count} path(s) you already use.{retired}",
                     "Foreman Agent Safety — Decoy credentials", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else if (dc.Enabled)
+            {
+                // Already enabled, nothing decoy-related changed: keep the planted decoys, just stop tracking
+                // any slot the user reclaimed for real credentials (so its SACL is dropped on re-apply below).
+                dc.PlantedPaths = reval.StillDecoys.ToList();
             }
             else
             {
@@ -259,11 +276,19 @@ public partial class SettingsWindow : Window
                 "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
-        // (Re)launch or stop the elevated auditor only when the read-auditing state actually changed —
-        // so an unrelated save doesn't re-prompt UAC.
-        if ((dc.Enabled && dc.EnableReadAuditing) != wasAuditing)
+        // Re-apply the elevated auditor whenever the AUDITED PATH SET changed — enable/disable, a reclaimed
+        // slot, or a re-plant that added/removed bait — not just when the on/off boolean flipped. Otherwise the
+        // sidecar can keep a stale SACL on a path the user just reclaimed for real credentials. UAC re-prompts
+        // only on a genuine change (an unrelated save leaves the set identical → no prompt).
+        var nowAuditPaths = (dc.Enabled && dc.EnableReadAuditing)
+            ? DecoyCredentialPolicy.ReadAuditPaths(home, dc.PlantedPaths)
+            : (IReadOnlyList<string>)[];
+        if (!AuditSetEqual(wasAuditPaths, nowAuditPaths))
             _onDecoyAuditChanged?.Invoke();
     }
+
+    private static bool AuditSetEqual(IReadOnlyList<string> a, IReadOnlyList<string> b)
+        => a.Count == b.Count && new HashSet<string>(a, StringComparer.OrdinalIgnoreCase).SetEquals(b);
 
     private void CancelClick(object sender, RoutedEventArgs e) => Close();
 }

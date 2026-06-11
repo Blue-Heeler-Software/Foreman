@@ -121,6 +121,9 @@ internal sealed class DecoyAudit : IDisposable
         catch { return 0; }
     }
 
+    // Returns true ONLY if we added a NEW audit ACE (so cleanup removes exactly that and nothing else). If an
+    // identical Everyone/ReadData/Success rule already existed (e.g. an admin set it), we leave it and don't
+    // claim it — so we never strip a pre-existing audit policy on cleanup.
     private static bool TrySetAuditAce(string path)
     {
         try
@@ -128,15 +131,24 @@ internal sealed class DecoyAudit : IDisposable
             if (!File.Exists(path)) return false;
             var fi = new FileInfo(path);
             var sec = fi.GetAccessControl(AccessControlSections.Audit);
-            sec.AddAuditRule(new FileSystemAuditRule(
-                new SecurityIdentifier(WellKnownSidType.WorldSid, null),
-                FileSystemRights.ReadData, AuditFlags.Success));
+            var everyone = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+
+            foreach (FileSystemAuditRule r in sec.GetAuditRules(true, true, typeof(SecurityIdentifier)))
+                if (Equals(r.IdentityReference, everyone)
+                    && r.FileSystemRights == FileSystemRights.ReadData
+                    && r.AuditFlags == AuditFlags.Success)
+                    return false;   // identical ACE pre-exists — don't add, don't track for removal
+
+            sec.AddAuditRule(new FileSystemAuditRule(everyone, FileSystemRights.ReadData, AuditFlags.Success));
             fi.SetAccessControl(sec);
             return true;
         }
         catch { return false; }
     }
 
+    // Removes ONLY the exact Everyone/ReadData/Success ACE we added (RemoveAuditRuleSpecific, not ...All —
+    // ...All would also strip a broader pre-existing rule like Everyone/FullControl/Success). Called only for
+    // paths in _sacled, i.e. where TrySetAuditAce actually added the rule.
     private static void TryRemoveAuditAce(string path)
     {
         try
@@ -144,7 +156,7 @@ internal sealed class DecoyAudit : IDisposable
             if (!File.Exists(path)) return;
             var fi = new FileInfo(path);
             var sec = fi.GetAccessControl(AccessControlSections.Audit);
-            sec.RemoveAuditRuleAll(new FileSystemAuditRule(
+            sec.RemoveAuditRuleSpecific(new FileSystemAuditRule(
                 new SecurityIdentifier(WellKnownSidType.WorldSid, null),
                 FileSystemRights.ReadData, AuditFlags.Success));
             fi.SetAccessControl(sec);

@@ -61,7 +61,8 @@ public sealed class ElevatedSidecarController : IDisposable
             if (IsRunning) return;
             IsRunning = true;
             _cts = new CancellationTokenSource();
-            _ = Task.Run(() => RunAsync(_cts.Token));
+            var cts = _cts;
+            _ = Task.Run(() => RunAsync(cts));
         }
     }
 
@@ -77,8 +78,9 @@ public sealed class ElevatedSidecarController : IDisposable
         }
     }
 
-    private async Task RunAsync(CancellationToken ct)
+    private async Task RunAsync(CancellationTokenSource cts)
     {
+        var ct = cts.Token;
         var pipeName = "foreman-etw-" + Guid.NewGuid().ToString("N");
         var nonce    = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
 
@@ -105,7 +107,14 @@ public sealed class ElevatedSidecarController : IDisposable
         }
         catch (OperationCanceledException) { }
         catch { /* pipe/launch failure — features simply stay n/a */ }
-        finally { _connected = false; CleanupDecoyPathsFile(); }
+        finally
+        {
+            _connected = false;
+            CleanupDecoyPathsFile();
+            // Clear IsRunning so a later Start() can relaunch a dead/failed sidecar — but only if a newer
+            // Start() hasn't already replaced our CTS (else we'd stomp the live run's flag).
+            lock (_gate) { if (ReferenceEquals(_cts, cts)) IsRunning = false; }
+        }
     }
 
     // Each pipe line is self-describing via a "Kind" field; route net frames to the rate table and
