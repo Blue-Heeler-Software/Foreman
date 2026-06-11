@@ -1,0 +1,48 @@
+{
+  "name": "lm-studio-default",
+  "version": "1.0",
+  "description": "Default profile for LM Studio (local model host) processes",
+  "processMatch": {
+    "executableNames": ["LM Studio.exe", "lm-studio.exe", "lmstudio.exe"],
+    "commandLineContains": ["lmstudio", "lm-studio", ".lmstudio"],
+    "parentExecutableNames": []
+  },
+  "fileSystem": {
+    "allowedWritePaths": [
+      "%USERPROFILE%\\.lmstudio\\*",
+      "%USERPROFILE%\\.cache\\lm-studio\\*",
+      "%LOCALAPPDATA%\\LM-Studio\\*",
+      "%LOCALAPPDATA%\\LMStudio\\*",
+      "%TEMP%\\*"
+    ],
+    "deniedPaths": [
+      "C:\\Windows\\*",
+      "C:\\Windows\\System32\\*",
+      "%USERPROFILE%\\.ssh\\*",
+      "%USERPROFILE%\\.aws\\*",
+      "%USERPROFILE%\\.gnupg\\*"
+    ],
+    "enforceMode": "alert"
+  },
+  "commands": {
+    "blockedPatterns": ["cred-001", "cred-004", "cred-005", "priv-002", "priv-003", "priv-004", "win-004"],
+    "enforceMode": "alert"
+  },
+  "processLimits": {
+    "maxRuntimeMinutes": 1440,
+    "hangThresholdMinutes": 60,
+    "hookJamThresholdMinutes": 10
+  },
+  "claudeCodeIntegration": {
+    "readSettingsJson": false,
+    "trustGrantedPermissions": false
+  },
+  "alerts": {
+    "notifyOnHang": false,
+    "notifyOnOrphan": true,
+    "notifyOnViolation": true,
+    "suppressDuplicatesWindowMinutes": 5,
+    "trustedHookPathMarkers": [],
+    "launcherSuppressedRuleIds": []
+  }
+}

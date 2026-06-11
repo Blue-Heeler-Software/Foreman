@@ -84,6 +84,59 @@ public static class HarnessIntegrationRegistry
               }
             }
             """),
+        new(
+            "gemini-cli",
+            "Gemini CLI",
+            "gemini-cli-default",
+            [@".gemini\", ".gemini/"],
+            [],
+            "Add Foreman Agent Safety's MCP endpoint to ~/.gemini/settings.json under mcpServers — note Gemini uses httpUrl (streamable HTTP), not url. Use Foreman's Connect Agent window to write it automatically.",
+            """
+            {
+              "mcpServers": {
+                "foreman": {
+                  "httpUrl": "http://localhost:{port}/mcp",
+                  "headers": { "Authorization": "Bearer <token>" }
+                }
+              }
+            }
+            """),
+        new(
+            "github-copilot",
+            "GitHub Copilot CLI",
+            "github-copilot-default",
+            [@".copilot\", ".copilot/"],
+            [],
+            "Add Foreman Agent Safety's HTTP MCP endpoint to ~/.copilot/mcp-config.json under mcpServers. Use Foreman's Connect Agent window to write it automatically. (The terminal 'copilot' CLI — not the Windows/Edge Microsoft Copilot.)",
+            """
+            {
+              "mcpServers": {
+                "foreman": {
+                  "type": "http",
+                  "url": "http://localhost:{port}/mcp",
+                  "headers": { "Authorization": "Bearer <token>" },
+                  "tools": ["*"]
+                }
+              }
+            }
+            """),
+        new(
+            "lm-studio",
+            "LM Studio",
+            "lm-studio-default",
+            [],
+            [],
+            "Add Foreman Agent Safety's MCP endpoint to ~/.lmstudio/mcp.json under mcpServers. Caveat emptor: LM Studio's support for a headers (Authorization) block on a remote server is unverified — confirm in LM Studio's MCP panel that the connection authorizes.",
+            """
+            {
+              "mcpServers": {
+                "foreman": {
+                  "url": "http://localhost:{port}/mcp",
+                  "headers": { "Authorization": "Bearer <token>" }
+                }
+              }
+            }
+            """),
     ];
 
     public static HarnessIntegration? Get(string harnessId) =>

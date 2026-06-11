@@ -1,0 +1,47 @@
+{
+  "name": "gemini-cli-default",
+  "version": "1.0",
+  "description": "Default profile for Gemini CLI harness processes",
+  "processMatch": {
+    "executableNames": ["gemini.exe", "gemini"],
+    "commandLineContains": ["@google/gemini-cli", "gemini-cli", ".gemini/", ".gemini\\"],
+    "parentExecutableNames": []
+  },
+  "fileSystem": {
+    "allowedWritePaths": [
+      "%USERPROFILE%\\*",
+      "%TEMP%\\gemini-*\\*",
+      "%APPDATA%\\gemini\\*",
+      "%USERPROFILE%\\.gemini\\*"
+    ],
+    "deniedPaths": [
+      "C:\\Windows\\*",
+      "C:\\Windows\\System32\\*",
+      "%USERPROFILE%\\.ssh\\*",
+      "%USERPROFILE%\\.aws\\*",
+      "%USERPROFILE%\\.gnupg\\*"
+    ],
+    "enforceMode": "alert"
+  },
+  "commands": {
+    "blockedPatterns": ["cred-001", "cred-004", "cred-005", "priv-002", "priv-003", "priv-004", "win-004"],
+    "enforceMode": "alert"
+  },
+  "processLimits": {
+    "maxRuntimeMinutes": 480,
+    "hangThresholdMinutes": 10,
+    "hookJamThresholdMinutes": 5
+  },
+  "claudeCodeIntegration": {
+    "readSettingsJson": false,
+    "trustGrantedPermissions": false
+  },
+  "alerts": {
+    "notifyOnHang": true,
+    "notifyOnOrphan": true,
+    "notifyOnViolation": true,
+    "suppressDuplicatesWindowMinutes": 5,
+    "trustedHookPathMarkers": [".gemini\\", ".gemini/"],
+    "launcherSuppressedRuleIds": []
+  }
+}

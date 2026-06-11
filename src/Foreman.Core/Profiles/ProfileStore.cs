@@ -47,6 +47,9 @@ public sealed class ProfileStore : IDisposable
             LoadBuiltIn("codex-default");
             LoadBuiltIn("t3-code-default");
             LoadBuiltIn("opencode-default");
+            LoadBuiltIn("gemini-cli-default");
+            LoadBuiltIn("github-copilot-default");
+            LoadBuiltIn("lm-studio-default");
 
             // user profiles from disk (override built-ins by name)
             foreach (var file in Directory.GetFiles(_profilesDirectory, "*.json"))
