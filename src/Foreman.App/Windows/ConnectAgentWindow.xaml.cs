@@ -15,14 +15,16 @@ public partial class ConnectAgentWindow : Window
     private readonly string _token;          // raw install token (operator/unscoped) — used for the generic path
     private readonly Func<string, string> _mint;   // mints a per-harness (scoped) token
     private readonly Func<IReadOnlyList<McpClientInfo>>? _getClients;
+    private readonly Func<string>? _beginPairing;   // begins extension pairing, returns the on-screen code
 
     public ConnectAgentWindow(int port, string token, Func<IReadOnlyList<McpClientInfo>>? getClients,
-                              Func<string, string>? mintToken = null)
+                              Func<string, string>? mintToken = null, Func<string>? beginPairing = null)
     {
         _port = port;
         _token = token;
         _mint = mintToken ?? (_ => token);   // fall back to the install token if minting isn't wired
         _getClients = getClients;
+        _beginPairing = beginPairing;
         InitializeComponent();
         Populate();
     }
@@ -229,6 +231,23 @@ public partial class ConnectAgentWindow : Window
     {
         try { Clipboard.SetText(text); StatusText.Text = ok + "  Restart your agent to apply."; }
         catch (Exception ex) { StatusText.Text = "Couldn't copy to the clipboard: " + ex.Message; }
+    }
+
+    private void PairExtensionClick(object sender, RoutedEventArgs e)
+    {
+        if (_beginPairing is null)
+        {
+            MessageBox.Show(
+                "Pairing isn't available yet — the MCP server is still starting. Try again in a moment.",
+                "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var code = _beginPairing();
+        MessageBox.Show(
+            $"Pairing code:\n\n        {code}\n\nIn the Foreman browser extension, open its Options page and enter " +
+            "this code within 2 minutes. The code never leaves your machine — the extension proves it holds the " +
+            "code over a loopback challenge/response.",
+            "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void CloseClick(object sender, RoutedEventArgs e) => Close();

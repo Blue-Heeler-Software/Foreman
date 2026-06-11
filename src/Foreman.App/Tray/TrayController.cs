@@ -64,6 +64,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — re-applies decoy read-auditing (re-launch the elevated sidecar with the decoy paths).</summary>
     public Action?                                            ApplyDecoyAuditing    { get; set; }
 
+    /// <summary>Injected from App — begins browser-extension pairing; returns the short on-screen code to show.</summary>
+    public Func<string>?                                      BeginPairing          { get; set; }
+
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
 
@@ -435,7 +438,7 @@ public sealed class TrayController : IEventSink, IDisposable
 
         if (_connectWindow is null)
         {
-            var w = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken);
+            var w = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken, BeginPairing);
             w.Closed += (_, _) => _connectWindow = null;
             _connectWindow = w;
             w.Show();

@@ -93,6 +93,7 @@ public partial class App : Application
         _tray.GetMcpToken                   = () => _mcpHost.McpToken;
         _tray.MintHarnessToken              = id => _mcpHost.MintHarnessToken(id);
         _tray.GetConnectedClients           = () => _mcpHost.Sessions.DescribeSessions();
+        _tray.BeginPairing                  = () => _mcpHost.BeginExtensionPairing();
 
         // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a
         // forgotten one is a compile error). The ORIGINATING PROCESS section, escalation/profile display,
