@@ -1,4 +1,5 @@
 using Foreman.Core.Alerts;
+using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using System.Windows;
 using System.Windows.Controls;
@@ -49,6 +50,16 @@ public partial class SettingsWindow : Window
         ScanMcpToolsCheck.IsChecked  = _settings.ScanMcpTools;
         IdleCleanupCheck.IsChecked   = _settings.IdleCleanupEnabled;
         IdleCleanupAfterBox.Text     = _settings.IdleCleanupAfterMinutes.ToString();
+
+        // Decoy credentials
+        var dc = _settings.DecoyCredentials;
+        DecoyCredsCheck.IsChecked     = dc.Enabled;
+        DecoyAwsCanaryCheck.IsChecked = dc.IncludeAwsCanaryToken;
+        DecoyAwsKeyIdBox.Text         = dc.AwsCanaryAccessKeyId ?? string.Empty;
+        DecoyAwsSecretBox.Text        = dc.AwsCanarySecretAccessKey ?? string.Empty;
+        DecoyStatusText.Text          = dc.PlantedPaths.Count > 0
+            ? $"Currently planted: {dc.PlantedPaths.Count} decoy file(s)."
+            : "No decoys planted yet.";
 
         // Escalation thresholds
         AlertMediumBox.Text    = _settings.AlertLevelMediumCount.ToString();
@@ -164,6 +175,8 @@ public partial class SettingsWindow : Window
         _settings.GameMode.Enabled                   = GameModeCheck.IsChecked == true;
         _settings.GameMode.AllowCriticalBreakThrough = GameModeBreakThroughCheck.IsChecked == true;
 
+        ApplyDecoyCredentials();
+
         SettingsStore.Save(_settings);
 
         // ── Start with Windows (registry, not settings JSON) ─────────────────
@@ -192,6 +205,53 @@ public partial class SettingsWindow : Window
             _onScanMcpToolsChanged?.Invoke(_settings.ScanMcpTools);
 
         Close();
+    }
+
+    /// <summary>
+    /// Plants / removes decoy credentials per the toggle. Gaps-only (never shadows a real file) and
+    /// sentinel-gated (never deletes a real file). A slot the user reclaimed for real credentials is
+    /// auto-retired first. Re-plants on each save so a changed canarytoken is applied.
+    /// </summary>
+    private void ApplyDecoyCredentials()
+    {
+        var dc = _settings.DecoyCredentials;
+        var wasEnabled = dc.Enabled;
+
+        dc.Enabled                   = DecoyCredsCheck.IsChecked == true;
+        dc.IncludeAwsCanaryToken     = DecoyAwsCanaryCheck.IsChecked == true;
+        dc.AwsCanaryAccessKeyId      = string.IsNullOrWhiteSpace(DecoyAwsKeyIdBox.Text)  ? null : DecoyAwsKeyIdBox.Text.Trim();
+        dc.AwsCanarySecretAccessKey  = string.IsNullOrWhiteSpace(DecoyAwsSecretBox.Text) ? null : DecoyAwsSecretBox.Text.Trim();
+
+        try
+        {
+            var mgr = new DecoyCredentialManager(new SystemDecoyFileSystem());
+            var reval = mgr.Revalidate(dc.PlantedPaths);   // retire slots reclaimed for real credentials (never deleted)
+
+            if (dc.Enabled)
+            {
+                mgr.Remove(reval.StillDecoys);             // clear our own decoys so re-plant reflects current settings
+                var plant = mgr.Plant(dc);
+                dc.PlantedPaths = plant.Planted.ToList();
+                var retired = reval.Reclaimed.Count > 0
+                    ? $"  Retired {reval.Reclaimed.Count} slot(s) you reclaimed for real credentials (left untouched)." : "";
+                MessageBox.Show(
+                    $"Planted {plant.Planted.Count} decoy credential file(s); skipped {plant.SkippedExisting.Count} path(s) you already use.{retired}",
+                    "Foreman Agent Safety — Decoy credentials", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                var removed = mgr.Remove(reval.StillDecoys);
+                dc.PlantedPaths = [];
+                if (wasEnabled)
+                    MessageBox.Show($"Removed {removed.Count} decoy credential file(s).",
+                        "Foreman Agent Safety — Decoy credentials", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't update decoy credentials: {ex.Message}",
+                "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void CancelClick(object sender, RoutedEventArgs e) => Close();

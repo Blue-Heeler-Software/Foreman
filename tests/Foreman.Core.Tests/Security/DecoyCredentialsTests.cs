@@ -90,6 +90,48 @@ public sealed class DecoyCredentialsTests
     }
 
     [Fact]
+    public void Revalidate_RetiresReclaimedSlots_WithoutDeletingRealCreds()
+    {
+        var fs = new FakeFs();
+        var mgr = new DecoyCredentialManager(fs);
+        var planted = mgr.Plant(new DecoyCredentialSettings()).Planted;
+
+        // User runs `aws configure` over one decoy slot (real creds, sentinel gone)...
+        var reclaimedSlot = planted[0];
+        fs.Files[reclaimedSlot] = "[default]\naws_access_key_id = AKIAREALUSERKEY00000\n";
+        // ...and deletes another entirely.
+        var deletedSlot = planted[1];
+        fs.Files.Remove(deletedSlot);
+
+        var result = mgr.Revalidate(planted);
+
+        Assert.Contains(reclaimedSlot, result.Reclaimed);
+        Assert.Contains(deletedSlot, result.Reclaimed);
+        Assert.DoesNotContain(reclaimedSlot, result.StillDecoys);
+        // The real credentials the user wrote are NOT deleted.
+        Assert.True(fs.Exists(reclaimedSlot));
+        Assert.Equal("[default]\naws_access_key_id = AKIAREALUSERKEY00000\n", fs.Files[reclaimedSlot]);
+        // Untouched decoys remain tracked.
+        Assert.Equal(planted.Count - 2, result.StillDecoys.Count);
+    }
+
+    [Fact]
+    public void Release_FreesOneDecoySlot_ButNotARealFile()
+    {
+        var fs = new FakeFs();
+        var mgr = new DecoyCredentialManager(fs);
+        var planted = mgr.Plant(new DecoyCredentialSettings()).Planted;
+
+        Assert.True(mgr.Release(planted[0]));          // a decoy → released
+        Assert.False(fs.Exists(planted[0]));
+
+        // A slot the user reclaimed with real creds is never deleted by Release.
+        fs.Files[planted[1]] = "real user credential, no sentinel";
+        Assert.False(mgr.Release(planted[1]));
+        Assert.True(fs.Exists(planted[1]));
+    }
+
+    [Fact]
     public void DisabledByDefault()
     {
         var s = new DecoyCredentialSettings();

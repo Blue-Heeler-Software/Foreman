@@ -70,6 +70,24 @@ public interface IDecoyFileSystem
     void Delete(string fullPath);
 }
 
+/// <summary>Real file system rooted at the current user's profile — the production <see cref="IDecoyFileSystem"/>.</summary>
+public sealed class SystemDecoyFileSystem : IDecoyFileSystem
+{
+    public string HomeDirectory { get; } =
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    public bool Exists(string fullPath) => File.Exists(fullPath);
+    public string ReadAllText(string fullPath) => File.ReadAllText(fullPath);
+
+    public void WriteAllText(string fullPath, string content)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, content);
+    }
+
+    public void Delete(string fullPath) => File.Delete(fullPath);
+}
+
 /// <summary>
 /// Pure policy for decoy placement + believable content generation. No I/O, no elevation — fully testable.
 /// </summary>
@@ -217,4 +235,40 @@ public sealed class DecoyCredentialManager(IDecoyFileSystem fs)
         }
         return removed;
     }
+
+    /// <summary>
+    /// Frees a single decoy slot so the user can put REAL credentials there. Sentinel-gated, so it only
+    /// ever deletes Foreman's own decoy — if the slot already holds real content it is left untouched.
+    /// Returns true when a decoy was actually removed.
+    /// </summary>
+    public bool Release(string path) => Remove([path]).Contains(path);
+
+    /// <summary>
+    /// Re-checks tracked decoys. A slot is "reclaimed" when the file is gone or no longer carries the
+    /// sentinel — i.e. the user (or a tool like <c>aws configure</c>) wrote real credentials over it. The
+    /// caller stops tracking and auditing reclaimed slots; Foreman NEVER deletes a reclaimed file. Slots
+    /// that still carry the sentinel stay decoys. Run on startup and when Settings opens, so a slot the
+    /// user repurposed for real credentials silently retires instead of false-alarming on every read.
+    /// </summary>
+    public RevalidateResult Revalidate(IEnumerable<string> trackedPaths)
+    {
+        var still = new List<string>();
+        var reclaimed = new List<string>();
+        foreach (var path in trackedPaths)
+        {
+            if (!fs.Exists(path)) { reclaimed.Add(path); continue; }     // user deleted it
+            string text;
+            try { text = fs.ReadAllText(path); }
+            catch { still.Add(path); continue; }                          // unreadable — keep tracking, don't assume
+            if (DecoyCredentialPolicy.IsDecoyContent(text)) still.Add(path);
+            else reclaimed.Add(path);                                     // real content now lives here — retire, never delete
+        }
+        return new RevalidateResult(still, reclaimed);
+    }
 }
+
+/// <summary>
+/// Outcome of <see cref="DecoyCredentialManager.Revalidate"/>: which tracked slots are still decoys vs.
+/// which were reclaimed (file gone or real credentials written over the decoy — must be untracked, never deleted).
+/// </summary>
+public sealed record RevalidateResult(IReadOnlyList<string> StillDecoys, IReadOnlyList<string> Reclaimed);
