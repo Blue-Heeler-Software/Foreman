@@ -31,6 +31,9 @@ public sealed class ElevatedSidecarController : IDisposable
     public bool IsRunning { get; private set; }
     public bool IsConnected => _connected;
 
+    /// <summary>Raised when the elevated sidecar reports a SACL-audited read of a decoy credential file.</summary>
+    public Action<DecoyReadMessage>? OnDecoyRead { get; set; }
+
     /// <summary>Latest network bytes/sec for a PID, or null when the sidecar isn't feeding it.</summary>
     public double? GetRate(int pid) =>
         _connected && _rates.TryGetValue(pid, out var rate) ? rate : null;
@@ -80,17 +83,29 @@ public sealed class ElevatedSidecarController : IDisposable
             {
                 var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
                 if (line is null) break;   // sidecar closed the pipe
-                try
-                {
-                    if (JsonSerializer.Deserialize<NetworkRatesMessage>(line) is { } msg)
-                        _rates = msg.Rates;
-                }
+                try { HandleFrame(line); }
                 catch { /* skip one malformed frame */ }
             }
         }
         catch (OperationCanceledException) { }
         catch { /* pipe/launch failure — Net simply stays n/a */ }
         finally { _connected = false; }
+    }
+
+    // Each pipe line is self-describing via a "Kind" field; route net frames to the rate table and
+    // decoy-read frames to the callback. A line without Kind is a legacy net frame.
+    private void HandleFrame(string line)
+    {
+        using var doc = JsonDocument.Parse(line);
+        var kind = doc.RootElement.TryGetProperty("Kind", out var k) ? k.GetString() : SidecarFrame.Net;
+        if (kind == SidecarFrame.DecoyRead)
+        {
+            if (JsonSerializer.Deserialize<DecoyReadMessage>(line) is { } d) OnDecoyRead?.Invoke(d);
+        }
+        else if (JsonSerializer.Deserialize<NetworkRatesMessage>(line) is { } msg)
+        {
+            _rates = msg.Rates;
+        }
     }
 
     private static NamedPipeServerStream CreateOwnerOnlyPipe(string name)

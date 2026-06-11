@@ -135,6 +135,21 @@ public partial class App : Application
         // Optional elevated, capture-only ETW network sidecar. Only this sidecar runs elevated;
         // the app stays at medium IL. Off unless the user opts in (Settings → Run elevated).
         _sidecar = new ElevatedSidecarController();
+        // A SACL-audited read of a decoy credential (reported by the elevated sidecar, which has already
+        // excluded Foreman's own re-validation reads) is a Critical credential-theft incident.
+        _sidecar.OnDecoyRead = d => EventBus.Instance.Publish(new CommandAlertEvent(
+            DateTimeOffset.FromUnixTimeMilliseconds(d.TimestampUnixMs),
+            ForemanSeverity.Critical,
+            $"{(string.IsNullOrWhiteSpace(d.Image) ? "process" : System.IO.Path.GetFileName(d.Image))} (pid {d.Pid})",
+            $"Decoy credential READ: {d.Path} was opened by " +
+            $"{(string.IsNullOrWhiteSpace(d.Image) ? "an unknown process" : d.Image)} (pid {d.Pid}). " +
+            "Nothing legitimate reads a decoy you planted as bait.",
+            d.Image, "cred-decoy-read", "Decoy credential read",
+            "A process read one of Foreman's decoy (canary) credential files — fake credentials planted at " +
+            "paths you don't use, so any read is the behaviour of a credential harvester.",
+            "Treat as active credential theft: identify and stop the reading process, then rotate the real " +
+            "credentials adjacent to the decoy paths.",
+            d.Pid));
         if (settings.RunElevated) _sidecar.Start();
         _tray.GetNetRate = pid => _sidecar.GetRate(pid);
         _tray.GetNetCaptureActive = () => _sidecar?.IsConnected ?? false;
