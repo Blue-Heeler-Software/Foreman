@@ -215,6 +215,7 @@ The embedded MCP server exposes tools including:
 | `ListAuditPreferences` / `GetAuditRoute` | Cross-agent audit routing |
 | `ListMcpServers` | Discovered MCP servers across harness configs |
 | `ListMcpToolFindings` | Cached opt-in MCP tool-description findings |
+| `ScanRepoForAgentConfig` | Vet a repo's agent-config supply chain (`.claude`/`.gemini` hooks, `.cursor` rules, `.vscode` `folderOpen` tasks, `.github/setup.js`, `CLAUDE.md`/`AGENTS.md`) for the "rules file backdoor" planted-trigger class — *before* opening it in an agent |
 
 See [docs/oversight-model.md](docs/oversight-model.md) for the Ask Harness vs Send for Audit model and the MCP supply-chain tiers.
 

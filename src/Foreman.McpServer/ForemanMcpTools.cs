@@ -38,6 +38,37 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
+        "Scans a directory's AI-agent configuration supply chain for the Miasma 'rules file backdoor' attack " +
+        "class: auto-run hooks in .claude/.gemini settings.json, .cursor rules with alwaysApply, .vscode " +
+        "tasks.json with runOn:folderOpen, the .github/setup.js dropper, obfuscated scripts, prompt-injection " +
+        "or IOC strings in CLAUDE.md/AGENTS.md, and suspicious package.json scripts. Use this to vet a " +
+        "repository BEFORE opening it in an agent — opening a poisoned repo is enough to run its payload. " +
+        "Read-only; makes no network connections.")]
+    public static object ScanRepoForAgentConfig(
+        [Description("Absolute path to the repository/directory to scan")] string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return new { scanned = false, reason = "Path does not exist or is not a directory." };
+
+        var findings = Foreman.Core.Security.AgentConfigScanner.ScanDirectory(path);
+        var highest = findings.Count == 0 ? ForemanSeverity.Info : findings.Max(f => f.Severity);
+        return new
+        {
+            scanned = true,
+            path,
+            findingCount = findings.Count,
+            highestSeverity = findings.Count == 0 ? "none" : highest.ToString(),
+            verdict = highest >= ForemanSeverity.High
+                ? "SUSPICIOUS — review the flagged files before opening this repo in an agent."
+                : findings.Count == 0 ? "clean" : "low-signal findings only",
+            findings = findings
+                .OrderByDescending(f => f.Severity)
+                .Select(f => new { file = f.FilePath, severity = f.Severity.ToString(), signal = f.Signal.ToString(), detail = f.Detail })
+                .ToArray(),
+        };
+    }
+
+    [McpServerTool, Description(
         "Lists MCP clients currently connected to Foreman, including their self-announced identity " +
         "and whether they support sampling. Use this to debug Ask Harness delivery. The identity is " +
         "self-declared by the client and is not an authorization boundary.")]
