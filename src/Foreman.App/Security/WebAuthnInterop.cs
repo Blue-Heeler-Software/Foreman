@@ -18,7 +18,10 @@ namespace Foreman.App.Security;
 /// </summary>
 internal static class WebAuthnInterop
 {
-    private const int WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED = 1;
+    // PREFERRED, not REQUIRED: Hello (platform) still does full PIN/biometric, but a roaming key becomes
+    // insert + a single touch — no forced FIDO2 PIN, no resident-passkey slot. Touch-only still fully stops the
+    // rogue-agent threat (software can't touch a physical key); REQUIRED only added physical-key-theft hardening.
+    private const int WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED = 2;
     private const int WEBAUTHN_AUTHENTICATOR_ATTACHMENT_ANY = 0;          // platform (Hello) + cross-platform (keys)
     private const int WEBAUTHN_ATTESTATION_CONVEYANCE_PREFERENCE_NONE = 1;
     private const int COSE_ES256 = -7;
@@ -143,7 +146,7 @@ internal static class WebAuthnInterop
                 dwVersion = 1, dwTimeoutMilliseconds = TIMEOUT_MS,
                 dwAuthenticatorAttachment = WEBAUTHN_AUTHENTICATOR_ATTACHMENT_ANY,
                 bRequireResidentKey = 0,                                            // non-discoverable: we keep the id
-                dwUserVerificationRequirement = WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED,
+                dwUserVerificationRequirement = WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED,
                 dwAttestationConveyancePreference = WEBAUTHN_ATTESTATION_CONVEYANCE_PREFERENCE_NONE,
             };
 
@@ -181,7 +184,7 @@ internal static class WebAuthnInterop
             {
                 dwVersion = 1, dwTimeoutMilliseconds = TIMEOUT_MS, CredentialList = credList,
                 dwAuthenticatorAttachment = WEBAUTHN_AUTHENTICATOR_ATTACHMENT_ANY,
-                dwUserVerificationRequirement = WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED,
+                dwUserVerificationRequirement = WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED,
             };
 
             var hr = WebAuthNAuthenticatorGetAssertion(hWnd, rpId, ref clientData, ref options, out ppAssert);
