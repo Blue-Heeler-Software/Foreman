@@ -140,6 +140,8 @@
                     <ColumnDefinition Width="18" />
                     <ColumnDefinition Width="*" />       <!-- harness chips -->
                     <ColumnDefinition Width="Auto" />    <!-- summary text -->
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="Auto" />    <!-- presence padlock -->
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -199,6 +201,46 @@
                            FontFamily="Segoe UI, Arial"
                            Foreground="{StaticResource TextMutedBrush}"
                            VerticalAlignment="Center" />
+
+                <!-- ── Presence padlock: click to arm/disarm; animates shackle + glow on toggle ── -->
+                <Button Grid.Column="5" x:Name="PadlockButton" Click="PadlockClick"
+                        Background="Transparent" BorderThickness="0" Padding="8,3" Cursor="Hand"
+                        VerticalAlignment="Center"
+                        ToolTip="Presence lock — require a Windows Hello / security-key tap to weaken Foreman. Click to arm or disarm.">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="pbg" Background="{TemplateBinding Background}" CornerRadius="7"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="pbg" Property="Background" Value="#FF161A24" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Width="22" Height="26" RenderTransformOrigin="0.5,0.5">
+                            <Grid.RenderTransform><ScaleTransform x:Name="PadlockScale" /></Grid.RenderTransform>
+                            <Grid.Effect><DropShadowEffect x:Name="PadlockGlow" BlurRadius="0" ShadowDepth="0" Color="#FF3FB950" /></Grid.Effect>
+                            <!-- shackle (rotates open/closed around its left leg) -->
+                            <Path StrokeThickness="2.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Data="M 5,13 L 5,9 A 6,6 0 0 1 17,9 L 17,13">
+                                <Path.Stroke><SolidColorBrush x:Name="ShackleBrush" Color="#FF8B949E" /></Path.Stroke>
+                                <Path.RenderTransform><RotateTransform x:Name="ShackleRotate" CenterX="5" CenterY="13" /></Path.RenderTransform>
+                            </Path>
+                            <!-- body + keyhole -->
+                            <Border Width="18" Height="13" CornerRadius="3" VerticalAlignment="Bottom" HorizontalAlignment="Center">
+                                <Border.Background><SolidColorBrush x:Name="LockBodyBrush" Color="#FF8B949E" /></Border.Background>
+                                <Ellipse Width="3.6" Height="3.6" Fill="#FF0B0D12"
+                                         VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,-1,0,0" />
+                            </Border>
+                        </Grid>
+                        <TextBlock x:Name="PadlockLabel" VerticalAlignment="Center" Margin="8,0,0,0"
+                                   FontSize="11" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Button>
             </Grid>
         </Border>
 

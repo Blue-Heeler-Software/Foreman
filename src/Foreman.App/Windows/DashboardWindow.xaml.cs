@@ -60,6 +60,95 @@ public partial class DashboardWindow : Window, IEventSink
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _refreshTimer.Tick += (_, _) => Refresh();
         _refreshTimer.Start();
+
+        SetPadlockVisual(Security.PresenceGuard.IsEnabled, animate: false);
+        Activated += (_, _) => { if (!_padlockBusy) SetPadlockVisual(Security.PresenceGuard.IsEnabled, animate: false); };
+    }
+
+    // ── Presence padlock ─────────────────────────────────────────────────────
+    private bool _padlockBusy;
+    private static readonly System.Windows.Media.Color LockedColor =
+        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FF3FB950");
+    private static readonly System.Windows.Media.Color UnlockedColor =
+        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FF8B949E");
+
+    private void SetPadlockVisual(bool locked, bool animate)
+    {
+        PadlockLabel.Text = locked ? "Locked" : "Unlocked";
+        PadlockLabel.Foreground = new System.Windows.Media.SolidColorBrush(locked ? LockedColor : UnlockedColor);
+        var angle = locked ? 0.0 : -30.0;
+        var color = locked ? LockedColor : UnlockedColor;
+
+        if (!animate)
+        {
+            ShackleRotate.Angle = angle;
+            LockBodyBrush.Color = color; ShackleBrush.Color = color;
+            PadlockGlow.BlurRadius = 0; PadlockScale.ScaleX = PadlockScale.ScaleY = 1;
+            return;
+        }
+
+        // shackle swings shut/open with a springy overshoot
+        ShackleRotate.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty,
+            new System.Windows.Media.Animation.DoubleAnimation(angle, TimeSpan.FromSeconds(0.55))
+            { EasingFunction = new System.Windows.Media.Animation.BackEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut, Amplitude = 0.7 } });
+
+        var recolor = new System.Windows.Media.Animation.ColorAnimation(color, TimeSpan.FromSeconds(0.45));
+        LockBodyBrush.BeginAnimation(System.Windows.Media.SolidColorBrush.ColorProperty, recolor);
+        ShackleBrush.BeginAnimation(System.Windows.Media.SolidColorBrush.ColorProperty, recolor.Clone());
+
+        if (locked)
+        {
+            // satisfying snap + green glow pulse on arming
+            var snap = new System.Windows.Media.Animation.DoubleAnimation
+            {
+                From = 1.22, To = 1.0, Duration = TimeSpan.FromSeconds(0.6),
+                EasingFunction = new System.Windows.Media.Animation.ElasticEase
+                { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut, Oscillations = 2, Springiness = 5 },
+            };
+            PadlockScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, snap);
+            PadlockScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, snap.Clone());
+
+            PadlockGlow.Color = LockedColor;
+            PadlockGlow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty,
+                new System.Windows.Media.Animation.DoubleAnimation { From = 20, To = 4, Duration = TimeSpan.FromSeconds(0.75),
+                    EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } });
+        }
+        else
+        {
+            PadlockGlow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty,
+                new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromSeconds(0.3)));
+        }
+    }
+
+    private async void PadlockClick(object sender, RoutedEventArgs e)
+    {
+        _padlockBusy = true;
+        try
+        {
+            if (Security.PresenceGuard.IsEnabled)
+            {
+                var (ok, msg) = await Security.PresenceGuard.DisableAsync();
+                if (ok) SetPadlockVisual(false, animate: true);
+                else MessageBox.Show(msg, "Foreman Agent Safety — Presence lock", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (!Security.PresenceGuard.IsAvailable)
+            {
+                MessageBox.Show("No authenticator available. Set up Windows Hello (a PIN or biometric) or attach a FIDO2 security key, then try again.",
+                    "Foreman Agent Safety — Presence lock", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var choice = MessageBox.Show(
+                "Require a Windows Hello or security-key tap to WEAKEN Foreman?\n\n" +
+                "YES = Strict (also requires a tap to QUIT Foreman)\nNO = Standard (recommended)\nCancel = don't enable",
+                "Foreman Agent Safety — Enable presence lock", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            if (choice == MessageBoxResult.Cancel) return;
+            var scope = choice == MessageBoxResult.Yes ? Foreman.Core.Security.LockScope.Strict : Foreman.Core.Security.LockScope.Standard;
+            var (ok2, msg2) = await Security.PresenceGuard.EnableAsync(scope);
+            if (ok2) SetPadlockVisual(true, animate: true);
+            else MessageBox.Show(msg2, "Foreman Agent Safety — Presence lock", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { _padlockBusy = false; }
     }
 
     // ── IEventSink ────────────────────────────────────────────────────────────
