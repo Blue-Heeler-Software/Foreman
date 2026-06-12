@@ -472,9 +472,59 @@ public sealed class TrayController : IEventSink, IDisposable
             AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => OpenMuteManagerWindow());
         AddMenuItem(menu, "Settings…", () => OpenSettingsWindow());
         menu.Items.Add(new Separator());
-        AddMenuItem(menu, "Exit", () => Application.Current.Shutdown());
+        var plLabel = Foreman.App.Security.PresenceGuard.IsEnabled
+            ? $"Presence lock: ON ({Foreman.App.Security.PresenceGuard.AuthenticatorLabel})"
+            : "Presence lock: off";
+        AddMenuItem(menu, plLabel, () => TogglePresenceLock());
+        menu.Items.Add(new Separator());
+        AddMenuItem(menu, "Exit", () => ExitForeman());
 
         return menu;
+    }
+
+    // Exit is a weakening action — gated under Strict scope (no-op tap under Standard/off).
+    private async void ExitForeman()
+    {
+        if (await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.ExitForeman, "quit Foreman"))
+            Application.Current.Shutdown();
+    }
+
+    // Enroll (arm) or disarm the presence lock. Disarming is itself a presence tap, so an agent can't un-gate.
+    private async void TogglePresenceLock()
+    {
+        if (Foreman.App.Security.PresenceGuard.IsEnabled)
+        {
+            var (ok, msg) = await Foreman.App.Security.PresenceGuard.DisableAsync();
+            MessageBox.Show(msg, "Foreman Agent Safety — Presence lock", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!Foreman.App.Security.PresenceGuard.IsAvailable)
+        {
+            MessageBox.Show(
+                "Windows Hello isn't set up. Add a PIN or biometric in Windows Settings → Accounts → Sign-in options, then try again. " +
+                "(Security-key / YubiKey support is coming behind the same lock.)",
+                "Foreman Agent Safety — Presence lock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var choice = MessageBox.Show(
+            "Require a Windows Hello tap to WEAKEN Foreman — lower a harness's Trust, disable read-auditing, " +
+            "disable the persistent log, or disable a harness?\n\n" +
+            "YES = Strict (also requires a tap to QUIT Foreman — most secure, but can be annoying)\n" +
+            "NO = Standard (recommended)\n" +
+            "Cancel = don't enable",
+            "Foreman Agent Safety — Enable presence lock", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (choice == MessageBoxResult.Cancel) return;
+
+        var scope = choice == MessageBoxResult.Yes
+            ? Foreman.Core.Security.LockScope.Strict
+            : Foreman.Core.Security.LockScope.Standard;
+        var (ok2, msg2) = await Foreman.App.Security.PresenceGuard.EnableAsync(scope);
+        MessageBox.Show(msg2, "Foreman Agent Safety — Presence lock", MessageBoxButton.OK,
+            ok2 ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     // Opens the beginner-friendly "Connect an agent" guide (Claude Code one-click + copy-paste config).

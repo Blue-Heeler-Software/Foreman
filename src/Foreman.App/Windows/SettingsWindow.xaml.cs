@@ -95,7 +95,7 @@ public partial class SettingsWindow : Window
         return AlertResponsePolicy.Sanitize(a);   // clamp to the allowed non-destructive set
     }
 
-    private void SaveClick(object sender, RoutedEventArgs e)
+    private async void SaveClick(object sender, RoutedEventArgs e)
     {
         // ── MCP ─────────────────────────────────────────────────────────────
         if (!int.TryParse(McpPortBox.Text, out var port) || port is < 1024 or > 65535)
@@ -141,6 +141,24 @@ public partial class SettingsWindow : Window
             .Select(r => r.ToLowerInvariant())
             .Distinct()
             .ToArray();
+
+        // ── Presence lock (P3): weakening toggles require an authorized tap. Checked BEFORE any mutation so a
+        //    denied tap aborts the whole save with the old posture intact, and the reverted control shows why. ──
+        var dc0 = _settings.DecoyCredentials;
+        var wasAuditing = dc0.Enabled && dc0.EnableReadAuditing;
+        var nowAuditing = DecoyCredsCheck.IsChecked == true && DecoyReadAuditCheck.IsChecked == true;
+        if (wasAuditing && !nowAuditing && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.DisableReadAuditing, "credential read-auditing → off"))
+        {
+            DecoyCredsCheck.IsChecked = true; DecoyReadAuditCheck.IsChecked = true;   // revert; keep the dialog open
+            return;
+        }
+        if (_settings.EventLogPersist && PersistLogCheck.IsChecked != true && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.DisableLogPersist, "persistent log → off (canary)"))
+        {
+            PersistLogCheck.IsChecked = true;
+            return;
+        }
 
         // ── Commit ───────────────────────────────────────────────────────────
         var portChanged         = port != _settings.McpPort;
