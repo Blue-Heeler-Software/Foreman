@@ -218,6 +218,15 @@ public sealed class ForemanSettings
     public int AskHarnessTimeoutMinutes { get; set; } = 30;
 
     /// <summary>
+    /// Peer-PID binding for per-harness MCP tokens: Foreman attributes the connecting loopback process
+    /// (peer-PID → harness) and compares it to the token's claimed harness. A MISMATCH (process X replayed
+    /// harness Y's token) is ALWAYS logged Critical. This flag controls whether a mismatch is also BLOCKED
+    /// (403). Default off (alert-only) so attribution accuracy can be observed on real connectors before
+    /// enforcing — flip on once trusted. Match and unattributed (lookup miss / race) are always allowed.
+    /// </summary>
+    public bool McpPeerBindingEnforce { get; set; } = false;
+
+    /// <summary>
     /// Per-harness enabled "modalities" — the restricted system prompt: which basic, tiny-model-friendly
     /// operations (log-report, self-check, …) a harness is instructed to honour, delivered over MCP. Absent →
     /// the default agent-facing set, so nothing changes until set. Keyed by harness Id, case-insensitive.

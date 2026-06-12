@@ -3,7 +3,10 @@
 using McpServerType = global::ModelContextProtocol.Server.McpServer;
 using Foreman.Core.Events;
 using Foreman.Core.Mcp;
+using Foreman.Core.Models;
 using Foreman.Core.Settings;
+using System.Collections.Concurrent;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -24,6 +27,7 @@ public sealed class McpServerHost : IAsyncDisposable
     private readonly EventBus _bus;
     private readonly McpAuthToken _authToken = new();
     private readonly PairingManager _pairing = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _peerMismatchSeen = new();
     private WebApplication? _app;
 
     public ForemanState State { get; } = new();
@@ -138,6 +142,19 @@ public sealed class McpServerHost : IAsyncDisposable
                     // Carry the proven identity to the tools (read via IHttpContextAccessor). A per-harness
                     // token scopes tools to that harness; the raw install token authenticates as operator.
                     ctx.Items[CallerScope.HttpItemKey] = new CallerScope(auth.HarnessId, auth.IsOperator);
+
+                    // Peer-PID binding (second factor): a per-harness token must be presented BY that harness's
+                    // own process. Bind the token's claimed identity to the loopback peer the OS says opened the
+                    // socket. A different process replaying a harness's token is token theft — never legitimate:
+                    // log Critical, and block when enforcement is on. (Match / unattributed always pass.)
+                    if (auth.HarnessId is { Length: > 0 } claimedHarness
+                        && CheckPeerBinding(ctx, claimedHarness) == PeerBindingVerdict.Mismatch
+                        && _settings.McpPeerBindingEnforce)
+                    {
+                        await Deny(ctx, StatusCodes.Status403Forbidden,
+                            "Token/identity mismatch: this per-harness token belongs to a different harness than the calling process.").ConfigureAwait(false);
+                        return;
+                    }
                 }
                 await next().ConfigureAwait(false);
             }
@@ -204,6 +221,44 @@ public sealed class McpServerHost : IAsyncDisposable
         });
 
         await _app.StartAsync(ct).ConfigureAwait(false);
+    }
+
+    // Binds a per-harness token's claimed identity to the loopback peer process that presented it: look up the
+    // owning PID of the client socket (OS truth), classify it to a harness (itself or a harness ancestor), and
+    // compare. A Mismatch is logged Critical (de-duped). Any lookup failure → Unattributed (fail-open: a
+    // transient race must never brick a real session, and is never reported as an attack).
+    private PeerBindingVerdict CheckPeerBinding(HttpContext ctx, string claimedHarness)
+    {
+        string? attributed = null;
+        int? peerPid = null;
+        try
+        {
+            var ipv6 = ctx.Connection.RemoteIpAddress?.AddressFamily == AddressFamily.InterNetworkV6;
+            peerPid = LoopbackPeer.FindOwningPid(ctx.Connection.RemotePort, ctx.Connection.LocalPort, ipv6);
+            if (peerPid is int pid)
+                attributed = State.FindHarnessAncestorByPid?.Invoke(pid)?.HarnessType;
+        }
+        catch { return PeerBindingVerdict.Unattributed; }
+
+        var verdict = PeerIdentityPolicy.Evaluate(claimedHarness, attributed);
+        if (verdict == PeerBindingVerdict.Mismatch)
+            RaisePeerMismatch(claimedHarness, attributed, peerPid);
+        return verdict;
+    }
+
+    private void RaisePeerMismatch(string claimed, string? attributed, int? pid)
+    {
+        // De-dupe so a chatty connection can't spam Critical alerts: one per (claimed→attributed, pid) / 5 min.
+        var key = $"{claimed}->{attributed ?? "?"}|{pid?.ToString() ?? "?"}";
+        var now = DateTimeOffset.UtcNow;
+        if (_peerMismatchSeen.TryGetValue(key, out var last) && now - last < TimeSpan.FromMinutes(5)) return;
+        _peerMismatchSeen[key] = now;
+
+        _bus.Publish(new MonitoringNoticeEvent(now, ForemanSeverity.Critical, "Foreman.McpAuth",
+            $"MCP token impersonation: a process attributed to '{attributed ?? "unknown"}' (pid {(pid?.ToString() ?? "?")}) " +
+            $"presented '{claimed}'s per-harness token on a loopback connection — a harness token replayed by a different " +
+            "process, i.e. possible token theft." +
+            (_settings.McpPeerBindingEnforce ? " Request blocked." : " (Alert-only; binding enforcement is off.)")));
     }
 
     private static string? ExtractToken(HttpRequest req)
