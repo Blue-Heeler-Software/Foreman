@@ -113,6 +113,34 @@ public sealed class DecoyAuditPolicyTests
     public void ExcludedPid_WinsOverImage() =>
         Assert.False(DecoyAuditPolicy.IsDecoyRead(@"C:\Users\u\.netrc", 1000, Foreign, AllDecoys, Excluded));
 
+    // ── Windows Search indexer (SearchProtocolHost) — the home-root-bait false positive ─────────
+
+    private const string Indexer = @"C:\Windows\System32\SearchProtocolHost.exe";
+
+    [Theory]   // the exact FP: the Search indexer crawling a home-root bait decoy during routine indexing
+    [InlineData(@"C:\Users\u\secrets.env")]
+    [InlineData(@"C:\Users\u\.npmrc.bak")]
+    [InlineData(@"C:\Users\u\.npmrc")]                  // canonical too — the indexer reading it is still benign
+    public void SearchIndexerReadingDecoy_IsSuppressed(string path) =>
+        Assert.False(DecoyAuditPolicy.IsDecoyRead(path, 9001, Indexer, AllDecoys, Excluded));
+
+    [Theory]   // suppression survives every 4663 ProcessName form + the whole indexer family
+    [InlineData(@"\Device\HarddiskVolume3\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"\\?\C:\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"C:/Windows/System32/searchprotocolhost.exe")]
+    [InlineData(@"C:\Windows\System32\SearchIndexer.exe")]
+    [InlineData(@"C:\Windows\System32\SearchFilterHost.exe")]
+    public void SearchIndexerFamily_AllFormsSuppressed(string image) =>
+        Assert.False(DecoyAuditPolicy.IsDecoyRead(@"C:\Users\u\secrets.env", 9001, image, AllDecoys, Excluded));
+
+    [Theory]   // CRITICAL: a harvester named SearchProtocolHost.exe OUTSIDE System32 is NOT exempt (path-anchored)
+    [InlineData(@"C:\Users\u\AppData\Local\Temp\SearchProtocolHost.exe")]
+    [InlineData(@"C:\Windows\Temp\SearchProtocolHost.exe")]
+    [InlineData(@"SearchProtocolHost.exe")]                    // bare name, no System32 path → cannot be trusted
+    [InlineData(@"C:\evil\System32\SearchProtocolHost.exe")]   // a "System32" not under \Windows → not the real one
+    public void RenamedHarvesterPosingAsIndexer_StillFires(string image) =>
+        Assert.True(DecoyAuditPolicy.IsDecoyRead(@"C:\Users\u\secrets.env", 9001, image, AllDecoys, Excluded));
+
     // ── Pipe protocol: Kind discriminator + back-compat ─────────────────────
 
     [Fact]

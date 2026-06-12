@@ -93,6 +93,26 @@ public sealed class SystemDecoyFileSystem : IDecoyFileSystem
     {
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content);
+        ExcludeFromContentIndex(fullPath);
+    }
+
+    /// <summary>
+    /// Mark a planted decoy <c>NOT_CONTENT_INDEXED</c> so the Windows Search indexer (SearchProtocolHost) does
+    /// not crawl its content. Otherwise indexing a home-root bait decoy (secrets.env, credentials.txt, vault.txt)
+    /// reads it on the next index pass and trips the image-agnostic read-audit as a false "harvester" hit — the
+    /// exact false positive this prevents. It does NOT weaken the tripwire against a real thief: a harvester opens
+    /// and reads the file regardless of this attribute. Best-effort; a failure just leaves the indexer-exclusion
+    /// belt to <see cref="DecoyAuditPolicy.IsBenignSystemIndexer"/>.
+    /// </summary>
+    public static void ExcludeFromContentIndex(string fullPath)
+    {
+        try
+        {
+            var attrs = File.GetAttributes(fullPath);
+            if ((attrs & FileAttributes.NotContentIndexed) == 0)
+                File.SetAttributes(fullPath, attrs | FileAttributes.NotContentIndexed);
+        }
+        catch { /* index-exclusion is best-effort */ }
     }
 
     public void Delete(string fullPath) => File.Delete(fullPath);

@@ -192,12 +192,20 @@ public sealed class EscalationAlarmVm
                    "escalating permissions, then exfiltrating data. Review everything the harness has done " +
                    "in this session and treat the system as potentially compromised.";
 
-        // Emergency via volume
+        // Emergency via volume. The closing advice is reader-aware: a "proc:" offender is an unrecognized OS
+        // process, not a connected agent — flatly telling the user to "terminate it" is dangerous when that
+        // process is a Windows component (e.g. SearchProtocolHost.exe, the Search indexer, reading a home-root
+        // decoy during routine file indexing — a known benign false positive).
+        var closing = evt.HarnessId.StartsWith("proc:", StringComparison.Ordinal)
+            ? "This offender is an OS/system process, not a connected agent. If it is a Windows component — " +
+              "e.g. SearchProtocolHost.exe (the Search indexer) reading a credential decoy during routine file " +
+              "indexing — this is very likely a FALSE POSITIVE, not harvesting. Review its reads in the event log " +
+              "and verify what it is before terminating anything; do not kill a core Windows process."
+            : "Review its recent actions in the event log and terminate it if the behavior was not expected.";
         return $"This harness has triggered {evt.TotalAlerts} suspicious command alerts across " +
                $"{evt.UniqueRules} different security rules and {evt.CategoryList.Length} threat categories " +
                $"({CategoriesString(evt.CategoryList)}). The volume and diversity of alerts indicates " +
-               "the harness is systematically probing multiple security boundaries. " +
-               "Review its recent actions in the event log and terminate it if the behavior was not expected.";
+               "the harness is systematically probing multiple security boundaries. " + closing;
     }
 
     private static string CategoriesString(string[] cats) =>

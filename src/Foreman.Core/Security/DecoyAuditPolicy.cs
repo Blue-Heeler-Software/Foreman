@@ -41,6 +41,14 @@ public static class DecoyAuditPolicy
             if (Normalize(d).Equals(target, StringComparison.OrdinalIgnoreCase)) { matched = true; break; }
         if (!matched) return false;
 
+        // The Windows Search indexer (SearchProtocolHost / SearchIndexer / SearchFilterHost) reads file CONTENT
+        // in indexed locations — the user profile included — on every index pass, so it reads a home-root BAIT
+        // decoy (secrets.env, vault.txt, …) as routine OS housekeeping, not harvesting. Suppress it, matched
+        // PATH-ANCHORED under \Windows\System32\ (not by basename) so a renamed harvester dropped elsewhere
+        // can't borrow the exemption — placing a binary in System32 already requires admin. This is the belt to
+        // the FILE_ATTRIBUTE_NOT_CONTENT_INDEXED braces set on planted decoys (which stops the indexer at source).
+        if (IsBenignSystemIndexer(readerImage)) return false;
+
         // Suppress a CANONICAL decoy read by that path's own legitimate tool (e.g. git-remote-https reading
         // ~/.netrc on every push). Bait paths classify to null → no allowlist → any read fires.
         var kind = ClassifyCanonical(target);
@@ -94,6 +102,30 @@ public static class DecoyAuditPolicy
 
     private static HashSet<string> Set(params string[] images) =>
         new(images, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when <paramref name="readerImage"/> is the genuine Windows Search indexer content-gathering process
+    /// (SearchProtocolHost / SearchIndexer / SearchFilterHost) running from its real System32 path. These crawl
+    /// file CONTENT to build the search index and will read a home-root bait decoy on every pass — benign OS
+    /// behaviour, not harvesting. Matched PATH-ANCHORED under \Windows\System32\ so a renamed harvester elsewhere
+    /// is NOT exempt: a non-admin cannot write a binary into System32. (If an attacker is already SYSTEM/admin and
+    /// can drop into System32, the decoy tripwire is moot anyway.) Public for unit-testing.
+    /// </summary>
+    public static bool IsBenignSystemIndexer(string? readerImage)
+    {
+        if (string.IsNullOrWhiteSpace(readerImage)) return false;
+        var p = Normalize(readerImage);
+        foreach (var img in SystemIndexerImages)
+            if (p.EndsWith(img, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static readonly string[] SystemIndexerImages =
+    [
+        @"\Windows\System32\SearchProtocolHost.exe",
+        @"\Windows\System32\SearchIndexer.exe",
+        @"\Windows\System32\SearchFilterHost.exe",
+    ];
 
     /// <summary>
     /// The bare executable name from a 4663 ProcessName. Handles a \\?\ prefix, the \Device\HarddiskVolumeN\…

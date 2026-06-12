@@ -235,6 +235,15 @@ public partial class App : Application
         {
             AskHarness = esc =>
             {
+                // A "proc:<image>" offender is an unrecognized OS/system process, not a connected agent — there is
+                // no MCP channel to it, so an Ask-Harness request would hang unanswered forever (e.g. the Windows
+                // Search indexer tripping a decoy). Record the truth for the human instead of feigning interrogation.
+                if (IsUninterrogableProcess(esc.HarnessId))
+                {
+                    EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
+                        $"Auto-response [{esc.NewLevel}]: offender '{esc.HarnessId}' is an OS process with no MCP channel — cannot self-justify; logged for human review."));
+                    return;
+                }
                 var (sys, usr) = BuildEscalationAskPrompt(esc);
                 var req = _mcpHost!.State.CreateAskHarnessRequest(esc.HarnessId, sys, usr, esc.Id, null, null);
                 _ = SafeAsk(esc.HarnessId, sys, usr, req.RequestId);
@@ -243,6 +252,14 @@ public partial class App : Application
             },
             AdversarialAudit = esc =>
             {
+                // An OS-process offender ("proc:…") is not an auditable agent — no auditor can interrogate the
+                // Windows Search indexer. Skip honestly rather than implying a missing-config (Settings → triage).
+                if (IsUninterrogableProcess(esc.HarnessId))
+                {
+                    EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
+                        $"Auto-audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: offender is an OS process, not an auditable agent — logged for human review."));
+                    return;
+                }
                 var severity = esc.NewLevel >= EscalationLevel.Emergency ? ForemanSeverity.Critical : ForemanSeverity.High;
                 var auditor = settings.LlmTriage.SelectAuditor(esc.HarnessId, severity);
                 if (auditor is null)
@@ -306,6 +323,12 @@ public partial class App : Application
         }
         catch { /* best-effort — mailbox copy persists */ }
     }
+
+    // A behavior profile keyed "proc:<image>" belongs to an unrecognized OS/system process the classifier could
+    // not attribute to a connected harness. It has no MCP channel, so it cannot answer an Ask-Harness request or
+    // be routed to an auditor — the agent-to-agent response machinery does not apply to it.
+    private static bool IsUninterrogableProcess(string harnessId) =>
+        harnessId.StartsWith("proc:", StringComparison.Ordinal);
 
     private static (string System, string User) BuildEscalationAskPrompt(EscalationEvent esc)
     {
