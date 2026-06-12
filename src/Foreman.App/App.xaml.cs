@@ -283,6 +283,10 @@ public partial class App : Application
         };
         EventBus.Instance.Subscribe(_alertResponseRunner);
 
+        // Arm the presence authorizer (P3): weakening actions require a Windows Hello / security-key tap. Off
+        // until the user enrolls; UI handlers call PresenceGuard.AuthorizeAsync(...) before a weakening change.
+        Security.PresenceGuard.Configure(settings, EventBus.Instance);
+
         // Start MCP on a background thread so we don't block the WPF message pump — but never
         // silently: a bind failure (port in use) used to leave Foreman looking healthy with no
         // MCP at all. Surface it as a High notice so the tray goes red and the log explains.
