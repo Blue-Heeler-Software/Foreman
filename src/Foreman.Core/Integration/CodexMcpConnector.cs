@@ -44,8 +44,8 @@ public static class CodexMcpConnector
 
         - Identify this agent as `harnessId: "codex"` when Foreman Agent Safety tools accept a harness id.
         - At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
-        - If `ForemanStatus` or `ReportTaskStart` reports pending Ask Harness or audit requests, call `ListAskHarnessRequests(harnessId: "codex")`.
-        - For each pending request addressed to Codex, answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
+        - If `ForemanStatus` or `ReportTaskStart` reports `pendingAskHarnessRequests`, call `ListAskHarnessRequests(harnessId: "codex")`.
+        - For each pending request addressed to Codex (Ask Harness or queued audit prompt), answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
         - Treat each request as a safety prompt: explain what happened, whether it was expected, and any corrective action you took or recommend.
 
         {AgentsEndMarker}

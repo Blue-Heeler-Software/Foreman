@@ -168,6 +168,8 @@ public sealed class CodexMcpConnectorTests : IDisposable
         Assert.Contains("Keep answers concise.", agents);
         Assert.Contains("Leave this alone.", agents);
         Assert.Contains("ReportTaskStart(taskDescription, harnessId: \"codex\")", agents);
+        Assert.Contains("pendingAskHarnessRequests", agents);
+        Assert.Contains("queued audit prompt", agents);
         Assert.DoesNotContain("stale foreman text", agents);
     }
 }

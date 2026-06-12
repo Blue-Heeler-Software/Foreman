@@ -200,6 +200,35 @@ public sealed class CallerScopeToolTests : IDisposable
     }
 
     [Fact]
+    public void ReportTaskStart_CodexCaller_CannotResetClaudeByParam()
+    {
+        using var doc = J(ForemanMcpTools.ReportTaskStart(
+            "new task",
+            resetMetrics: true,
+            harnessId: "claude-code",
+            http: AsCodex));
+
+        Assert.True(doc.RootElement.GetProperty("acknowledged").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("metricsReset").GetBoolean());
+        Assert.Equal("codex", doc.RootElement.GetProperty("harnessId").GetString());
+        Assert.Null(_lastReset);
+    }
+
+    [Fact]
+    public void ReportTaskStart_CodexCaller_DefaultsToOwnHarnessScope()
+    {
+        using var doc = J(ForemanMcpTools.ReportTaskStart(
+            "new task",
+            resetMetrics: true,
+            http: AsCodex));
+
+        Assert.True(doc.RootElement.GetProperty("acknowledged").GetBoolean());
+        Assert.True(doc.RootElement.GetProperty("metricsReset").GetBoolean());
+        Assert.Equal("codex", doc.RootElement.GetProperty("harnessId").GetString());
+        Assert.Equal("codex", _lastReset);
+    }
+
+    [Fact]
     public void GetBehaviorMetrics_CodexCaller_SeesOnlyOwnProfile()
     {
         using var doc = J(ForemanMcpTools.GetBehaviorMetrics(http: AsCodex));

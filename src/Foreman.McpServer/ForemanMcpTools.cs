@@ -335,13 +335,34 @@ public static class ForemanMcpTools
     public static object ReportTaskStart(
         [Description("Human-readable description of the new task")] string taskDescription,
         [Description("Reset behavioral escalation metrics for a fresh start")] bool resetMetrics = false,
-        [Description("Harness ID for metric reset (only used when resetMetrics=true), e.g. 'claude-code'")] string? harnessId = null)
+        [Description("Harness ID for metric reset (only used when resetMetrics=true), e.g. 'claude-code'")] string? harnessId = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
         EventBus.Instance.Publish(new InfoEvent(
             DateTimeOffset.UtcNow,
             "MCP.TaskStart",
             $"New task announced: {taskDescription[..Math.Min(120, taskDescription.Length)]}"));
+
+        if (!caller.IsOperator)
+        {
+            if (harnessId is not null && !caller.CanAccess(harnessId))
+            {
+                return new
+                {
+                    acknowledged = true,
+                    taskDescription,
+                    metricsReset = false,
+                    harnessId = caller.HarnessId,
+                    pendingAskHarnessRequests = caller.HarnessId is null ? 0 : state.CountAskHarnessRequests(caller.HarnessId),
+                    reason = "Task start recorded, but you can only reset your own harness's metrics.",
+                    hint = "If pendingAskHarnessRequests is non-zero, call ListAskHarnessRequests and answer with ReplyToAskHarnessRequest.",
+                };
+            }
+
+            harnessId = caller.HarnessId;
+        }
 
         if (resetMetrics && harnessId is not null)
         {
@@ -353,6 +374,7 @@ public static class ForemanMcpTools
             acknowledged = true,
             taskDescription,
             metricsReset = resetMetrics && harnessId is not null,
+            harnessId,
             pendingAskHarnessRequests = harnessId is null
                 ? state.CountAskHarnessRequests()
                 : state.CountAskHarnessRequests(harnessId),
@@ -533,7 +555,7 @@ public static class ForemanMcpTools
             },
             askHarness = new
             {
-                receive = "Call ListAskHarnessRequests with your harnessId or processId to receive Foreman Agent Safety's pending prompts.",
+                receive = "Call ListAskHarnessRequests with your harnessId or processId to receive pending Ask Harness prompts, including queued audit prompts.",
                 reply = "Call ReplyToAskHarnessRequest with the requestId and your response so Foreman Agent Safety records the answer.",
             },
             note = "Pass harnessId or processId to Foreman Agent Safety MCP tools so permissions, process listings, and Ask Harness requests can be scoped to this harness.",

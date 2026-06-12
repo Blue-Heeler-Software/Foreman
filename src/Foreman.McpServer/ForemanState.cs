@@ -281,21 +281,26 @@ public sealed class ForemanState : IEventSink
         }
 
         // Already answered → don't silently clobber the recorded reply; report it and keep the original.
-        if (request.Status == AskHarnessStatus.Answered)
-            return (false, $"Request {requestId} was already answered at {request.RepliedAt:u}.", request);
-
-        // A reply to an EXPIRED request is still accepted — the harness may have reconnected after the
-        // timeout — recorded rather than discarded, noting it was late.
-        var wasExpired = request.Status == AskHarnessStatus.Expired;
-        var updated = request with
+        while (true)
         {
-            Status = AskHarnessStatus.Answered,
-            RepliedAt = DateTimeOffset.UtcNow,
-            ReplyText = replyText,
-            ActionTaken = string.IsNullOrWhiteSpace(actionTaken) ? null : actionTaken.Trim(),
-        };
-        _askRequests[requestId] = updated;
-        return (true, wasExpired ? "Late reply recorded (request had already expired)." : "Reply recorded.", updated);
+            if (request.Status == AskHarnessStatus.Answered)
+                return (false, $"Request {requestId} was already answered at {request.RepliedAt:u}.", request);
+
+            var wasExpired = request.Status == AskHarnessStatus.Expired;
+            var updated = request with
+            {
+                Status = AskHarnessStatus.Answered,
+                RepliedAt = DateTimeOffset.UtcNow,
+                ReplyText = replyText,
+                ActionTaken = string.IsNullOrWhiteSpace(actionTaken) ? null : actionTaken.Trim(),
+            };
+
+            if (_askRequests.TryUpdate(requestId, updated, request))
+                return (true, wasExpired ? "Late reply recorded (request had already expired)." : "Reply recorded.", updated);
+
+            if (!_askRequests.TryGetValue(requestId, out request))
+                return (false, "No Ask Harness request exists with that id.", null);
+        }
     }
 
     public int CountAskHarnessRequests(string? harnessId = null, bool includeAnswered = false)

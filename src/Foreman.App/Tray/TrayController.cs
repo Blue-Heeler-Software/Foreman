@@ -138,23 +138,31 @@ public sealed class TrayController : IEventSink, IDisposable
     private void OnGameModeChanged(bool active) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            if (active)
+            try
             {
-                _gmSuppressedTotal = 0;
-                _gmSuppressedCritical = 0;
+                if (active)
+                {
+                    _gmSuppressedTotal = 0;
+                    _gmSuppressedCritical = 0;
+                }
+                else if (_gmSuppressedTotal > 0)
+                {
+                    // Deferred digest: the on-screen interruptions we held are surfaced now that the game is gone.
+                    _lastBalloonEvent = null;   // clicking the digest opens the log
+                    var crit = _gmSuppressedCritical > 0 ? $", {_gmSuppressedCritical} critical" : "";
+                    TryShowNotification("game mode digest",
+                        "Foreman Agent Safety - game mode ended",
+                        $"Held {_gmSuppressedTotal} on-screen alert(s){crit} while you were in a game. Click to review the log.",
+                        _gmSuppressedCritical > 0 ? H.NotifyIcon.Core.NotificationIcon.Error : H.NotifyIcon.Core.NotificationIcon.Warning);
+                    _gmSuppressedTotal = 0;
+                    _gmSuppressedCritical = 0;
+                }
+                RefreshAlertState();   // refresh the tooltip's game-mode indicator
             }
-            else if (_gmSuppressedTotal > 0)
+            catch (Exception ex)
             {
-                // Deferred digest: the on-screen interruptions we held are surfaced now that the game is gone.
-                _lastBalloonEvent = null;   // clicking the digest opens the log
-                var crit = _gmSuppressedCritical > 0 ? $", {_gmSuppressedCritical} critical" : "";
-                _tray?.ShowNotification("Foreman Agent Safety — game mode ended",
-                    $"Held {_gmSuppressedTotal} on-screen alert(s){crit} while you were in a game. Click to review the log.",
-                    _gmSuppressedCritical > 0 ? H.NotifyIcon.Core.NotificationIcon.Error : H.NotifyIcon.Core.NotificationIcon.Warning);
-                _gmSuppressedTotal = 0;
-                _gmSuppressedCritical = 0;
+                CrashLog.Note("game mode state change", ex);
             }
-            RefreshAlertState();   // refresh the tooltip's game-mode indicator
         });
 
     /// <summary>
@@ -241,7 +249,7 @@ public sealed class TrayController : IEventSink, IDisposable
                 _                         => ("Foreman Agent Safety — Alert",     H.NotifyIcon.Core.NotificationIcon.Warning),
             };
             _lastBalloonEvent = esc;
-            _tray.ShowNotification(title,
+            TryShowNotification("escalation alert", title,
                 $"{esc.HarnessDisplayName}: {esc.TotalAlerts} alerts, {esc.UniqueRules} rules\n(Click for details)",
                 icon);
             return;
@@ -250,14 +258,14 @@ public sealed class TrayController : IEventSink, IDisposable
         if (evt.Severity >= ForemanSeverity.High)
         {
             _lastBalloonEvent = evt;
-            _tray.ShowNotification("Foreman Agent Safety — Critical Alert",
+            TryShowNotification("critical alert", "Foreman Agent Safety - Critical Alert",
                 evt.Message + "\n(Click for details)",
                 H.NotifyIcon.Core.NotificationIcon.Error);
         }
         else if (evt.Severity == ForemanSeverity.Medium)
         {
             _lastBalloonEvent = evt;
-            _tray.ShowNotification("Foreman Agent Safety — Warning",
+            TryShowNotification("warning alert", "Foreman Agent Safety - Warning",
                 evt.Message + "\n(Click for details)",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
         }
@@ -273,24 +281,59 @@ public sealed class TrayController : IEventSink, IDisposable
         // the watchdog — best-effort, record + swallow. (This exact path took the process down once.)
         try
         {
+            TrySetIcon(status);
+            TrySetToolTip(BuildStatusToolTip());
+            TrySetContextMenu();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Note("tray SetStatus (transient Shell_NotifyIcon failure)", ex);
+        }
+    }
+
+    private string BuildStatusToolTip()
+    {
+        var escalationStr = _highestEscalation > EscalationLevel.Watch
+            ? $" - {_highestEscalation.ToString().ToUpperInvariant()}"
+            : "";
+        var gameStr = GameModeActive && _settings.GameMode.Enabled ? " - game mode (popups paused)" : "";
+        return $"Foreman Agent Safety - {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}{gameStr}";
+    }
+
+    private void TrySetIcon(TrayStatus status)
+    {
+        if (_tray is null) return;
+        try
+        {
             _tray.Icon = status switch
             {
                 TrayStatus.Red   => TrayIconSet.Red,
                 TrayStatus.Amber => TrayIconSet.Amber,
                 _                => TrayIconSet.Green,
             };
+        }
+        catch (Exception ex) { CrashLog.Note("tray icon update", ex); }
+    }
 
-            var escalationStr = _highestEscalation > EscalationLevel.Watch
-                ? $" · {_highestEscalation.ToString().ToUpperInvariant()}"
-                : "";
-            var gameStr = GameModeActive && _settings.GameMode.Enabled ? " · 🎮 game mode (popups paused)" : "";
-            _tray.ToolTipText = $"Foreman Agent Safety — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}{gameStr}";
-            _tray.ContextMenu = BuildMenu();
-        }
-        catch (Exception ex)
-        {
-            CrashLog.Note("tray SetStatus (transient Shell_NotifyIcon failure)", ex);
-        }
+    private void TrySetToolTip(string text)
+    {
+        if (_tray is null) return;
+        try { _tray.ToolTipText = text; }
+        catch (Exception ex) { CrashLog.Note("tray tooltip update", ex); }
+    }
+
+    private void TrySetContextMenu()
+    {
+        if (_tray is null) return;
+        try { _tray.ContextMenu = BuildMenu(); }
+        catch (Exception ex) { CrashLog.Note("tray context menu update", ex); }
+    }
+
+    private void TryShowNotification(string context, string title, string message, H.NotifyIcon.Core.NotificationIcon icon)
+    {
+        if (_tray is null) return;
+        try { _tray.ShowNotification(title, message, icon); }
+        catch (Exception ex) { CrashLog.Note($"tray notification ({context})", ex); }
     }
 
     private void RefreshAlertState()
