@@ -65,7 +65,7 @@ public partial class HarnessSettingsWindow : Window
         TrustSummary.Text = (int)TrustSlider.Value switch
         {
             1 => "Locked-down — fires on the first hint; asks + audits aggressively; strict enforce.",
-            2 => "Strict — fires early; audits on high severity.",
+            2 => "Strict — less rope, more nope: fires early; audits on high severity.",
             3 => "Standard (default) — today's balanced thresholds.",
             4 => "Trusted — more rope before escalating; fewer prompts.",
             5 => "Hands-off — only sustained or catastrophic behaviour escalates (Emergency rules + Critical reads still fire).",
