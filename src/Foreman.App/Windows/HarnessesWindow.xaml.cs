@@ -128,7 +128,7 @@ public partial class HarnessesWindow : UserControl
     private async void SaveClick(object sender, RoutedEventArgs e) => await SaveChanges();
 
     /// <summary>Persists the current toggles + custom exes. Public so the host can save on navigate-away.</summary>
-    public async Task SaveChanges()
+    public async Task<bool> SaveChanges()
     {
         // Presence lock (P3): newly disabling a harness's monitoring is a weakening — gate before persist; deny reverts.
         var newlyDisabled = _items.Where(v => !v.IsMonitored).Select(v => v.Id)
@@ -138,7 +138,7 @@ public partial class HarnessesWindow : UserControl
                 Foreman.Core.Security.WeakeningAction.DisableMonitoring, $"disable monitoring: {string.Join(", ", newlyDisabled)}"))
         {
             Revert();
-            return;
+            return false;   // denied — nothing persisted, toggles reverted
         }
 
         _settings.DisabledHarnesses = _items
@@ -153,6 +153,7 @@ public partial class HarnessesWindow : UserControl
 
         SettingsStore.Save(_settings);
         Refresh();   // reflect persisted state (this is a tab, so we stay put rather than closing)
+        return true;
     }
 
     // Revert: rebuild rows from the persisted settings, discarding unsaved toggles.

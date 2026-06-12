@@ -272,7 +272,7 @@ public partial class DashboardWindow : Window, IEventSink
     }
 
     // Prompt to save Harnesses-tab edits when the user navigates away (switches tab) or closes.
-    private void TabsSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void TabsSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         // TabControl SelectionChanged bubbles from child ListViews too — only react to the tabs themselves.
         if (!ReferenceEquals(e.OriginalSource, Tabs)) return;
@@ -283,7 +283,10 @@ public partial class DashboardWindow : Window, IEventSink
 
         switch (PromptSaveHarnesses("switching tabs"))
         {
-            case MessageBoxResult.Yes:    _ = _harnessView.SaveChanges(); break;   // gated async; deny reverts
+            case MessageBoxResult.Yes:
+                if (!await _harnessView.SaveChanges())                  // denied → reverted; snap back to Harnesses tab
+                    Dispatcher.BeginInvoke(() => Tabs.SelectedItem = leftTab);
+                break;
             case MessageBoxResult.No:     _harnessView.Revert();      break;
             case MessageBoxResult.Cancel:
                 // Re-select the Harnesses tab once this event settles.
@@ -292,18 +295,32 @@ public partial class DashboardWindow : Window, IEventSink
         }
     }
 
+    private bool _forceClose;
+
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        if (_harnessView?.HasUnsavedChanges() == true)
+        if (!_forceClose && _harnessView?.HasUnsavedChanges() == true)
         {
             switch (PromptSaveHarnesses("closing"))
             {
-                case MessageBoxResult.Yes:    _ = _harnessView.SaveChanges(); break;   // gated async; deny reverts
-                case MessageBoxResult.No:     break;                       // discard
+                case MessageBoxResult.Yes:
+                    e.Cancel = true;                 // hold the close until the gated save resolves, then re-close
+                    _ = SaveThenCloseAsync();
+                    return;
+                case MessageBoxResult.No:     break;                       // discard, allow close
                 case MessageBoxResult.Cancel: e.Cancel = true; return;     // stay open
             }
         }
         base.OnClosing(e);
+    }
+
+    // Await the gated save (deny reverts, never persists), then close for real — so a denied tap can't be
+    // outraced by the window closing first (the adversarial-review fix).
+    private async Task SaveThenCloseAsync()
+    {
+        await _harnessView!.SaveChanges();
+        _forceClose = true;
+        Close();
     }
 
     private static MessageBoxResult PromptSaveHarnesses(string action) =>
