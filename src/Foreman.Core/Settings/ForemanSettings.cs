@@ -210,6 +210,14 @@ public sealed class ForemanSettings
             : EscalationThresholds.FromGlobal(this);
 
     /// <summary>
+    /// How long an unanswered "Ask Harness" request stays <c>pending</c> before Foreman ages it out to
+    /// <c>expired</c> — the harness never connected, disconnected mid-request, or ignored the prompt. Expired
+    /// requests are logged (never silently dropped) and a late reply is still accepted. <c>0</c> disables
+    /// expiry (requests dangle until the count cap evicts them, the old behavior). Default 30 minutes.
+    /// </summary>
+    public int AskHarnessTimeoutMinutes { get; set; } = 30;
+
+    /// <summary>
     /// Per-harness enabled "modalities" — the restricted system prompt: which basic, tiny-model-friendly
     /// operations (log-report, self-check, …) a harness is instructed to honour, delivered over MCP. Absent →
     /// the default agent-facing set, so nothing changes until set. Keyed by harness Id, case-insensitive.

@@ -289,6 +289,11 @@ public partial class App : Application
         var mcpPort = settings.McpPort;
         _ = StartMcpSurfacingFailureAsync(_mcpHost, mcpPort, _cts.Token);
 
+        // Age out unanswered Ask-Harness requests (harness never connected / ignored the prompt) so they don't
+        // dangle "pending" forever. Mirrors the AlertResolver sweep; logs each expiry (never a silent drop) and
+        // a late reply is still accepted afterwards.
+        _ = RunAskHarnessReaperAsync(_mcpHost, settings, _cts.Token);
+
         // publish startup event — this ensures the log window always has at least one entry
         EventBus.Instance.Publish(new InfoEvent(
             DateTimeOffset.UtcNow,
@@ -322,6 +327,31 @@ public partial class App : Application
                 _mcpHost.State.ReplyToAskHarnessRequest(requestId, res.ReplyText!, "replied via sampling round-trip", harnessId, null);
         }
         catch { /* best-effort — mailbox copy persists */ }
+    }
+
+    // Periodically ages out unanswered Ask-Harness requests so the pending list reflects reality. The TTL is
+    // read live from settings each tick (0 disables). A bad sweep must never crash the app or stop the loop.
+    private static async Task RunAskHarnessReaperAsync(McpServerHost host, ForemanSettings settings, CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                var ttl = TimeSpan.FromMinutes(Math.Max(0, settings.AskHarnessTimeoutMinutes));
+                if (ttl <= TimeSpan.Zero) continue;
+                var now = DateTimeOffset.UtcNow;
+                foreach (var r in host.State.ExpireStale(now, ttl))
+                {
+                    var mins = (int)Math.Round((now - r.CreatedAt).TotalMinutes);
+                    EventBus.Instance.Publish(new InfoEvent(now, "Foreman.AutoResponse",
+                        $"Ask Harness request {r.RequestId} to '{r.HarnessId}' expired after {mins} min unanswered " +
+                        $"(alert {r.AlertId}) — harness offline or unresponsive. A late reply is still accepted."));
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* normal shutdown */ }
+        catch { /* a bad sweep must never crash the app */ }
     }
 
     // A behavior profile keyed "proc:<image>" belongs to an unrecognized OS/system process the classifier could

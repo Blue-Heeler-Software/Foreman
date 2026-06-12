@@ -17,3 +17,20 @@ public sealed record AskHarnessRequest(
     DateTimeOffset? RepliedAt = null,
     string? ReplyText = null,
     string? ActionTaken = null);
+
+/// <summary>
+/// The lifecycle states of <see cref="AskHarnessRequest.Status"/>. A request is born <see cref="Pending"/>;
+/// a harness reply moves it to <see cref="Answered"/>; if no reply arrives within the configured timeout the
+/// reaper ages it to <see cref="Expired"/> — distinct from "answered" (we asked, nobody answered in time) and
+/// logged, never silently dropped. A late reply to an expired request is still accepted and recorded (the
+/// agent may have reconnected after the timeout).
+/// </summary>
+public static class AskHarnessStatus
+{
+    public const string Pending  = "pending";
+    public const string Answered = "answered";
+    public const string Expired  = "expired";
+
+    /// <summary>Terminal (resolved) states — evicted under the count cap before any still-open pending request.</summary>
+    public static bool IsTerminal(string status) => status is Answered or Expired;
+}

@@ -46,7 +46,7 @@ public sealed class ForemanState : IEventSink
     public bool HasCritical => _alertById.Values.Any(e => AlertActivity.IsActive(e) && e.Severity >= ForemanSeverity.High);
     public int ProcessCount => GetProcessSnapshot?.Invoke().Count() ?? 0;
     public int McpSessionCount => GetMcpSessionCount?.Invoke() ?? 0;
-    public int PendingAskHarnessCount => _askRequests.Values.Count(static r => r.Status == "pending");
+    public int PendingAskHarnessCount => _askRequests.Values.Count(static r => r.Status == AskHarnessStatus.Pending);
 
     void IEventSink.OnEvent(ForemanEvent evt)
     {
@@ -218,7 +218,7 @@ public sealed class ForemanState : IEventSink
             processName,
             systemPrompt,
             prompt,
-            "pending");
+            AskHarnessStatus.Pending);
 
         _askRequests[request.RequestId] = request;
         PruneAskHarnessRequests();
@@ -241,7 +241,7 @@ public sealed class ForemanState : IEventSink
         }
 
         if (!includeAnswered)
-            query = query.Where(static r => r.Status == "pending");
+            query = query.Where(static r => r.Status == AskHarnessStatus.Pending);
 
         return query
             .OrderByDescending(static r => r.CreatedAt)
@@ -280,15 +280,22 @@ public sealed class ForemanState : IEventSink
                 request);
         }
 
+        // Already answered → don't silently clobber the recorded reply; report it and keep the original.
+        if (request.Status == AskHarnessStatus.Answered)
+            return (false, $"Request {requestId} was already answered at {request.RepliedAt:u}.", request);
+
+        // A reply to an EXPIRED request is still accepted — the harness may have reconnected after the
+        // timeout — recorded rather than discarded, noting it was late.
+        var wasExpired = request.Status == AskHarnessStatus.Expired;
         var updated = request with
         {
-            Status = "answered",
+            Status = AskHarnessStatus.Answered,
             RepliedAt = DateTimeOffset.UtcNow,
             ReplyText = replyText,
             ActionTaken = string.IsNullOrWhiteSpace(actionTaken) ? null : actionTaken.Trim(),
         };
         _askRequests[requestId] = updated;
-        return (true, "Reply recorded.", updated);
+        return (true, wasExpired ? "Late reply recorded (request had already expired)." : "Reply recorded.", updated);
     }
 
     public int CountAskHarnessRequests(string? harnessId = null, bool includeAnswered = false)
@@ -297,19 +304,51 @@ public sealed class ForemanState : IEventSink
         if (!string.IsNullOrWhiteSpace(harnessId))
             query = query.Where(r => string.Equals(r.HarnessId, harnessId, StringComparison.OrdinalIgnoreCase));
         if (!includeAnswered)
-            query = query.Where(static r => r.Status == "pending");
+            query = query.Where(static r => r.Status == AskHarnessStatus.Pending);
         return query.Count();
+    }
+
+    /// <summary>
+    /// Ages out pending Ask-Harness requests unanswered past <paramref name="ttl"/> — a harness that never
+    /// connected, disconnected mid-request, or ignored the prompt. Transitions them pending → expired (a
+    /// terminal, evictable state distinct from "answered") and RETURNS the newly-expired ones so the caller
+    /// logs each — the record is never silently dropped (see <see cref="AskHarnessStatus"/>). Race-safe: a
+    /// reply landing during the sweep wins (compare-and-swap on the record value). Pure w.r.t.
+    /// <paramref name="now"/> so it is unit-testable with a fixed clock. <paramref name="ttl"/> &lt;= 0 disables it.
+    /// </summary>
+    public IReadOnlyList<AskHarnessRequest> ExpireStale(DateTimeOffset now, TimeSpan ttl)
+    {
+        if (ttl <= TimeSpan.Zero) return [];
+        var expired = new List<AskHarnessRequest>();
+        foreach (var r in _askRequests.Values)
+        {
+            if (r.Status != AskHarnessStatus.Pending || now - r.CreatedAt < ttl) continue;
+            var aged = r with { Status = AskHarnessStatus.Expired };
+            if (_askRequests.TryUpdate(r.RequestId, aged, r))   // skip if a reply changed it mid-sweep
+                expired.Add(aged);
+        }
+        return expired;
     }
 
     private void PruneAskHarnessRequests()
     {
-        var toRemove = _askRequests.Values
-            .OrderByDescending(static r => r.CreatedAt)
-            .Skip(MaxAskHarnessRequests)
-            .Select(static r => r.RequestId)
-            .ToList();
-
-        foreach (var id in toRemove)
+        foreach (var id in SelectPruneVictims(_askRequests.Values.ToArray(), MaxAskHarnessRequests))
             _askRequests.TryRemove(id, out _);
+    }
+
+    /// <summary>
+    /// Chooses which requests to drop when the store exceeds <paramref name="cap"/>: terminal
+    /// (answered/expired) requests oldest-first, spilling into oldest PENDING only if still over cap — so a
+    /// still-open obligation is never evicted before a resolved one. Pure + static for unit-testing.
+    /// </summary>
+    public static IEnumerable<string> SelectPruneVictims(IReadOnlyCollection<AskHarnessRequest> all, int cap)
+    {
+        if (all.Count <= cap) return [];
+        return all
+            .OrderByDescending(r => AskHarnessStatus.IsTerminal(r.Status))   // terminal (resolved) first
+            .ThenBy(r => r.CreatedAt)                                        // then oldest first
+            .Take(all.Count - cap)
+            .Select(r => r.RequestId)
+            .ToList();
     }
 }
