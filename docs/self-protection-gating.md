@@ -59,3 +59,37 @@ Honest limit: like all presence checks, this is user-*presence*, not process iso
   tamper-evidence — not physical immutability.
 - **Enforced by invariant tests**, not convention: assert there is no setting/tool that disables raw logging or
   reassigns a token binding, so the Tier-2 floor can't silently regress when features are added later.
+
+## VM clone / snapshot rollback (out of scope — stated honestly)
+
+A whole-VM clone, disk image, backup, or roaming-profile copy carries **every at-rest secret** Foreman holds:
+the install secret (`mcp.token`, plaintext + ACL only), the derived per-harness bearer tokens (pasted plaintext
+into each harness's MCP config), the event log, and its sealed head. **A clone is cryptographically Foreman** —
+it can mint harness tokens, authenticate as operator, and re-validate the log. This is a strict *superset* of the
+same-user boundary above (whoever can clone the VM already has disk/host access), so it is **out of scope by
+construction**, not a hole — but it must be named, never an *implied* protection.
+
+**Hardware binding does not rescue the service secret.**
+- **vTPM seals clone with the VM.** Every major hypervisor (Hyper-V key-protector, VMware `.nvram`, Proxmox/swtpm
+  `tpmstate`) copies the virtual TPM *alongside* the disk, so a TPM-sealed blob unseals bit-for-bit on the clone.
+  Sealing binds to "this TPM," and a vTPM clone *is* the same TPM.
+- **A discrete HW key isn't cloned, but is the wrong fit for an always-on service secret.** It genuinely makes the
+  at-rest secret non-portable (a clone gets inert ciphertext) — but (a) the **live in-OS adversary** Foreman
+  actually targets rides the always-resident, already-unlocked key (it asks the running process to use the secret,
+  or reads it from memory, or calls the authenticated endpoint); (b) the **derived bearer tokens stay plaintext**
+  in harness configs, so the exfil surface just moves to the leaves; (c) it **fails dark on headless/VPS/CI** (you
+  can't plug a USB key into a cloud VM, and an unattended restart can't unseal). The HW key belongs on the
+  **presence authorizer** (gating the human-paced weakening actions, where it fails *closed*), not on wrapping the
+  continuously-used MCP credential.
+
+**The one cloning sub-attack that breaks the core promise is ROLLBACK.** Snapshot → let a rogue agent act →
+restore the disk (log + sealed head included) to a pre-incident state. The hash chain is internally perfect at
+every point and a sealed head **re-validates after restore**, so the rewind is *undetectable from inside the
+cloned host*. The only defence is an **external monotonic witness** the clone can't rewrite — a periodic commit of
+`(headHash, recordCount, checkpoint)` to a remote append-only sink or public timestamp (see `temporal-truth.md`).
+That converts an undetectable rollback into a detectable gap/fork. **This — not secret-sealing — is the real
+anti-clone work.**
+
+**Cheap at-rest tidy (orthogonal):** wrap `mcp.token` in DPAPI-CurrentUser. Kills the lazy backup/sync/disk-grab
+of a cleartext credential with no hardware dependency and no lockout; does **not** stop a full live-profile clone
+that also carries the user's DPAPI master key. Strictly better than plaintext, never worse for the headless user.

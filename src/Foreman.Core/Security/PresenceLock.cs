@@ -32,7 +32,17 @@ public sealed class PresenceLockSettings
     public LockScope Scope { get; set; } = LockScope.Standard;
     public int ApprovalTtlSeconds { get; set; } = 0;
 
-    // P3 enrollment adds the pinned authenticator/credential id + the TPM-sealed log-signing key handle.
+    /// <summary>
+    /// The enrolled authenticator's credential id (base64url), pinned at enrollment. The presence prompt
+    /// asserts THIS credential — Windows Hello (platform: PIN/face/fingerprint) or a roaming FIDO2/U2F key
+    /// (YubiKey), whichever the user enrolled; Windows' WebAuthn picker covers all of them. Empty until
+    /// enrolled — the gate then has nothing to prompt and fails closed. (Recovery from a lost authenticator is
+    /// editing this file, the same-user boundary the threat model already concedes.)
+    /// </summary>
+    public string? CredentialId { get; set; }
+
+    /// <summary>Friendly label of the enrolled authenticator for the UI ("Windows Hello", "Security key"). Cosmetic.</summary>
+    public string? AuthenticatorLabel { get; set; }
 }
 
 /// <summary>
