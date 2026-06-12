@@ -268,19 +268,29 @@ public sealed class TrayController : IEventSink, IDisposable
         _status = status;
         if (_tray is null) return;
 
-        _tray.Icon = status switch
+        // Tray updates go through Shell_NotifyIcon, which transiently fails (Explorer restart, notification-
+        // area churn) and makes H.NotifyIcon throw "UpdateToolTip failed". A flaky tray API must NEVER crash
+        // the watchdog — best-effort, record + swallow. (This exact path took the process down once.)
+        try
         {
-            TrayStatus.Red   => TrayIconSet.Red,
-            TrayStatus.Amber => TrayIconSet.Amber,
-            _                => TrayIconSet.Green,
-        };
+            _tray.Icon = status switch
+            {
+                TrayStatus.Red   => TrayIconSet.Red,
+                TrayStatus.Amber => TrayIconSet.Amber,
+                _                => TrayIconSet.Green,
+            };
 
-        var escalationStr = _highestEscalation > EscalationLevel.Watch
-            ? $" · {_highestEscalation.ToString().ToUpperInvariant()}"
-            : "";
-        var gameStr = GameModeActive && _settings.GameMode.Enabled ? " · 🎮 game mode (popups paused)" : "";
-        _tray.ToolTipText = $"Foreman Agent Safety — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}{gameStr}";
-        _tray.ContextMenu = BuildMenu();
+            var escalationStr = _highestEscalation > EscalationLevel.Watch
+                ? $" · {_highestEscalation.ToString().ToUpperInvariant()}"
+                : "";
+            var gameStr = GameModeActive && _settings.GameMode.Enabled ? " · 🎮 game mode (popups paused)" : "";
+            _tray.ToolTipText = $"Foreman Agent Safety — {(_activeAlerts > 0 ? $"{_activeAlerts} alert(s){escalationStr}" : "All clear")}{gameStr}";
+            _tray.ContextMenu = BuildMenu();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Note("tray SetStatus (transient Shell_NotifyIcon failure)", ex);
+        }
     }
 
     private void RefreshAlertState()

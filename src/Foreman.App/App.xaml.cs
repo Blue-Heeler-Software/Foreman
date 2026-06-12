@@ -41,6 +41,18 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        // A tray watchdog must survive transient UI faults (e.g. a flaky Shell_NotifyIcon tray call) and
+        // RECORD them, not crash. Recover on the dispatcher thread; log everything (incl. truly-fatal ones).
+        DispatcherUnhandledException += (_, args) =>
+        {
+            CrashLog.Note("DispatcherUnhandledException", args.Exception);
+            args.Handled = true;
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception ex) CrashLog.Note("AppDomain.UnhandledException (fatal)", ex);
+        };
+
         var settings = SettingsStore.Load();
         _cts = new CancellationTokenSource();
 
