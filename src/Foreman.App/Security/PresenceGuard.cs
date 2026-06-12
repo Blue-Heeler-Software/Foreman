@@ -15,7 +15,9 @@ namespace Foreman.App.Security;
 /// </summary>
 public static class PresenceGuard
 {
-    private static readonly IPresenceVerifier _verifier = new HelloPresenceVerifier();
+    // WebAuthn picker (Hello + YubiKey/FIDO2/U2F) when available, platform-only Hello as fallback; verification
+    // routes by the pinned credential id. The gate + every wired site are unchanged behind this seam.
+    private static readonly IPresenceVerifier _verifier = new CompositePresenceVerifier();
     private static PresenceGate? _gate;
     private static ForemanSettings? _settings;
 

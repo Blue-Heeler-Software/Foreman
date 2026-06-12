@@ -504,15 +504,15 @@ public sealed class TrayController : IEventSink, IDisposable
         if (!Foreman.App.Security.PresenceGuard.IsAvailable)
         {
             MessageBox.Show(
-                "Windows Hello isn't set up. Add a PIN or biometric in Windows Settings → Accounts → Sign-in options, then try again. " +
-                "(Security-key / YubiKey support is coming behind the same lock.)",
+                "No authenticator available. Set up Windows Hello (a PIN or biometric in Windows Settings → " +
+                "Accounts → Sign-in options) or attach a FIDO2 security key, then try again.",
                 "Foreman Agent Safety — Presence lock", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         var choice = MessageBox.Show(
-            "Require a Windows Hello tap to WEAKEN Foreman — lower a harness's Trust, disable read-auditing, " +
-            "disable the persistent log, or disable a harness?\n\n" +
+            "Require a Windows Hello or security-key tap to WEAKEN Foreman — lower a harness's Trust, disable " +
+            "read-auditing, disable the persistent log, or disable a harness?\n\n" +
             "YES = Strict (also requires a tap to QUIT Foreman — most secure, but can be annoying)\n" +
             "NO = Standard (recommended)\n" +
             "Cancel = don't enable",
