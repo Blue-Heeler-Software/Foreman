@@ -125,11 +125,22 @@ public partial class HarnessesWindow : UserControl
 
     private void ConnectAgentClick(object sender, RoutedEventArgs e) => OpenConnectAgent?.Invoke();
 
-    private void SaveClick(object sender, RoutedEventArgs e) => SaveChanges();
+    private async void SaveClick(object sender, RoutedEventArgs e) => await SaveChanges();
 
     /// <summary>Persists the current toggles + custom exes. Public so the host can save on navigate-away.</summary>
-    public void SaveChanges()
+    public async Task SaveChanges()
     {
+        // Presence lock (P3): newly disabling a harness's monitoring is a weakening — gate before persist; deny reverts.
+        var newlyDisabled = _items.Where(v => !v.IsMonitored).Select(v => v.Id)
+            .Where(id => !_settings.DisabledHarnesses.Contains(id))
+            .ToList();
+        if (newlyDisabled.Count > 0 && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.DisableMonitoring, $"disable monitoring: {string.Join(", ", newlyDisabled)}"))
+        {
+            Revert();
+            return;
+        }
+
         _settings.DisabledHarnesses = _items
             .Where(v => !v.IsMonitored)
             .Select(v => v.Id)

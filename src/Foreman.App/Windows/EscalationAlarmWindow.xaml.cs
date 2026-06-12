@@ -59,8 +59,11 @@ public partial class EscalationAlarmWindow : Window
         Close();
     }
 
-    private void DisableClick(object sender, RoutedEventArgs e)
+    private async void DisableClick(object sender, RoutedEventArgs e)
     {
+        if (!await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.DisableMonitoring, $"disable monitoring for '{_event.HarnessDisplayName}'"))
+            return;
         _disableHarness(_event.HarnessId);
 
         EventBus.Instance.Publish(new InfoEvent(

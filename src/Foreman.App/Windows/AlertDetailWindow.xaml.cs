@@ -767,8 +767,12 @@ public partial class AlertDetailWindow : Window
         menu.IsOpen = true;
     }
 
-    private void ApplyMute(TimeSpan? duration, IReadOnlyList<string> emergency)
+    private async void ApplyMute(TimeSpan? duration, IReadOnlyList<string> emergency)
     {
+        // Presence lock (P3): muting a PROTECTED alert is a weakening — gate it (unprotected mutes pass through).
+        if (MutePolicy.IsProtected(_event, emergency) && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.MuteProtectedAlert, "mute a protected alert"))
+            return;
         var mute = MutePolicy.CreateMute(_event, duration, emergency, DateTimeOffset.UtcNow);
         if (mute is null)
         {

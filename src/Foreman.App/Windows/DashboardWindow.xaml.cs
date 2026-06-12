@@ -283,7 +283,7 @@ public partial class DashboardWindow : Window, IEventSink
 
         switch (PromptSaveHarnesses("switching tabs"))
         {
-            case MessageBoxResult.Yes:    _harnessView.SaveChanges(); break;
+            case MessageBoxResult.Yes:    _ = _harnessView.SaveChanges(); break;   // gated async; deny reverts
             case MessageBoxResult.No:     _harnessView.Revert();      break;
             case MessageBoxResult.Cancel:
                 // Re-select the Harnesses tab once this event settles.
@@ -298,7 +298,7 @@ public partial class DashboardWindow : Window, IEventSink
         {
             switch (PromptSaveHarnesses("closing"))
             {
-                case MessageBoxResult.Yes:    _harnessView.SaveChanges(); break;
+                case MessageBoxResult.Yes:    _ = _harnessView.SaveChanges(); break;   // gated async; deny reverts
                 case MessageBoxResult.No:     break;                       // discard
                 case MessageBoxResult.Cancel: e.Cancel = true; return;     // stay open
             }

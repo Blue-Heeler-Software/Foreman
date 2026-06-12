@@ -95,13 +95,24 @@ public partial class HarnessSettingsWindow : Window
         return "☁ Cloud model";
     }
 
-    private void SaveClick(object sender, RoutedEventArgs e)
+    private async void SaveClick(object sender, RoutedEventArgs e)
     {
-        _settings.HarnessTrust[_harnessId] = (int)TrustSlider.Value;
-        _settings.HarnessModalities[_harnessId] = _modalityChecks
-            .Where(cb => cb.IsChecked == true)
-            .Select(cb => (string)cb.Tag)
-            .ToList();
+        // Presence lock (P3): lowering Trust or editing modalities is a weakening — gate before persisting.
+        var oldTrust = (int)CurrentTrust();
+        var newTrust = (int)TrustSlider.Value;
+        var newModalities = _modalityChecks.Where(cb => cb.IsChecked == true).Select(cb => (string)cb.Tag).ToList();
+        var oldModalities = _settings.HarnessModalities.TryGetValue(_harnessId, out var m) ? m : [];
+        var modalitiesChanged = !new HashSet<string>(oldModalities, StringComparer.OrdinalIgnoreCase).SetEquals(newModalities);
+
+        if (newTrust < oldTrust && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.LowerTrust, $"{_harnessId}: Trust {oldTrust}→{newTrust}"))
+            return;
+        if (modalitiesChanged && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.EditHarnessSysprompt, $"{_harnessId}: modalities edited"))
+            return;
+
+        _settings.HarnessTrust[_harnessId] = newTrust;
+        _settings.HarnessModalities[_harnessId] = newModalities;
         try
         {
             SettingsStore.Save(_settings);
