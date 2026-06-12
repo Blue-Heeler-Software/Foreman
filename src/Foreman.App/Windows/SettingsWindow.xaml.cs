@@ -24,6 +24,55 @@ public partial class SettingsWindow : Window
         _onDecoyAuditChanged = onDecoyAuditChanged;
         InitializeComponent();
         Populate();
+        RefreshPresenceLock();
+    }
+
+    private void RefreshPresenceLock()
+    {
+        var on = Security.PresenceGuard.IsEnabled;
+        PresenceLockButton.Content = on ? "Disable presence lock…" : "Enable presence lock…";
+        PresenceLockStatus.Text = on
+            ? $"Armed ({Security.PresenceGuard.AuthenticatorLabel ?? "authenticator"})."
+            : Security.PresenceGuard.IsAvailable ? "Off." : "Off — no authenticator available.";
+    }
+
+    // Enroll / disarm the presence lock from the (visible, on-screen) Settings dialog — the reliable WebAuthn
+    // owner window. Acts immediately + persists; independent of the Save button below.
+    private async void PresenceLockClick(object sender, RoutedEventArgs e)
+    {
+        if (Security.PresenceGuard.IsEnabled)
+        {
+            var (ok, msg) = await Security.PresenceGuard.DisableAsync();
+            MessageBox.Show(msg, "Foreman Agent Safety — Presence lock", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            RefreshPresenceLock();
+            return;
+        }
+
+        if (!Security.PresenceGuard.IsAvailable)
+        {
+            MessageBox.Show(
+                "No authenticator available. Set up Windows Hello (a PIN or biometric in Windows Settings → " +
+                "Accounts → Sign-in options) or attach a FIDO2 security key, then try again.",
+                "Foreman Agent Safety — Presence lock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var choice = MessageBox.Show(
+            "Require a Windows Hello or security-key tap to WEAKEN Foreman?\n\n" +
+            "YES = Strict (also requires a tap to QUIT Foreman — most secure, but can be annoying)\n" +
+            "NO = Standard (recommended)\n" +
+            "Cancel = don't enable",
+            "Foreman Agent Safety — Enable presence lock", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (choice == MessageBoxResult.Cancel) return;
+
+        var scope = choice == MessageBoxResult.Yes
+            ? Foreman.Core.Security.LockScope.Strict
+            : Foreman.Core.Security.LockScope.Standard;
+        var (ok2, msg2) = await Security.PresenceGuard.EnableAsync(scope);
+        MessageBox.Show(msg2, "Foreman Agent Safety — Presence lock", MessageBoxButton.OK,
+            ok2 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        RefreshPresenceLock();
     }
 
     private void Populate()

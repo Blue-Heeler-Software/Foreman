@@ -165,6 +165,17 @@
                 </StackPanel>
                 <TextBlock x:Name="DecoyStatusText" TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,6,0,0" />
+
+                <Separator Margin="0,16,0,8" />
+                <TextBlock Text="PRESENCE LOCK" FontSize="10" FontWeight="Bold"
+                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6" />
+                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6"
+                           Text="Require a Windows Hello or security-key (YubiKey/FIDO2) tap to WEAKEN Foreman — lower a harness's Trust, disable read-auditing, disable the persistent log, mute a protected alert, or disable a harness. The tap is the one thing a rogue agent running as you can't satisfy. Disabling the lock needs a tap too." />
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="PresenceLockButton" Content="Enable presence lock…" Click="PresenceLockClick" Padding="12,5" />
+                    <TextBlock x:Name="PresenceLockStatus" VerticalAlignment="Center" Margin="12,0,0,0"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                </StackPanel>
             </StackPanel>
 
             <!-- ── Escalation Thresholds ─────────────────────────────────────── -->

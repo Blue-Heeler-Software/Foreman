@@ -34,13 +34,13 @@ public sealed class WebAuthnPresenceVerifier : IPresenceVerifier
             try
             {
                 var (ok, id, err) = await Task.Run(() => WebAuthnInterop.MakeCredential(hwnd, RpId, RpName), ct).ConfigureAwait(false);
-                return ok && id is { Length: > 0 }
-                    ? EnrollResult.Success(Base64Url(id), "Security key / Windows Hello")
-                    : EnrollResult.Fail(err ?? "Enrollment failed.");
+                if (ok && id is { Length: > 0 }) return EnrollResult.Success(Base64Url(id), "Security key / Windows Hello");
+                Foreman.App.CrashLog.Note("WebAuthn enroll", new Exception(err ?? "no credential returned"));
+                return EnrollResult.Fail(err ?? "Enrollment failed.");
             }
             finally { await CloseAsync(transient).ConfigureAwait(false); }
         }
-        catch (Exception ex) { return EnrollResult.Fail($"WebAuthn error: {ex.Message}"); }
+        catch (Exception ex) { Foreman.App.CrashLog.Note("WebAuthn enroll", ex); return EnrollResult.Fail($"WebAuthn error: {ex.GetType().Name}: {ex.Message}"); }
     }
 
     public async Task<PresenceResult> VerifyAsync(string credentialId, string reason, CancellationToken ct = default)
@@ -55,11 +55,13 @@ public sealed class WebAuthnPresenceVerifier : IPresenceVerifier
             try
             {
                 var (ok, err) = await Task.Run(() => WebAuthnInterop.GetAssertion(hwnd, RpId, id), ct).ConfigureAwait(false);
-                return ok ? PresenceResult.Ok("Security key / Windows Hello") : PresenceResult.Fail(err ?? "not verified");
+                if (ok) return PresenceResult.Ok("Security key / Windows Hello");
+                Foreman.App.CrashLog.Note("WebAuthn verify", new Exception(err ?? "not verified"));
+                return PresenceResult.Fail(err ?? "not verified");
             }
             finally { await CloseAsync(transient).ConfigureAwait(false); }
         }
-        catch (Exception ex) { return PresenceResult.Fail($"WebAuthn error: {ex.Message}"); }
+        catch (Exception ex) { Foreman.App.CrashLog.Note("WebAuthn verify", ex); return PresenceResult.Fail($"WebAuthn error: {ex.GetType().Name}: {ex.Message}"); }
     }
 
     // UI thread: an HWND to parent the native dialog — the active Foreman window, else a transient foreground one.
@@ -74,10 +76,11 @@ public sealed class WebAuthnPresenceVerifier : IPresenceVerifier
             if (h != IntPtr.Zero) { SetForegroundWindow(h); return (h, null); }   // best-effort: surface the native dialog
         }
 
-        // No Foreman window up (tray-initiated): a 1×1 off-screen foreground window is a valid dialog owner.
+        // No Foreman window up (tray-initiated): WebAuthn needs an ON-SCREEN, VISIBLE owner — an off-screen window
+        // is rejected / shows the dialog where you can't reach it — so a tiny centered window, never off-screen.
         var transient = new Window
         {
-            Width = 1, Height = 1, Left = -32000, Top = -32000,
+            Width = 1, Height = 1, WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None, ShowInTaskbar = false, ShowActivated = true, Topmost = true,
         };
         transient.Show();

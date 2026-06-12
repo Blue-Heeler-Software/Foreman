@@ -196,12 +196,9 @@ internal static class WebAuthnInterop
 
     private static string ErrorName(int hr)
     {
-        try
-        {
-            var p = WebAuthNGetErrorName(hr);
-            return p == IntPtr.Zero ? $"0x{hr:X8}" : (Marshal.PtrToStringUni(p) ?? $"0x{hr:X8}");
-        }
-        catch { return $"0x{hr:X8}"; }
+        var name = "";
+        try { var p = WebAuthNGetErrorName(hr); if (p != IntPtr.Zero) name = Marshal.PtrToStringUni(p) ?? ""; } catch { }
+        return string.IsNullOrEmpty(name) ? $"0x{hr:X8}" : $"{name} (0x{hr:X8})";   // always carry the code for diagnosis
     }
 
     // ── manual unmanaged allocation, all tracked in `keep` and freed in finally ──────────────────────────
