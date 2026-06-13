@@ -61,4 +61,27 @@ public sealed class ProcessTreeAttributionTests
         Assert.Equal("codex", tree.FindHarnessTypeAncestor(child.Pid)?.HarnessType);
         Assert.Null(tree.FindHarnessAncestor(child.Pid));
     }
+
+    [Fact]
+    public void FindHarnessTypeAncestor_StopsAtSystemHost_NoMisattribution()
+    {
+        // PID-reuse / stale-ppid corruption: an OS process (LockApp) chains through svchost up to a harness
+        // node. A genuine harness child never descends through svchost, so the walk must STOP at the OS host
+        // and attribute nothing — otherwise every idle OS process is tagged to the harness and hang-spammed.
+        var tree    = new ProcessTreeTracker();
+        var node    = Rec(4000, 3900, "claude.exe", isHarness: true, harnessType: "claude-code");
+        var svchost = Rec(4001, node.Pid, "svchost.exe");      // bogus edge: svchost "under" the harness
+        var lockApp = Rec(4002, svchost.Pid, "LockApp.exe");
+        tree.OnProcessCreated(node);
+        tree.OnProcessCreated(svchost);
+        tree.OnProcessCreated(lockApp);
+
+        Assert.Null(tree.FindHarnessTypeAncestor(lockApp.Pid));   // NOT attributed to claude-code
+        Assert.Null(tree.FindHarnessAncestor(lockApp.Pid));
+
+        // sanity: a REAL harness child (no OS host in its chain) still attributes correctly
+        var realChild = Rec(4003, node.Pid, "bash.exe");
+        tree.OnProcessCreated(realChild);
+        Assert.Equal("claude-code", tree.FindHarnessTypeAncestor(realChild.Pid)?.HarnessType);
+    }
 }

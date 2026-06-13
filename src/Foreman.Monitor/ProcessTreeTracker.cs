@@ -82,11 +82,28 @@ public sealed class ProcessTreeTracker
         while (current is not null && seen.Add(current.Pid))
         {
             if (match(current)) return current;
+            // A genuine harness subtree never descends THROUGH a Windows OS host (svchost, services, sihost,
+            // …) — a real harness child hits its harness match first. So an OS host appearing as an ANCESTOR
+            // means this parent edge is stale / a reused PID / an unreliable WMI ParentProcessId: stop here
+            // rather than mis-attributing an unrelated OS process to a harness (which then floods hang notices).
+            if (IsSystemHost(current.Name)) break;
             if (current.ParentPid == 0 || current.ParentPid == current.Pid) break;
             current = GetByPid(current.ParentPid);
         }
         return null;
     }
+
+    // Windows OS hosts that never sit INSIDE a harness's process subtree. Hitting one while walking ANCESTORS
+    // marks the chain above it untrustworthy (PID reuse / stale ppid), so the walk stops and attributes nothing.
+    private static readonly HashSet<string> SystemHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "svchost.exe", "services.exe", "wininit.exe", "winlogon.exe", "lsass.exe", "csrss.exe", "smss.exe",
+        "explorer.exe", "sihost.exe", "taskhostw.exe", "dwm.exe", "fontdrvhost.exe", "ctfmon.exe",
+        "RuntimeBroker.exe", "MoUsoCoreWorker.exe", "usocoreworker.exe", "dllhost.exe", "WmiPrvSE.exe",
+        "System", "Registry", "MemCompression",
+    };
+
+    private static bool IsSystemHost(string? name) => name is not null && SystemHosts.Contains(name);
 
     /// <summary>
     /// Nearest ancestor (including the process itself) that is an actively-monitored harness
