@@ -227,6 +227,13 @@ public sealed class ForemanSettings
     public bool McpPeerBindingEnforce { get; set; } = false;
 
     /// <summary>
+    /// Adaptive noise reduction: learn from the OPERATOR's dismissals (UI acks) and SUGGEST quieting an
+    /// operational alert class (hang/orphan/idle/nonzero-exit) that's repeatedly dismissed. Never auto-relaxes,
+    /// never the security set, never learns from the agent's own behaviour. See <see cref="Alerts.SuppressionAdvisor"/>.
+    /// </summary>
+    public Alerts.AdaptiveAlertSettings AdaptiveAlerts { get; set; } = new();
+
+    /// <summary>
     /// Per-harness enabled "modalities" — the restricted system prompt: which basic, tiny-model-friendly
     /// operations (log-report, self-check, …) a harness is instructed to honour, delivered over MCP. Absent →
     /// the default agent-facing set, so nothing changes until set. Keyed by harness Id, case-insensitive.

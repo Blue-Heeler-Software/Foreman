@@ -73,7 +73,20 @@ public partial class App : Application
             // Verify the PRIOR-session chain before we append anything this session; surface tamper as a
             // High notice rather than throwing into startup (a pre-chain "legacy" log verifies clean).
             var integrity = eventLog.Verify();
-            EventBus.Instance.Subscribe(e => eventLog.Append(e));
+            var eventLogFailureReported = 0;
+            EventBus.Instance.Subscribe(e =>
+            {
+                if (eventLog.TryAppend(e, out var error) ||
+                    Interlocked.Exchange(ref eventLogFailureReported, 1) != 0)
+                {
+                    return;
+                }
+
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.EventLog",
+                    "Event log persistence failed; live monitoring continues, but disk evidence is stale. " +
+                    $"Reason: {error}"));
+            });
             LogWindow.LoadPersisted = () => eventLog.Load();
             if (!integrity.Ok)
                 EventBus.Instance.Publish(new MonitoringNoticeEvent(
@@ -125,6 +138,8 @@ public partial class App : Application
                 _mcpHost.State.CreateAskHarnessRequest(harnessId, sys, usr, alertId, pid, processName),
             RecordAskHarnessReply   = (requestId, reply, actionTaken, harnessId, pid) =>
                 _mcpHost.State.ReplyToAskHarnessRequest(requestId, reply, actionTaken, harnessId, pid).Ok,
+            // Adaptive alerts learn from THIS (operator, in-UI) dismissal — never the agent's own MCP ack.
+            OnOperatorAck           = evt => HandleOperatorAck(evt, settings),
             // Ask Harness delivers a justify/act prompt to the offender's own MCP session when reachable.
             AskOffender             = (harnessId, sys, usr, requestId, ct) =>
                 _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId, ct),
@@ -356,6 +371,38 @@ public partial class App : Application
         }
         catch (OperationCanceledException) { /* normal shutdown */ }
         catch { /* a bad sweep must never crash the app */ }
+    }
+
+    // Adaptive alerts: the operator dismissed an OPERATIONAL alert in the UI. Feed the advisor (learns from the
+    // human, never the agent), persist the tally, and surface a one-time quieting tip when a class reads as noise.
+    private void HandleOperatorAck(ForemanEvent evt, ForemanSettings settings)
+    {
+        var type = evt switch
+        {
+            HangDetectedEvent    => "hang",
+            OrphanDetectedEvent  => "orphan",
+            NonzeroExitEvent     => "nonzero-exit",
+            _                    => null,            // security/behavioural acks never train the advisor
+        };
+        if (type is null || _monitor is null) return;
+
+        var pid = evt switch
+        {
+            HangDetectedEvent h   => h.ParentHarnessPid ?? h.ProcessId,
+            OrphanDetectedEvent o => o.ProcessId,
+            NonzeroExitEvent x    => x.ParentHarnessPid ?? x.ProcessId,
+            _                     => 0,
+        };
+        var harness = _monitor.Tree.FindHarnessTypeAncestor(pid)?.HarnessType ?? "";
+        var suggestion = SuppressionAdvisor.RecordOperatorAck(settings.AdaptiveAlerts, harness, type, DateTimeOffset.UtcNow);
+        SettingsStore.Save(settings);
+
+        if (suggestion is { } s)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Info, "Foreman.Adaptive",
+                $"Adaptive noise tip: {s.Rationale} " + (s.Kind == SuppressionSuggestionKind.RaiseHangThreshold
+                    ? $"Raise '{s.HarnessId}'s hang tolerance via its Trust level (Harnesses ▸ Trust), or mute the class."
+                    : $"Mute the '{s.HarnessId} · {s.AlertType}' class from the alert's right-click → Mute menu.")));
     }
 
     // A behavior profile keyed "proc:<image>" belongs to an unrecognized OS/system process the classifier could

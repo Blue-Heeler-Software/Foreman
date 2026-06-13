@@ -45,4 +45,10 @@ public sealed class AlertDetailServices
 
     /// <summary>Records a reply against a queued Ask Harness request.</summary>
     public required Func<string, string, string?, string?, int?, bool> RecordAskHarnessReply { get; init; }
+
+    /// <summary>
+    /// Notifies the adaptive-alert advisor that the OPERATOR (human, in the UI) dismissed this alert — the safe
+    /// learning signal (never the agent's own MCP ack). Optional; null = adaptive suggestions disabled.
+    /// </summary>
+    public Action<Foreman.Core.Models.ForemanEvent>? OnOperatorAck { get; init; }
 }
