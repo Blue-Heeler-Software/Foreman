@@ -108,6 +108,11 @@
                     <TextBox x:Name="HangRealertBox" Width="80"
                              ToolTip="After a hang alert for a process, wait this long before alerting on it again (stops bursty children re-firing). 0 = re-alert each idle stretch." />
                 </StackPanel>
+                <CheckBox x:Name="ScaleIdleCheck" Content="Scale the hang threshold by activity (operator presence + harness task)"
+                          Margin="0,10,0,0" />
+                <TextBlock TextWrapping="Wrap" FontSize="10"
+                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
+                           Text="A process quiet for the threshold means little if nobody's at the keyboard and the harness has no task running. When on, the hang timeout lengthens (up to a capped ceiling) while you're away and/or the harness is parked — it only ever waits LONGER, never shorter, so it can't add alerts or hide anything. Reads only idle duration (no keylogging). A genuine stall always alerts eventually." />
             </StackPanel>
 
             <!-- ── Notifications ─────────────────────────────────────────────── -->
@@ -123,6 +128,12 @@
                 <TextBlock TextWrapping="Wrap" FontSize="10"
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
                            Text="When a harness floods you with hang/orphan notices, show only the first few per harness then fold the rest into one rollup notice per window. Security and critical alerts are never coalesced, and every event still appears in the log." />
+                <CheckBox x:Name="OsEventLogCheck"
+                          Content="Mirror lifecycle + significant events to the Windows Event Log"
+                          Margin="0,12,0,0" />
+                <TextBlock TextWrapping="Wrap" FontSize="10"
+                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
+                           Text="Blackbox handoff (Defender-style): writes start/stop/crash and security-significant events to Event Viewer (Windows Logs → Application, source 'Foreman Agent Safety') so the record survives Foreman being killed. Needs Run Elevated once to register the source; until then it degrades to the on-disk log. Secrets are redacted." />
                 <CheckBox x:Name="PersistLogCheck" Content="Keep the event log across restarts" />
                 <CheckBox x:Name="MonitorAllCheck" Content="Monitor all processes (not just harness children)"
                           Margin="0,12,0,4" />

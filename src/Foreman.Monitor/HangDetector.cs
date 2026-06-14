@@ -1,7 +1,9 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Events;
 using Foreman.Core.Models;
 using Foreman.Core.Settings;
 using System.Collections.Concurrent;
+using System.Linq;
 
 namespace Foreman.Monitor;
 
@@ -23,6 +25,7 @@ public sealed class HangDetector
     private readonly EventBus _bus;
     private readonly ForemanSettings _settings;
     private readonly ProcessTreeTracker _tree;
+    private readonly IUserInputProvider? _operator;
 
     // key: pid → the LastIoChangeTime snapshot at the moment we last alerted.
     // We only re-alert if this advances (i.e. I/O resumed and the process hung anew).
@@ -44,11 +47,13 @@ public sealed class HangDetector
         "Foreman.exe",
     };
 
-    public HangDetector(EventBus bus, ForemanSettings settings, ProcessTreeTracker tree)
+    public HangDetector(EventBus bus, ForemanSettings settings, ProcessTreeTracker tree,
+        IUserInputProvider? operatorActivity = null)
     {
         _bus = bus;
         _settings = settings;
         _tree = tree;
+        _operator = operatorActivity;
     }
 
     public void Check(ProcessRecord record)
@@ -68,9 +73,25 @@ public sealed class HangDetector
             if (harness.Pid == record.Pid) return;  // this IS the harness, not a child
         }
 
-        var threshold = _settings.HangThresholdMinutes;
-        var silent    = record.SilentMinutes;
-        var uptime    = record.UptimeMinutes;
+        var baseThreshold = _settings.HangThresholdMinutes;
+        var silent        = record.SilentMinutes;
+        var uptime        = record.UptimeMinutes;
+
+        // Cheap gate first: the context scaling only ever LENGTHENS the threshold (it never tightens below the
+        // base), so anything under the base can't be a hang regardless of context — bail before the (relatively
+        // expensive) tree-activity scan. This keeps the per-poll cost on the common, busy-process path tiny.
+        if (uptime < baseThreshold || silent < baseThreshold) return;
+
+        // Context-scale the idle threshold. A process quiet for 30 min means something very different depending
+        // on whether the human is even at the keyboard and whether the harness is running work vs parked waiting
+        // for input. Monotonic — the effective threshold is always >= base, so this can only quiet expected idle,
+        // never create an alert or shorten the window.
+        var scaled    = IdleThresholdPolicy.Effective(
+            baseThreshold,
+            _operator?.MinutesSinceLastInput ?? 0,
+            ClassifyHarnessActivity(harness),
+            _settings.IdleThresholdScaling);
+        var threshold = scaled.EffectiveMinutes;
 
         if (uptime < threshold || silent < threshold) return;
 
@@ -119,10 +140,14 @@ public sealed class HangDetector
             ? $", owned by {DescribeOwner(ownerType, ownerName, harness!.Pid)}"
             : "";
 
+        // When context-scaling held the alert past the base threshold, say so in the message — the operator
+        // should see WHY a process they'd expect at 30 min only surfaced later (e.g. they were away).
+        var scaledNote = scaled.Multiplier > 1.0 ? $" — idle threshold {scaled.Reason}" : "";
+
         _bus.Publish(new HangDetectedEvent(
             DateTimeOffset.UtcNow,
             "Foreman.Monitor",
-            $"{record.Name} (pid {record.Pid}){spawnerNote}{ownerNote} has had no I/O for {silent} min (running {uptime} min)",
+            $"{record.Name} (pid {record.Pid}){spawnerNote}{ownerNote} has had no I/O for {silent} min (running {uptime} min){scaledNote}",
             record.Pid,
             record.Name,
             uptime,
@@ -140,6 +165,29 @@ public sealed class HangDetector
     {
         _alertedEpoch.TryRemove(pid, out _);
         _lastAlertAt.TryRemove(pid, out _);
+    }
+
+    /// <summary>
+    /// Is the owning harness running work right now, or parked at rest? "Active" = some process in the harness
+    /// subtree did I/O within the activity window; "AtRest" = the whole tree has gone quiet. Returns Unknown
+    /// (→ no relaxation) when there's no owning harness or scaling is off, so we never relax on missing data.
+    /// Note: trees are keyed by harness TYPE, so two same-type instances merge — that can only read as "more
+    /// active" (less relaxation), which is the safe direction.
+    /// </summary>
+    private HarnessActivity ClassifyHarnessActivity(ProcessRecord? harness)
+    {
+        if (!_settings.IdleThresholdScaling.Enabled) return HarnessActivity.Unknown;
+        if (harness is null || string.IsNullOrEmpty(harness.HarnessType)) return HarnessActivity.Unknown;
+
+        var tree = _tree.GetTreeByHarnessType(harness.HarnessType)
+            .Where(r => r.State != ProcessState.Terminated)
+            .ToList();
+        if (tree.Count == 0) return HarnessActivity.Unknown;
+
+        var treeIdle = IdleCleanupPolicy.TreeIdleMinutes(tree, DateTimeOffset.UtcNow);
+        return treeIdle < _settings.IdleThresholdScaling.ActivityWindowMinutes
+            ? HarnessActivity.Active
+            : HarnessActivity.AtRest;
     }
 
     private static string DescribeOwner(string? harnessType, string? processName, int pid)

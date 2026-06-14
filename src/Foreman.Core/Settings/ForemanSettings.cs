@@ -242,6 +242,21 @@ public sealed class ForemanSettings
     public Alerts.CadenceGovernorSettings CadenceGovernor { get; set; } = new();
 
     /// <summary>
+    /// Context-scales the hang/idle timeout by operator presence (system last-input idle time) and harness
+    /// task-activity, so a fixed no-I/O rule stops mislabelling expected-idle processes (an agent parked while
+    /// the human is away) as hung. Monotonic: only ever LENGTHENS the threshold, capped by a multiplier and an
+    /// absolute ceiling — operational-only, never the security set. See <see cref="Alerts.IdleThresholdPolicy"/>.
+    /// </summary>
+    public Alerts.IdleThresholdScalingSettings IdleThresholdScaling { get; set; } = new();
+
+    /// <summary>
+    /// OS-event-log blackbox handoff: mirror lifecycle (start/stop/crash) + security-significant events to the
+    /// host OS event log (Windows Event Log / Linux journald) so Foreman's own record survives the app being
+    /// killed or its files tampered. See <see cref="Notifications.OsEventLogForwarder"/>.
+    /// </summary>
+    public Notifications.OsEventLogSettings OsEventLog { get; set; } = new();
+
+    /// <summary>
     /// Per-harness enabled "modalities" — the restricted system prompt: which basic, tiny-model-friendly
     /// operations (log-report, self-check, …) a harness is instructed to honour, delivered over MCP. Absent →
     /// the default agent-facing set, so nothing changes until set. Keyed by harness Id, case-insensitive.

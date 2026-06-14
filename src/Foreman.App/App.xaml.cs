@@ -5,6 +5,7 @@ using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Heuristics;
 using Foreman.Core.Models;
+using Foreman.Core.Notifications;
 using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using Foreman.McpServer;
@@ -26,6 +27,13 @@ public partial class App : Application
     private AlertResolver? _alertResolver;
     private AlertResponseRunner? _alertResponseRunner;
     private CancellationTokenSource? _cts;
+    // Blackbox handoff: Foreman's own lifecycle + significant events mirrored to the OS event log (Defender-style),
+    // so the record survives the app being killed/tampered. Null sink until OnStartup picks the platform impl.
+    private IOsEventLogSink _osLog = NullOsEventLogSink.Instance;
+    // Gate for the DIRECT lifecycle/crash writes (the bus forwarder has its own gate). Defaults true so an early
+    // crash before settings load is still recorded; set from settings.OsEventLog.Enabled once loaded so the
+    // operator's opt-out is honoured for stop + crash too, not just start.
+    private bool _osLogEnabled = true;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -34,6 +42,14 @@ public partial class App : Application
         _singleInstance = new Mutex(initiallyOwned: true, "ForemanSingleInstanceMutex", out _ownsSingleInstance);
         if (!_ownsSingleInstance)
         {
+            // Record the blocked duplicate launch to the OS log (best-effort, transient sink — _osLog isn't set
+            // up on this early-exit path). A burst of these can indicate a relaunch loop or tampering.
+            try
+            {
+                new WindowsEventLogSink().Write(OsEventIds.SecondInstanceBlocked, OsEventCategory.Lifecycle,
+                    ForemanSeverity.Info, $"A second Foreman instance was blocked (pid {Environment.ProcessId}).");
+            }
+            catch { /* never let the duplicate-exit path throw */ }
             MessageBox.Show("Foreman Agent Safety is already running.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
@@ -41,20 +57,48 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        // Pick the OS event-log sink before wiring crash handlers, so a crash on the way up is still handed off.
+        _osLog = new WindowsEventLogSink();
+
         // A tray watchdog must survive transient UI faults (e.g. a flaky Shell_NotifyIcon tray call) and
         // RECORD them, not crash. Recover on the dispatcher thread; log everything (incl. truly-fatal ones).
         DispatcherUnhandledException += (_, args) =>
         {
             CrashLog.Note("DispatcherUnhandledException", args.Exception);
+            // Redact: an exception .Message can echo secret-bearing input (URLs with userinfo, KEY=token, …).
+            if (_osLogEnabled)
+                _osLog.Write(OsEventIds.CrashHandled, OsEventCategory.Lifecycle, ForemanSeverity.High,
+                    SecretRedactor.Redact($"Foreman recovered from an unhandled UI exception: {args.Exception.GetType().Name}: {args.Exception.Message}"));
             args.Handled = true;
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {
-            if (args.ExceptionObject is Exception ex) CrashLog.Note("AppDomain.UnhandledException (fatal)", ex);
+            if (args.ExceptionObject is Exception ex)
+            {
+                CrashLog.Note("AppDomain.UnhandledException (fatal)", ex);
+                if (_osLogEnabled)
+                    _osLog.Write(OsEventIds.CrashFatal, OsEventCategory.Lifecycle, ForemanSeverity.Critical,
+                        SecretRedactor.Redact($"Foreman is terminating on an unhandled exception: {ex.GetType().Name}: {ex.Message}"));
+            }
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            CrashLog.Note("TaskScheduler.UnobservedTaskException", args.Exception);
+            if (_osLogEnabled)
+                _osLog.Write(OsEventIds.CrashUnobservedTask, OsEventCategory.Lifecycle, ForemanSeverity.High,
+                    SecretRedactor.Redact($"Foreman observed a faulted background task: {args.Exception.GetType().Name}: {args.Exception.Message}"));
+            args.SetObserved();
         };
 
         var settings = SettingsStore.Load();
         _cts = new CancellationTokenSource();
+
+        // Honour the operator's opt-out for the direct lifecycle/crash writes from here on (start/stop/crash).
+        _osLogEnabled = settings.OsEventLog.Enabled;
+
+        // Mirror the security-significant event stream to the OS event log (blackbox handoff). Lifecycle events
+        // are written directly (below); this forwarder handles escalations/detections/violations, redacted.
+        EventBus.Instance.Subscribe(new OsEventLogForwarder(_osLog, () => settings.OsEventLog.Enabled));
 
         // If "start with Windows" is on but the install moved (registered exe gone),
         // re-point the HKCU Run entry at the exe that's actually running. Best-effort.
@@ -321,6 +365,16 @@ public partial class App : Application
             $"{KnownHarnesses.All.Count} built-in harness types" +
             (settings.CustomHarnessExes.Count > 0 ? $" + {settings.CustomHarnessExes.Count} custom" : "")));
 
+        // Blackbox handoff: stamp startup into the OS event log directly (lifecycle isn't routed through the bus).
+        if (_osLogEnabled)
+        {
+            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1";
+            _osLog.Write(OsEventIds.Started, OsEventCategory.Lifecycle, ForemanSeverity.Info,
+                $"Foreman Agent Safety started — v{ver}, pid {Environment.ProcessId}, MCP :{settings.McpPort}.");
+            if (!_osLog.IsAvailable && _osLog.UnavailableReason is { } why)
+                EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.OsLog", why));
+        }
+
         // If settings.json was unreadable at launch it was quarantined and defaults loaded. Surface that
         // now (the bus + event log are wired) so a corrupt file isn't a silent reset of security posture.
         if (SettingsStore.LastLoadFault is { } settingsFault)
@@ -457,6 +511,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Blackbox handoff: record the clean stop BEFORE the disposal cascade, so the OS log shows a deliberate
+        // shutdown (a missing StoppedClean between two Started entries = the process was killed or crashed).
+        if (_osLogEnabled)
+            _osLog.Write(OsEventIds.StoppedClean, OsEventCategory.Lifecycle, ForemanSeverity.Info,
+                $"Foreman Agent Safety stopped (clean shutdown), pid {Environment.ProcessId}.");
+
         _cts?.Cancel();
         _alertResolver?.Dispose();
         _toolScan?.Dispose();

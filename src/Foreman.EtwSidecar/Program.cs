@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using Foreman.Core.Ipc;
+using Foreman.Core.Notifications;
 using Foreman.EtwSidecar;
 using Microsoft.Diagnostics.Tracing.Session;
 
@@ -35,6 +36,10 @@ static int Run(string[] args)
 
     if (string.IsNullOrEmpty(pipeName) || string.IsNullOrEmpty(nonce)) return 2;   // bad args
     if (TraceEventSession.IsElevated() != true) return 3;                          // must be admin
+
+    // We're elevated — register Foreman's Windows Event Log source (one-time, admin-only) so the non-elevated
+    // main app can emit its blackbox-handoff entries. Best-effort: never let this break the sidecar's real job.
+    TryRegisterEventSource();
 
     NetworkCapture? capture = null;
     DecoyAudit? decoyAudit = null;
@@ -113,6 +118,18 @@ static bool TryWrite<T>(StreamWriter writer, T message)
 }
 
 static string? Next(string[] args, ref int i) => i + 1 < args.Length ? args[++i] : null;
+
+// One-time registration of Foreman's Windows Event Log source (needs admin — which we are). Harmless if it
+// already exists; swallowed on any failure so the sidecar's capture/audit duties are never affected.
+static void TryRegisterEventSource()
+{
+    try
+    {
+        if (!EventLog.SourceExists(OsEventLogNames.SourceName))
+            EventLog.CreateEventSource(new EventSourceCreationData(OsEventLogNames.SourceName, OsEventLogNames.LogName));
+    }
+    catch { /* event-source registration is best-effort, never fatal */ }
+}
 
 static Process? SafeGetProcess(int pid)
 {

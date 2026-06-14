@@ -237,4 +237,131 @@ public sealed class HangDetectorTests
 
         Assert.Empty(hits);
     }
+
+    // ── Context-scaled idle threshold (operator presence + harness task-activity) ──────────────────────────
+
+    private static ProcessRecord IdleFor(int pid, int parentPid, string name, int silentMin, int uptimeMin,
+        bool isHarness = false, string? harnessType = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new ProcessRecord
+        {
+            Pid              = pid,
+            ParentPid        = parentPid,
+            Name             = name,
+            StartTime        = now - TimeSpan.FromMinutes(uptimeMin),
+            LastIoChangeTime = now - TimeSpan.FromMinutes(silentMin),
+            IsHarness        = isHarness,
+            HarnessType      = harnessType,
+            State            = ProcessState.Active,
+        };
+    }
+
+    private sealed class FakeOperator : IUserInputProvider
+    {
+        public int Minutes { get; init; }
+        public int MinutesSinceLastInput => Minutes;
+    }
+
+    [Fact]   // operator AWAY + harness at rest → the threshold lengthens, so a child that would alert is HELD
+    public void OperatorAway_HoldsHangThatWouldFireWhenPresent()
+    {
+        var tree    = new ProcessTreeTracker();
+        var harness = IdleFor(901_001, 901_000, "node.exe", silentMin: 200, uptimeMin: 300, isHarness: true, harnessType: "claude-code");
+        var child   = IdleFor(901_002, harness.Pid, "bash.exe", silentMin: 60, uptimeMin: 200);
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(child);
+
+        var hits = CaptureHangsFor(child.Pid);
+        // base 30, away 90m (×3) × at-rest (×1.5) → capped ×4 → effective 120m. 60m silent is held.
+        var sut = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 30 }, tree,
+            new FakeOperator { Minutes = 90 });
+
+        sut.Check(child);
+
+        Assert.Empty(hits);
+    }
+
+    [Fact]   // same child, operator PRESENT → fires at the at-rest-scaled threshold (still relaxed, but lower)
+    public void OperatorPresent_FiresAtScaledThreshold()
+    {
+        var tree    = new ProcessTreeTracker();
+        var harness = IdleFor(901_101, 901_100, "node.exe", silentMin: 200, uptimeMin: 300, isHarness: true, harnessType: "claude-code");
+        var child   = IdleFor(901_102, harness.Pid, "bash.exe", silentMin: 60, uptimeMin: 200);
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(child);
+
+        var hits = CaptureHangsFor(child.Pid);
+        // base 30, present (×1) × at-rest (×1.5) → effective 45m. 60m silent ≥ 45 → fires.
+        var sut = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 30 }, tree,
+            new FakeOperator { Minutes = 0 });
+
+        sut.Check(child);
+
+        Assert.Single(hits);
+        Assert.Contains("idle threshold", hits[0].Message);   // the scaling reason is surfaced
+    }
+
+    [Fact]   // scaling OFF → the flat base threshold, regardless of operator/activity
+    public void ScalingDisabled_UsesFlatBase()
+    {
+        var tree    = new ProcessTreeTracker();
+        var harness = IdleFor(901_201, 901_200, "node.exe", silentMin: 200, uptimeMin: 300, isHarness: true, harnessType: "claude-code");
+        var child   = IdleFor(901_202, harness.Pid, "bash.exe", silentMin: 40, uptimeMin: 200);
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(child);
+
+        var hits = CaptureHangsFor(child.Pid);
+        var settings = new ForemanSettings
+        {
+            HangThresholdMinutes = 30,
+            IdleThresholdScaling = new Foreman.Core.Alerts.IdleThresholdScalingSettings { Enabled = false },
+        };
+        // operator very away — but scaling is off, so 40m ≥ base 30 → fires anyway.
+        var sut = new HangDetector(_bus, settings, tree, new FakeOperator { Minutes = 600 });
+
+        sut.Check(child);
+
+        Assert.Single(hits);
+    }
+
+    [Fact]   // a harness actively running work gets NO at-rest relaxation (a busy sibling keeps the tree "active")
+    public void HarnessRunningTask_NoAtRestRelaxation()
+    {
+        var tree    = new ProcessTreeTracker();
+        var harness = IdleFor(901_301, 901_300, "node.exe", silentMin: 1, uptimeMin: 300, isHarness: true, harnessType: "claude-code");
+        var busy    = IdleFor(901_302, harness.Pid, "tsc.exe",  silentMin: 1,  uptimeMin: 100);  // recent I/O → tree active
+        var child   = IdleFor(901_303, harness.Pid, "bash.exe", silentMin: 35, uptimeMin: 100);
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(busy);
+        tree.OnProcessCreated(child);
+
+        var hits = CaptureHangsFor(child.Pid);
+        // present + active → no factors → effective stays at base 30. 35 ≥ 30 → fires.
+        var sut = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 30 }, tree,
+            new FakeOperator { Minutes = 0 });
+
+        sut.Check(child);
+
+        Assert.Single(hits);
+    }
+
+    [Fact]   // contrast to the above: same 35m child, but the whole tree is at rest → held below the 45m at-rest threshold
+    public void HarnessAtRest_PresentOperator_HoldsBelowAtRestThreshold()
+    {
+        var tree    = new ProcessTreeTracker();
+        var harness = IdleFor(901_401, 901_400, "node.exe", silentMin: 200, uptimeMin: 300, isHarness: true, harnessType: "claude-code");
+        var child   = IdleFor(901_402, harness.Pid, "bash.exe", silentMin: 35, uptimeMin: 200);
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(child);
+
+        var hits = CaptureHangsFor(child.Pid);
+        // present + at-rest → 30×1.5 = 45m effective. 35 < 45 → held.
+        var sut = new HangDetector(_bus, new ForemanSettings { HangThresholdMinutes = 30 }, tree,
+            new FakeOperator { Minutes = 0 });
+
+        sut.Check(child);
+
+        Assert.Empty(hits);
+    }
 }
