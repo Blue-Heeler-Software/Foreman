@@ -117,6 +117,12 @@
                 <CheckBox x:Name="NotifyHangCheck" Content="Notify on hang detected" />
                 <CheckBox x:Name="NotifyOrphanCheck" Content="Notify on orphaned process" />
                 <CheckBox x:Name="NotifyCriticalCheck" Content="Notify on critical command" />
+                <CheckBox x:Name="CoalesceNotifyCheck"
+                          Content="Coalesce repetitive hang/orphan popups (rollup)"
+                          Margin="0,12,0,0" />
+                <TextBlock TextWrapping="Wrap" FontSize="10"
+                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
+                           Text="When a harness floods you with hang/orphan notices, show only the first few per harness then fold the rest into one rollup notice per window. Security and critical alerts are never coalesced, and every event still appears in the log." />
                 <CheckBox x:Name="PersistLogCheck" Content="Keep the event log across restarts" />
                 <CheckBox x:Name="MonitorAllCheck" Content="Monitor all processes (not just harness children)"
                           Margin="0,12,0,4" />

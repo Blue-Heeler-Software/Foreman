@@ -234,6 +234,14 @@ public sealed class ForemanSettings
     public Alerts.AdaptiveAlertSettings AdaptiveAlerts { get; set; } = new();
 
     /// <summary>
+    /// Notification cadence governor: caps bursts of OPERATIONAL toasts (hang/orphan) per harness into a few
+    /// popups plus a periodic rollup, instead of dozens. Governs the TOAST only — every raw event is still
+    /// logged — and never touches security/Critical alerts (those always notify individually, so a flood can't
+    /// be used to bury a real signal). See <see cref="Alerts.AlertCadenceGovernor"/>.
+    /// </summary>
+    public Alerts.CadenceGovernorSettings CadenceGovernor { get; set; } = new();
+
+    /// <summary>
     /// Per-harness enabled "modalities" — the restricted system prompt: which basic, tiny-model-friendly
     /// operations (log-report, self-check, …) a harness is instructed to honour, delivered over MCP. Absent →
     /// the default agent-facing set, so nothing changes until set. Keyed by harness Id, case-insensitive.

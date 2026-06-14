@@ -36,6 +36,11 @@ public sealed class TrayController : IEventSink, IDisposable
     private int _gmSuppressedTotal;
     private int _gmSuppressedCritical;
 
+    // Cadence governor: caps bursts of OPERATIONAL toasts (hang/orphan) per harness; a flush timer rolls the
+    // coalesced count into one gentle notice per window. Governs the popup only — events are always logged.
+    private readonly AlertCadenceGovernor _cadence;
+    private DispatcherTimer? _cadenceFlushTimer;
+
     /// <summary>Injected from App so the Harnesses window can show live running status.</summary>
     public Func<IEnumerable<Foreman.Core.Models.ProcessRecord>>? GetProcessSnapshot { get; set; }
 
@@ -83,6 +88,7 @@ public sealed class TrayController : IEventSink, IDisposable
     {
         _settings = settings;
         _bus = bus;
+        _cadence = new AlertCadenceGovernor(settings.CadenceGovernor);
     }
 
     public void Initialize()
@@ -121,6 +127,15 @@ public sealed class TrayController : IEventSink, IDisposable
         // Game mode: pause on-screen popups while a fullscreen game/app is detected.
         _gameMode = new GameModeWatcher();
         _gameMode.Changed += OnGameModeChanged;
+
+        // Cadence governor: once per window, fold the toasts we coalesced into a single rollup notice so the
+        // operator can see that repetitive operational noise was quieted (and that it's all still in the log).
+        _cadenceFlushTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(_settings.CadenceGovernor.EffectiveWindowSeconds),
+        };
+        _cadenceFlushTimer.Tick += (_, _) => FlushCadenceRollup();
+        _cadenceFlushTimer.Start();
 
         // ForceCreate() initialises the native Shell_NotifyIcon for code-behind
         // TaskbarIcon instances that are not part of the XAML visual tree.
@@ -239,6 +254,15 @@ public sealed class TrayController : IEventSink, IDisposable
             return;
         }
 
+        // Cadence governor: coalesce bursts of OPERATIONAL toasts (hang/orphan) per harness. By this point the
+        // raw event is already logged/counted/escalated — coalescing quiets only the popup, never the record.
+        // Only hang/orphan return a key; security/command/escalation/decoy/critical events are never governed,
+        // so a flood of operational noise can never be used to bury a real alert. The flush timer rolls the
+        // coalesced count into one notice per window.
+        var cadenceKey = CadenceClassKey(evt);
+        if (cadenceKey is not null && !_cadence.ShouldNotify(cadenceKey))
+            return;
+
         // For escalation events, use a distinct balloon format
         if (evt is EscalationEvent esc)
         {
@@ -268,6 +292,49 @@ public sealed class TrayController : IEventSink, IDisposable
             TryShowNotification("warning alert", "Foreman Agent Safety - Warning",
                 evt.Message + "\n(Click for details)",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
+    }
+
+    // The only alert classes the cadence governor is allowed to coalesce: the two high-cadence OPERATIONAL
+    // classes (hang/orphan). Everything else — heuristic command alerts, escalations, decoy reads, permission
+    // violations, anything Critical — returns null and is NEVER coalesced. Hangs key per owning harness so a
+    // flood from one harness can't suppress another's first hang; orphans share one key (they carry no owner).
+    private static string? CadenceClassKey(ForemanEvent evt) => evt switch
+    {
+        HangDetectedEvent h   => "hang/" + (h.ParentHarnessType ?? h.ParentHarnessName ?? "unattributed"),
+        OrphanDetectedEvent   => "orphan",
+        _                     => null,
+    };
+
+    /// <summary>Once per window: fold the coalesced operational-toast counts into one logged notice + one gentle balloon.</summary>
+    private void FlushCadenceRollup()
+    {
+        try
+        {
+            var rolled = _cadence.Flush();
+            if (rolled.Count == 0) return;
+
+            var total = rolled.Sum(r => r.Suppressed);
+            var window = _settings.CadenceGovernor.EffectiveWindowSeconds;
+            var parts = string.Join(", ", rolled.Select(r => $"{r.ClassKey} ×{r.Suppressed}"));
+            var msg = $"Quieted {total} repetitive operational notice(s) in the last {window}s ({parts}). "
+                    + "Each is still in the log.";
+
+            // Logged record (InfoEvent → shows in the log, never toasts on its own — so this can't re-flood).
+            _bus.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Cadence", msg));
+
+            // One gentle rollup balloon so the operator knows coalescing is active and where to look — but
+            // respect game mode (don't pop over a fullscreen app) and never more than once per window.
+            if (SurfaceAllowed(ForemanSeverity.Low))
+            {
+                _lastBalloonEvent = null;   // clicking the rollup opens the log
+                TryShowNotification("cadence rollup", "Foreman Agent Safety — repetitive notices quieted",
+                    msg, H.NotifyIcon.Core.NotificationIcon.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Note("cadence rollup", ex);
         }
     }
 
@@ -574,6 +641,7 @@ public sealed class TrayController : IEventSink, IDisposable
 
     public void Dispose()
     {
+        _cadenceFlushTimer?.Stop();
         _gameMode?.Dispose();
         _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views
         _settingsWindow?.Close();

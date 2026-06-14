@@ -96,6 +96,7 @@ public partial class SettingsWindow : Window
         NotifyHangCheck.IsChecked    = _settings.NotifyOnHang;
         NotifyOrphanCheck.IsChecked  = _settings.NotifyOnOrphan;
         NotifyCriticalCheck.IsChecked = _settings.NotifyOnCriticalCommand;
+        CoalesceNotifyCheck.IsChecked = _settings.CadenceGovernor.Enabled;
         PersistLogCheck.IsChecked    = _settings.EventLogPersist;
         MonitorAllCheck.IsChecked    = _settings.MonitorAllProcesses;
         RunElevatedCheck.IsChecked   = _settings.RunElevated;
@@ -224,6 +225,7 @@ public partial class SettingsWindow : Window
         _settings.NotifyOnHang               = NotifyHangCheck.IsChecked == true;
         _settings.NotifyOnOrphan             = NotifyOrphanCheck.IsChecked == true;
         _settings.NotifyOnCriticalCommand    = NotifyCriticalCheck.IsChecked == true;
+        _settings.CadenceGovernor.Enabled    = CoalesceNotifyCheck.IsChecked == true;
         _settings.EventLogPersist            = PersistLogCheck.IsChecked == true;
         _settings.MonitorAllProcesses        = MonitorAllCheck.IsChecked == true;
         _settings.IdleCleanupEnabled         = IdleCleanupCheck.IsChecked == true;
