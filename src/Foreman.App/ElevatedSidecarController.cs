@@ -92,6 +92,18 @@ public sealed class ElevatedSidecarController : IDisposable
             if (!LaunchSidecar(pipeName, nonce)) return;   // exe missing or UAC declined
 
             await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
+
+            // Reject a non-elevated racer: the cmdline nonce is readable by same-user processes, so a medium-IL
+            // agent could scrape it and connect first. The genuine sidecar runs elevated — anything that isn't is
+            // an impersonator, dropped before any frame is trusted (the nonce check below is the second factor).
+            if (PipeClientGuard.ConnectedClientIsNotElevated(server.SafePipeHandle, out var notElevatedReason))
+            {
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Sidecar",
+                    $"Rejected a process impersonating the elevated sidecar over its pipe ({notElevatedReason})."));
+                return;
+            }
+
             using var reader = new StreamReader(server, new UTF8Encoding(false));
 
             // Handshake: the first line must be our nonce, else it isn't the sidecar we launched.
