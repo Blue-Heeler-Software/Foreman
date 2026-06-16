@@ -7,7 +7,9 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using Foreman.Core.Events;
 using Foreman.Core.Ipc;
+using Foreman.Core.Models;
 
 namespace Foreman.App;
 
@@ -150,6 +152,19 @@ public sealed class ElevatedSidecarController : IDisposable
     {
         var exe = Path.Combine(AppContext.BaseDirectory, "sidecar", "Foreman.EtwSidecar.exe");
         if (!File.Exists(exe)) return false;
+
+        // Never launch an UNTRUSTED binary with administrator rights. The sidecar sits in a same-user-writable
+        // dir and forces requireAdministrator, so an overwritten sidecar would turn Foreman's branded UAC prompt
+        // into a privilege-escalation primitive. Require it to carry the same Authenticode signature as Foreman.
+        var (trusted, reason) = SidecarIntegrity.Verify(exe);
+        if (!trusted)
+        {
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Sidecar",
+                $"Refused to launch the elevated sidecar — {reason} This can mean the sidecar binary was tampered " +
+                "with to hijack Foreman's administrator prompt. Reinstall Foreman from a trusted source."));
+            return false;
+        }
 
         var args = $"--pipe {pipeName} --nonce {nonce} --parent {Environment.ProcessId}";
         if (_captureNet) args += " --capture-net";
