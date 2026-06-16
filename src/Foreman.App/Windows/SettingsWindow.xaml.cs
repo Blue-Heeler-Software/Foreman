@@ -262,6 +262,12 @@ public partial class SettingsWindow : Window
         {
             if (startupWanted != StartupManager.IsEnabled())
                 StartupManager.SetEnabled(startupWanted);
+
+            // If they just enabled it from a drive that may be absent at sign-in (removable / network / a
+            // secondary disk like W:), say so now — that's the silent "didn't start at boot" trap.
+            if (startupWanted && StartupManager.GetDriveWarning() is { } warn)
+                MessageBox.Show(warn, "Foreman Agent Safety — start with Windows",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {

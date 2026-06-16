@@ -104,6 +104,13 @@ public partial class App : Application
         // re-point the HKCU Run entry at the exe that's actually running. Best-effort.
         StartupManager.RepairIfNeeded();
 
+        // Warn if auto-start points at a drive that may be absent at sign-in (removable / network / a secondary
+        // disk like W:) — HKCU Run fails silently when the drive isn't mounted, the classic "didn't start at
+        // boot" trap. Surface it as a notice (log + tray), not fatal.
+        if (StartupManager.GetDriveWarning() is { } startupDriveWarning)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Startup", startupDriveWarning));
+
         PatternLibrary.Instance.Initialize();
 
         // Durable event log: persist every published event to disk (JSONL) so the Event Log tab

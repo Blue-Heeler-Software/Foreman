@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace Foreman.Core.Settings;
 
 /// <summary>
@@ -60,5 +62,46 @@ public static class StartupRegistration
             return false;                                             // already us
 
         return !fileExists(registered);                               // heal only if the target is gone
+    }
+
+    /// <summary>Why an auto-start target's drive may be missing at logon. SystemDrive = safe.</summary>
+    public enum StartupDriveRisk { SystemDrive, NonSystemFixed, Removable, Network, Unknown }
+
+    /// <summary>
+    /// Classifies the risk that an auto-start exe won't be reachable at sign-in because of WHERE it lives.
+    /// HKCU Run entries fire early at logon and fail SILENTLY when the path's drive isn't mounted — so a target
+    /// on anything but the system drive can leave Foreman quietly not starting: a removable stick, a network
+    /// share, or a secondary/external FIXED disk (e.g. W:) that was disconnected or mounted late. Note a USB or
+    /// external drive often reports as Fixed, so "not the system drive" — not just DriveType.Removable — is the
+    /// signal that matters. <paramref name="driveType"/> is the OS-reported type of the target's drive,
+    /// gathered by the caller (kept as a parameter so this stays platform-free and unit-testable).
+    /// </summary>
+    public static StartupDriveRisk ClassifyDriveRisk(string? exePath, string? systemDriveRoot, DriveType driveType)
+    {
+        var root = string.IsNullOrWhiteSpace(exePath) ? null : Path.GetPathRoot(exePath);
+        if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(systemDriveRoot)) return StartupDriveRisk.Unknown;
+
+        if (driveType == DriveType.Removable) return StartupDriveRisk.Removable;
+        if (driveType == DriveType.Network)   return StartupDriveRisk.Network;
+
+        return string.Equals(root.TrimEnd('\\', '/'), systemDriveRoot.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)
+            ? StartupDriveRisk.SystemDrive
+            : StartupDriveRisk.NonSystemFixed;   // e.g. W: — a fixed but non-system disk that can be disconnected/late
+    }
+
+    /// <summary>A user-facing warning for a risky auto-start drive, or null when it's safe (system drive / unknown).</summary>
+    public static string? DescribeDriveRisk(StartupDriveRisk risk, string? exePath)
+    {
+        var drive = (string.IsNullOrWhiteSpace(exePath) ? null : Path.GetPathRoot(exePath)?.TrimEnd('\\', '/')) ?? "that drive";
+        return risk switch
+        {
+            StartupDriveRisk.Removable =>
+                $"Start-with-Windows points at a removable drive ({drive}). Foreman won't start at sign-in whenever that drive is unplugged — install it on the system drive instead.",
+            StartupDriveRisk.Network =>
+                $"Start-with-Windows points at a network drive ({drive}). Foreman won't start at sign-in until that share is connected — install it on the system drive instead.",
+            StartupDriveRisk.NonSystemFixed =>
+                $"Start-with-Windows points at {drive}, not the system drive. If {drive} is disconnected or mounts late at sign-in, Foreman silently won't start — install it on the system drive instead.",
+            _ => null,   // SystemDrive / Unknown — no warning
+        };
     }
 }
