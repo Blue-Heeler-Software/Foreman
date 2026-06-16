@@ -47,6 +47,17 @@ public static class SecretRedactor
         (new Regex(@"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}", Opts), Mask),                      // OpenAI / Anthropic
         (new Regex(@"\bAIza[0-9A-Za-z_\-]{35,}", Opts), Mask),                                    // Google API key (>=35 body)
         (new Regex(@"\bAKIA[0-9A-Z]{16}\b", Opts), Mask),                                          // AWS access key id
+        (new Regex(@"\bsk_(?:live|test)_[A-Za-z0-9]{20,}", Opts), Mask),                            // Stripe secret key
+        (new Regex(@"\brk_(?:live|test)_[A-Za-z0-9]{20,}", Opts), Mask),                            // Stripe restricted key
+        (new Regex(@"\bgithub_pat_[A-Za-z0-9_]{30,}", Opts), Mask),                                 // GitHub fine-grained PAT
+        (new Regex(@"\bglpat-[A-Za-z0-9_\-]{20,}", Opts), Mask),                                    // GitLab PAT
+        (new Regex(@"\bnpm_[A-Za-z0-9]{36}\b", Opts), Mask),                                        // npm automation token
+        (new Regex(@"\bhf_[A-Za-z0-9]{30,}", Opts), Mask),                                          // Hugging Face token
+        (new Regex(@"\bxai-[A-Za-z0-9]{20,}", Opts), Mask),                                         // xAI key
+        (new Regex(@"\bSG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}", Opts), Mask),                 // SendGrid key
+        // PEM private-key block (RSA/EC/OPENSSH/PGP). Singleline so '.' spans the base64 body across newlines.
+        (new Regex(@"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----",
+                   Opts | RegexOptions.Singleline), Mask),
     ];
 
     /// <summary>Returns <paramref name="input"/> with secret-shaped substrings masked. Idempotent.</summary>
@@ -67,6 +78,8 @@ public static class SecretRedactor
     public static ForemanEvent RedactEvent(ForemanEvent evt) => evt switch
     {
         CommandAlertEvent c => c with { CommandLine = Redact(c.CommandLine), Message = Redact(c.Message) },
+        // PermissionViolationEvent carries the offending path/command in Detail, which is persisted — mask it too.
+        PermissionViolationEvent p => p with { Message = Redact(p.Message), Detail = Redact(p.Detail) },
         _                   => evt with { Message = Redact(evt.Message) },
     };
 }

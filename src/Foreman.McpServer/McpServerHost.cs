@@ -284,9 +284,12 @@ public sealed class McpServerHost : IAsyncDisposable
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Foreman");
             Directory.CreateDirectory(dir);
+            // Redact before persisting. This is the lone disk sink that handled an agent-influenced exception
+            // (a JSON-RPC body / tool arg can ride into ex.Message/inner exceptions); every other egress sink
+            // already routes through SecretRedactor, so close the gap rather than write the raw ToString().
             File.AppendAllText(
                 Path.Combine(dir, "mcp-errors.log"),
-                $"[{DateTimeOffset.UtcNow:O}] {ex}\n\n");
+                Foreman.Core.Security.SecretRedactor.Redact($"[{DateTimeOffset.UtcNow:O}] {ex}") + "\n\n");
         }
         catch { /* best-effort diagnostics only */ }
     }

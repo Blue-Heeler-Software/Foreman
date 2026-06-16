@@ -32,6 +32,29 @@ public sealed class SecretRedactorTests
         Assert.DoesNotContain("AIzaSyA1234567890", redacted);
     }
 
+    [Theory]   // broadened vendor token shapes (deep-review E3) — an agent can't pick a format outside the set
+    [InlineData("stripe --key sk_live_REDACTED", "sk_live_REDACTED")]
+    [InlineData("gh auth: github_pat_11ABCDEFG0aaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbb", "github_pat_11ABCDEFG0aaaaaaaaaaaa")]
+    [InlineData("CI_TOKEN glpat-abcdefghij1234567890", "glpat-abcdefghij1234567890")]
+    [InlineData("npm publish --//registry/:_authToken=npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm_abcdefghijklmnopqrstuvwxyz0123456789")]
+    [InlineData("huggingface-cli login hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345", "hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345")]
+    [InlineData("export XAI_API_KEY=xai-abcdefghijklmnopqrstuvwx", "xai-abcdefghijklmnopqrstuvwx")]
+    public void Masks_BroadenedTokenShapes(string input, string secretBody)
+    {
+        var r = SecretRedactor.Redact(input);
+        Assert.Contains(Mask, r);
+        Assert.DoesNotContain(secretBody, r);
+    }
+
+    [Fact]   // a PEM private-key block (multi-line) is masked whole
+    public void Masks_PemPrivateKeyBlock()
+    {
+        var pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nAbCdEfGh+IjKl/MnOpQr\n-----END OPENSSH PRIVATE KEY-----";
+        var r = SecretRedactor.Redact($"cat id_ed25519:\n{pem}\n");
+        Assert.Contains(Mask, r);
+        Assert.DoesNotContain("b3BlbnNzaC1rZXktdjEAAAAA", r);
+    }
+
     [Fact]
     public void KeepsVisiblePrefix_SoReaderSeesWhatWasMasked()
     {
@@ -103,5 +126,20 @@ public sealed class SecretRedactorTests
         var r = Assert.IsType<InfoEvent>(SecretRedactor.RedactEvent(evt));
         Assert.Equal(evt.Id, r.Id);
         Assert.Contains(Mask, r.Message);
+    }
+
+    [Fact]   // deep-review E4: PermissionViolationEvent.Detail is persisted, so it must be redacted too
+    public void RedactEvent_PermissionViolation_MasksDetailAndMessage()
+    {
+        var evt = new PermissionViolationEvent(
+            DateTimeOffset.UnixEpoch, "src",
+            "blocked write to a denied path with GITHUB_TOKEN=ghp_1234567890abcdefghij1234567890abcdef",
+            4321, "claude-code-default", "CommandBlocked",
+            "cmd: curl https://x --api-key abcdef1234567890");
+        var r = Assert.IsType<PermissionViolationEvent>(SecretRedactor.RedactEvent(evt));
+        Assert.Equal(evt.Id, r.Id);
+        Assert.Contains(Mask, r.Detail);
+        Assert.DoesNotContain("abcdef1234567890", r.Detail);
+        Assert.DoesNotContain("ghp_1234567890", r.Message);
     }
 }

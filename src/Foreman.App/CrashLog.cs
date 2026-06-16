@@ -16,9 +16,12 @@ internal static class CrashLog
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman");
             Directory.CreateDirectory(dir);
+            // Redact before persisting: an exception's Message/stack can echo secret-bearing input (a URL with
+            // userinfo, KEY=token, a tool argument). crash.log sits in a same-user-readable dir, and the OS-event-log
+            // copy of the same crash is already redacted — keep parity so the local copy isn't the leak.
             File.AppendAllText(
                 Path.Combine(dir, "crash.log"),
-                $"[{DateTimeOffset.UtcNow:O}] {context}: {ex}\n\n");
+                Foreman.Core.Security.SecretRedactor.Redact($"[{DateTimeOffset.UtcNow:O}] {context}: {ex}") + "\n\n");
         }
         catch { /* logging must never throw */ }
     }
