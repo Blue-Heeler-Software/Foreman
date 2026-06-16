@@ -31,6 +31,16 @@ public sealed class HookSuppressionTests : IClassFixture<PatternLibraryFixture>
         Assert.Equal("win-002", match.RuleId);
     }
 
+    [Fact]   // B3 / deep-review #21: a ".claude/hooks/" substring that isn't a launched script can't forge the exemption
+    public void HookMarkerNotALaunchedScript_DoesNotSuppress()
+    {
+        // The marker appears, but as harmless text — not as a launched .ps1 — so win-002 must still fire.
+        var match = _analyzer.Analyze(
+            @"powershell -NoProfile -ExecutionPolicy Bypass -Command ""echo .claude/hooks/ ; whoami""", "powershell.exe");
+        Assert.NotNull(match);
+        Assert.Equal("win-002", match.RuleId);
+    }
+
     [Fact]
     public void EncodedCommand_IsNotSuppressed_EvenWithHookPathPresent()
     {

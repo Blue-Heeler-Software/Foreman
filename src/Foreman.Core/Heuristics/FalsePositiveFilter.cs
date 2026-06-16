@@ -1,5 +1,6 @@
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
+using System.Text.RegularExpressions;
 
 namespace Foreman.Core.Heuristics;
 
@@ -71,11 +72,25 @@ public static class FalsePositiveFilter
         return false;
     }
 
+    // Script extensions a launcher-hygiene exemption may legitimately apply to.
+    private const string _hookScriptTail = @"[^\s""'|;&]*\.(?:ps1|psm1|cmd|bat|sh|py)\b";
+
     private static bool ContainsAnyMarker(string commandLine, IEnumerable<string> markers)
     {
+        // A trusted-hook marker must PREFIX the actually-launched script path (…/.claude/hooks/foo.ps1), not just
+        // appear somewhere on the line. Otherwise a same-user agent forges the exemption with a harmless token
+        // like `echo .claude/hooks/ ; <malicious>` and silences the execution-policy-bypass rule for free.
         foreach (var marker in markers)
-            if (commandLine.Contains(marker, StringComparison.OrdinalIgnoreCase))
-                return true;
+        {
+            if (string.IsNullOrEmpty(marker)) continue;
+            try
+            {
+                if (Regex.IsMatch(commandLine, Regex.Escape(marker) + _hookScriptTail,
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)))
+                    return true;
+            }
+            catch (RegexMatchTimeoutException) { /* pathological input — treat as no match */ }
+        }
         return false;
     }
 }

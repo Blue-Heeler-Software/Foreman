@@ -229,7 +229,10 @@ public sealed class WmiProcessWatcher : IDisposable
                     {
                         var owner = _tree.FindHarnessTypeAncestor(record.Pid);
                         var treeKey = (owner ?? record).Key;
-                        if (_credSweep.Observe(treeKey, match.RuleId, now) is { } swept)
+                        // A downgraded harness env-snapshot ("cred-013-harness") is still an env-store read — feed
+                        // the sweep its CANONICAL store id so the downgrade can't shrink the distinct-store count.
+                        var sweepRuleId = match.RuleId == "cred-013-harness" ? "cred-013" : match.RuleId;
+                        if (_credSweep.Observe(treeKey, sweepRuleId, now) is { } swept)
                         {
                             var who = owner?.HarnessType ?? record.Name;
                             _bus.Publish(new CommandAlertEvent(

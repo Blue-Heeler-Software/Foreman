@@ -13,6 +13,14 @@ public sealed class CommandAnalyzer
         RegexOptions.Compiled | RegexOptions.IgnoreCase,
         TimeSpan.FromMilliseconds(50));
 
+    // A genuine Codex startup snapshot enumerates ALL env vars; a harvester FILTERS the env output for secrets
+    // (`Get-ChildItem Env: | findstr TOKEN`). The cred-013 downgrade is forgeable by appending the delimiter
+    // marker to ANY command, so refuse the downgrade when the line also credential-filters the enumeration.
+    private static readonly Regex _envCredentialFilter = new(
+        @"(?is)(?:findstr|Select-String|\bsls\b|grep|Where-Object|\?)\b.{0,40}?\b(?:token|key|secret|passw|cred|api[-_]?key|aws|ssh|gpg)\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase,
+        TimeSpan.FromMilliseconds(50));
+
     private CommandAnalyzer() { }
 
     /// <summary>
@@ -88,7 +96,13 @@ public sealed class CommandAnalyzer
 
     private static bool IsHarnessEnvironmentSnapshot(string commandLine)
     {
-        try { return _harnessEnvironmentSnapshot.IsMatch(commandLine); }
+        try
+        {
+            // Must look like the bare startup enumeration AND must NOT be filtering the env output for secrets —
+            // the latter is a harvest dressed up with the (forgeable) delimiter marker, never the benign form.
+            return _harnessEnvironmentSnapshot.IsMatch(commandLine)
+                && !_envCredentialFilter.IsMatch(commandLine);
+        }
         catch (RegexMatchTimeoutException) { return false; }
     }
 
