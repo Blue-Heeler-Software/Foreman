@@ -18,6 +18,20 @@ public sealed class SettingsStore
     /// </summary>
     public static string? LastLoadFault { get; private set; }
 
+    /// <summary>
+    /// Supplies the install secret used to HMAC-seal the security-significant settings. Set once by the App at
+    /// startup (BEFORE the first <see cref="Load()"/>) from the MCP install token. Null → sealing/verification is
+    /// skipped (e.g. in tests), so this never blocks load/save. See <see cref="SettingsSeal"/>.
+    /// </summary>
+    public static Func<string?>? IntegritySecret { get; set; }
+
+    /// <summary>
+    /// The seal verdict from the most recent <see cref="Load()"/>: Tampered means settings.json was edited by
+    /// something other than Foreman (the watchdog's own posture may have been weakened on disk). The App reads
+    /// this after the event bus is wired and raises a Critical tamper alert. Unsealed when no secret/seal yet.
+    /// </summary>
+    public static SettingsSealVerdict LastSealVerdict { get; private set; } = SettingsSealVerdict.Unsealed;
+
     public static ForemanSettings Load() => Load(_path);
 
     public static void Save(ForemanSettings settings) => Save(settings, _path);
@@ -26,11 +40,21 @@ public sealed class SettingsStore
     public static ForemanSettings Load(string path)
     {
         LastLoadFault = null;
+        LastSealVerdict = SettingsSealVerdict.Unsealed;
         if (!File.Exists(path)) return new ForemanSettings();
         try
         {
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<ForemanSettings>(json, _opts) ?? new ForemanSettings();
+            var settings = JsonSerializer.Deserialize<ForemanSettings>(json, _opts) ?? new ForemanSettings();
+
+            // Tamper check: a same-user agent can edit this file directly to weaken posture (disable the presence
+            // lock / log persistence) — bypassing the UI gates entirely. Foreman re-seals on every save, so a
+            // mismatch here means the file was changed by something other than Foreman. We can't PREVENT that
+            // (no privilege boundary), but the App turns this verdict into a loud Critical + OS-event-log entry.
+            if (IntegritySecret?.Invoke() is { Length: > 0 } secret)
+                LastSealVerdict = SettingsSeal.Verify(settings, ReadSeal(path), secret);
+
+            return settings;
         }
         catch (Exception ex)
         {
@@ -67,6 +91,21 @@ public sealed class SettingsStore
             File.Copy(tmp, path, overwrite: true);
             try { File.Delete(tmp); } catch { /* leftover temp is harmless */ }
         }
+
+        // Re-seal the security-significant projection so any later edit Foreman didn't make is detectable at load.
+        if (IntegritySecret?.Invoke() is { Length: > 0 } secret)
+        {
+            try { File.WriteAllText(SealPath(path), SettingsSeal.Compute(settings, secret)); }
+            catch { /* seal is best-effort; a missing seal reads as Unsealed, never blocks the save */ }
+        }
+    }
+
+    private static string SealPath(string path) => path + ".seal";
+
+    private static string? ReadSeal(string path)
+    {
+        try { return File.Exists(SealPath(path)) ? File.ReadAllText(SealPath(path)).Trim() : null; }
+        catch { return null; }
     }
 
     private static string? Quarantine(string path)

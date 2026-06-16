@@ -90,6 +90,11 @@ public partial class App : Application
             args.SetObserved();
         };
 
+        // Seal the security-significant settings with the install secret BEFORE loading, so the load can detect a
+        // direct (non-Foreman) edit of settings.json — the same-user agent's way around the UI presence gates.
+        var installSecret = new McpAuthToken().Value;
+        SettingsStore.IntegritySecret = () => installSecret;
+
         var settings = SettingsStore.Load();
         _cts = new CancellationTokenSource();
 
@@ -387,6 +392,16 @@ public partial class App : Application
         if (SettingsStore.LastLoadFault is { } settingsFault)
             EventBus.Instance.Publish(new MonitoringNoticeEvent(
                 DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Settings", settingsFault));
+
+        // Tamper canary: settings.json was edited by something other than Foreman (the seal didn't match). A
+        // same-user agent can't be PREVENTED from editing a file it owns, but this makes it LOUD — High so it
+        // hits the tray and the OS event log (the durable external record), not a silent posture weakening.
+        if (SettingsStore.LastSealVerdict == SettingsSealVerdict.Tampered)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Settings",
+                "settings.json was modified outside Foreman — its security posture (presence lock, log persistence, " +
+                "decoy auditing, disabled harnesses, mutes, Trust) may have been weakened. Review Settings and re-apply " +
+                "from the UI to re-seal; investigate if you didn't make this change."));
 
         // first-run dialog deferred to idle so it doesn't block server startup
         var port = settings.McpPort;
