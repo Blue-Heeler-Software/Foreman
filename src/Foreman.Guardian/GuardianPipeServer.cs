@@ -14,7 +14,8 @@ namespace Foreman.Guardian;
 /// </summary>
 public sealed class GuardianPipeServer
 {
-    public const string PipeName = "foreman-guardian";
+    /// <summary>Shared with the app client via the Core contract, so the two can never drift.</summary>
+    public const string PipeName = GuardianPipe.Name;
 
     private readonly GuardianAuthority _authority;
 

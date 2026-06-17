@@ -13,6 +13,12 @@ namespace Foreman.Core.Ipc.Guardian;
 /// JSON; every request carries a <see cref="GuardianRequest.RequestId"/> so responses can be paired even if they
 /// interleave on the shared pipe.
 /// </summary>
+/// <summary>Shared name of the guardian's duplex control pipe (server = guardian, client = app).</summary>
+public static class GuardianPipe
+{
+    public const string Name = "foreman-guardian";
+}
+
 public static class GuardianRpc
 {
     public const string Hello = "hello";                 // liveness + capability probe
