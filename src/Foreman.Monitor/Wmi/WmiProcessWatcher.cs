@@ -182,6 +182,25 @@ public sealed class WmiProcessWatcher : IDisposable
         }
     }
 
+    // A process NAMED like Foreman but running from a DIFFERENT path than the real Foreman is a strong IOC: an
+    // agent impersonating the watchdog (e.g. to inherit a self-exemption or fool the operator). Foreman's own
+    // process is excluded by path. Best-effort — an elevated impostor's path may be unreadable (the rarer case).
+    private static readonly HashSet<string> _foremanProcessNames = new(StringComparer.OrdinalIgnoreCase)
+        { "Foreman.exe", "Foreman.App.exe", "Foreman", "Foreman.App" };
+
+    private void CheckForemanImpersonation(ProcessRecord record)
+    {
+        if (!_foremanProcessNames.Contains(record.Name)) return;
+        var realPath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(record.ExecutablePath) || string.IsNullOrEmpty(realPath)) return;
+        if (string.Equals(record.ExecutablePath, realPath, StringComparison.OrdinalIgnoreCase)) return;
+
+        _bus.Publish(new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Integrity",
+            $"A process named '{record.Name}' (pid {record.Pid}) is running from '{record.ExecutablePath}', not " +
+            "Foreman's own install location — a process impersonating the watchdog. Investigate and stop it."));
+    }
+
     private void OnProcessCreated(object sender, EventArrivedEventArgs e)
     {
         try
@@ -190,6 +209,7 @@ public sealed class WmiProcessWatcher : IDisposable
             var record = BuildRecord(proc);
             _tree.OnProcessCreated(record);
             ApplyProfileInheritance(record);
+            CheckForemanImpersonation(record);
 
             // heuristic analysis on the thread pool — don't block the WMI callback
             if (!string.IsNullOrWhiteSpace(record.CommandLine))

@@ -346,6 +346,35 @@ public sealed class HangDetectorTests
         Assert.Single(hits);
     }
 
+    [Fact]   // B7/#39: a REUSED pid gets a fresh hang slot — a dead process's dedup state can't suppress the new one
+    public void ReusedPid_IsNotSuppressedByDeadProcessState()
+    {
+        var tree    = new ProcessTreeTracker();
+        var harness = IdleFor(902_001, 902_000, "node.exe", silentMin: 200, uptimeMin: 300, isHarness: true, harnessType: "claude-code");
+        var first   = IdleFor(902_002, harness.Pid, "bash.exe", silentMin: 40, uptimeMin: 50);
+        tree.OnProcessCreated(harness);
+        tree.OnProcessCreated(first);
+
+        var hits = CaptureHangsFor(902_002);
+        // Flat threshold (scaling off) so the test is about PID-reuse dedup, not context scaling.
+        var settings = new ForemanSettings
+        {
+            HangThresholdMinutes = 30,
+            IdleThresholdScaling = new Foreman.Core.Alerts.IdleThresholdScalingSettings { Enabled = false },
+        };
+        var sut = new HangDetector(_bus, settings, tree);
+
+        sut.Check(first);          // first process → alert #1
+        sut.Forget(first.Pid);     // first process exits
+
+        // A NEW process reuses pid 902_002 with a DIFFERENT start time — must still alert, not be suppressed.
+        var reused = IdleFor(902_002, harness.Pid, "python.exe", silentMin: 40, uptimeMin: 45);
+        tree.OnProcessCreated(reused);
+        sut.Check(reused);         // distinct (pid, start) slot → alert #2
+
+        Assert.Equal(2, hits.Count);
+    }
+
     [Fact]   // contrast to the above: same 35m child, but the whole tree is at rest → held below the 45m at-rest threshold
     public void HarnessAtRest_PresentOperator_HoldsBelowAtRestThreshold()
     {

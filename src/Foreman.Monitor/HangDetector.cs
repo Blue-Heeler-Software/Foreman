@@ -27,14 +27,15 @@ public sealed class HangDetector
     private readonly ProcessTreeTracker _tree;
     private readonly IUserInputProvider? _operator;
 
-    // key: pid → the LastIoChangeTime snapshot at the moment we last alerted.
-    // We only re-alert if this advances (i.e. I/O resumed and the process hung anew).
-    private readonly ConcurrentDictionary<int, DateTimeOffset> _alertedEpoch = new();
+    // key: (pid, process start-time) → the LastIoChangeTime snapshot at the moment we last alerted. Keyed by the
+    // COMPOSITE, not the bare pid, so a REUSED pid is a distinct slot: a new process can't inherit a dead one's
+    // dedup/cooldown state and have its own hang silently suppressed. We only re-alert if this advances.
+    private readonly ConcurrentDictionary<(int Pid, long StartTicks), DateTimeOffset> _alertedEpoch = new();
 
-    // key: pid → wall-clock time we last alerted. A bursty child that keeps waking briefly then
+    // key: (pid, start-time) → wall-clock time we last alerted. A bursty child that keeps waking briefly then
     // idling past the threshold would otherwise produce a fresh "no I/O" alert every cycle; the
-    // cooldown (HangRealertCooldownMinutes) rate-limits re-alerts per PID so they can't breed.
-    private readonly ConcurrentDictionary<int, DateTimeOffset> _lastAlertAt = new();
+    // cooldown (HangRealertCooldownMinutes) rate-limits re-alerts per process so they can't breed.
+    private readonly ConcurrentDictionary<(int Pid, long StartTicks), DateTimeOffset> _lastAlertAt = new();
 
     // Processes that legitimately sit idle or are part of Foreman's own monitoring stack.
     // A no-I/O alert on these is noise rather than an actionable stalled harness child.
@@ -100,7 +101,9 @@ public sealed class HangDetector
         // silent stretch we already reported — stay quiet. When the process resumes
         // I/O, ProcessTreeTracker.UpdateIoCounters advances LastIoChangeTime, so a
         // subsequent hang produces a fresh alert.
-        if (_alertedEpoch.TryGetValue(record.Pid, out var epoch) && epoch == record.LastIoChangeTime)
+        // Composite key (pid + start-time) so PID reuse can't suppress a fresh process's hang.
+        var key = (record.Pid, record.StartTime.UtcTicks);
+        if (_alertedEpoch.TryGetValue(key, out var epoch) && epoch == record.LastIoChangeTime)
             return;
 
         // ── Re-alert cooldown ────────────────────────────────────────────────────
@@ -109,15 +112,15 @@ public sealed class HangDetector
         // Mark the episode seen so it won't re-trigger the instant the cooldown lapses, then stay quiet.
         var cooldown = TimeSpan.FromMinutes(_settings.HangRealertCooldownMinutes);
         if (cooldown > TimeSpan.Zero
-            && _lastAlertAt.TryGetValue(record.Pid, out var last)
+            && _lastAlertAt.TryGetValue(key, out var last)
             && DateTimeOffset.UtcNow - last < cooldown)
         {
-            _alertedEpoch[record.Pid] = record.LastIoChangeTime;
+            _alertedEpoch[key] = record.LastIoChangeTime;
             return;
         }
 
-        _alertedEpoch[record.Pid] = record.LastIoChangeTime;
-        _lastAlertAt[record.Pid]  = DateTimeOffset.UtcNow;
+        _alertedEpoch[key] = record.LastIoChangeTime;
+        _lastAlertAt[key]  = DateTimeOffset.UtcNow;
         record.State = ProcessState.Hanging;
 
         // If we have an owning harness, name it in the message and event so the user
@@ -163,8 +166,10 @@ public sealed class HangDetector
     /// <summary>Drops the per-process alert state when a process exits (called by the poller/watcher).</summary>
     public void Forget(int pid)
     {
-        _alertedEpoch.TryRemove(pid, out _);
-        _lastAlertAt.TryRemove(pid, out _);
+        // Keys are composite now; drop every (pid, *) entry on exit so a dead process leaves no state behind
+        // for a future reuse of the same pid.
+        foreach (var k in _alertedEpoch.Keys) if (k.Pid == pid) _alertedEpoch.TryRemove(k, out _);
+        foreach (var k in _lastAlertAt.Keys)  if (k.Pid == pid) _lastAlertAt.TryRemove(k, out _);
     }
 
     /// <summary>
