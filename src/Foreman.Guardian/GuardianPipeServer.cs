@@ -52,18 +52,32 @@ public sealed class GuardianPipeServer
         await writer.WriteLineAsync(GuardianFrameJson.Line(res).AsMemory(), ct).ConfigureAwait(false);
     }
 
-    private GuardianResponse Dispatch(GuardianRequest req) => req.Kind switch
+    private GuardianResponse Dispatch(GuardianRequest req)
     {
-        GuardianRpc.Hello => Ok(req, GuardianFrameJson.Encode(_authority.Hello())),
-        _ => new GuardianResponse
+        switch (req.Kind)
         {
-            RequestId = req.RequestId,
-            Kind = req.Kind,
-            Ok = false,
-            Error = "not implemented (guardian scaffold)",
-        },
-    };
+            case GuardianRpc.Hello:
+                return Ok(req, GuardianFrameJson.Encode(_authority.Hello()));
+
+            case GuardianRpc.SealHead:
+            {
+                var args = GuardianFrameJson.Decode<SealHeadArgs>(req.Payload);
+                if (args is null) return Bad(req, "missing SealHead args");
+                var seal = _authority.SealHead(args.HeadHash, args.RecordCount);
+                return Ok(req, GuardianFrameJson.Encode(new SealHeadResult { Seal = seal }));
+            }
+
+            case GuardianRpc.GetPinnedHeadKey:
+                return Ok(req, GuardianFrameJson.Encode(new PinnedHeadKeyResult { HeadPublicKeyB64 = _authority.GetPinnedHeadKey() }));
+
+            default:
+                return Bad(req, "not implemented (guardian scaffold)");
+        }
+    }
 
     private static GuardianResponse Ok(GuardianRequest req, string payload) =>
         new() { RequestId = req.RequestId, Kind = req.Kind, Ok = true, Payload = payload };
+
+    private static GuardianResponse Bad(GuardianRequest req, string error) =>
+        new() { RequestId = req.RequestId, Kind = req.Kind, Ok = false, Error = error };
 }

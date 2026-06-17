@@ -10,6 +10,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Foreman.Core.Tests/Foreman.Core.Tests.csproj" />
+    <Project Path="tests/Foreman.Guardian.Tests/Foreman.Guardian.Tests.csproj" />
     <Project Path="tests/Foreman.McpServer.Tests/Foreman.McpServer.Tests.csproj" />
     <Project Path="tests/Foreman.Monitor.Tests/Foreman.Monitor.Tests.csproj" />
   </Folder>

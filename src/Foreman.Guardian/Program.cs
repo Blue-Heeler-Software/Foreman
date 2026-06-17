@@ -17,9 +17,12 @@ if (args.Length > 0 && args[0] is "--version" or "-v")
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-Console.WriteLine($"Foreman Guardian {GuardianAuthority.Version} — listening on pipe '{GuardianPipeServer.PipeName}' (Ctrl+C to stop).");
+// Open (or create) the TPM/PCP head-seal key in THIS process's context. Run as the LocalSystem service, the key
+// is SYSTEM-scoped and unusable by the medium-IL agent; run in a console for smoke tests, it's user-scoped.
+using var authority = GuardianAuthority.CreateWithTpmKey();
+Console.WriteLine($"Foreman Guardian {GuardianAuthority.Version} — pipe '{GuardianPipeServer.PipeName}', headKey={(authority.HeadKeyAvailable ? "available" : "unavailable (no TPM)")} (Ctrl+C to stop).");
 
-var server = new GuardianPipeServer(new GuardianAuthority());
+var server = new GuardianPipeServer(authority);
 try
 {
     await server.RunAsync(cts.Token);
