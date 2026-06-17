@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Console-subsystem exe: runs as a LocalSystem Windows service (via SCM) in production, and is
+         directly runnable for smoke tests and the install/uninstall verbs. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <RootNamespace>Foreman.Guardian</RootNamespace>
+    <AssemblyName>Foreman.Guardian</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core only: the cross-platform IPC contract + crypto seams. No app↔guardian reference. -->
+    <ProjectReference Include="..\Foreman.Core\Foreman.Core.csproj" />
+  </ItemGroup>
+
+</Project>

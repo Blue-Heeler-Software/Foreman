@@ -3,6 +3,7 @@
     <Project Path="src/Foreman.App/Foreman.App.csproj" />
     <Project Path="src/Foreman.Core/Foreman.Core.csproj" />
     <Project Path="src/Foreman.EtwSidecar/Foreman.EtwSidecar.csproj" />
+    <Project Path="src/Foreman.Guardian/Foreman.Guardian.csproj" />
     <Project Path="src/Foreman.McpServer/Foreman.McpServer.csproj" />
     <Project Path="src/Foreman.Monitor/Foreman.Monitor.csproj" />
     <Project Path="src/Foreman.TestHarness/Foreman.TestHarness.csproj" />
