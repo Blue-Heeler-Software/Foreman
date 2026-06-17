@@ -1,32 +1,52 @@
+using System.ServiceProcess;
 using Foreman.Guardian;
 
-// Foreman Guardian (circle-back Phase A) — the OPT-IN LocalSystem authority that will hold the event-log
-// head-seal key and the settings-seal secret behind the SYSTEM boundary, so a same-user (medium-IL) agent can
-// neither use the key nor read the secret to forge a seal.
+// Foreman Guardian (circle-back Phase A) — the OPT-IN LocalSystem authority that holds the event-log head-seal
+// key behind the SYSTEM boundary, so a same-user (medium-IL) agent can neither use the key nor forge a seal.
 //
-// STEP 3 (scaffold): a console-hostable duplex pipe server that answers Hello only. The SYSTEM key custody, the
-// SealHead / settings-seal RPCs, the SCM service-host wiring, and the elevated --install/--uninstall verbs arrive
-// in the following steps. Runnable now for a smoke test:  Foreman.Guardian.exe  (then connect + send Hello).
+// Verbs:
+//   --version                      print version and exit
+//   --service                      run under the Service Control Manager (LocalSystem) — how it runs in production
+//   --install [--foreman <path>]   ELEVATED self-install: integrity-gate, copy to ProgramFiles, ACL, register, start
+//   --uninstall                    ELEVATED: stop + delete the service, remove its dirs
+//   (no verb)                      console host for smoke tests (same authority + authenticated pipe)
 
-if (args.Length > 0 && args[0] is "--version" or "-v")
+if (Has("--version") || Has("-v"))
 {
     Console.WriteLine(GuardianAuthority.Version);
     return 0;
 }
 
+if (Has("--service"))
+{
+    ServiceBase.Run(new GuardianService());   // blocks until the SCM stops the service
+    return 0;
+}
+
+if (Has("--install"))
+    return GuardianInstaller.Install(ArgValue("--foreman"), Console.WriteLine);
+
+if (Has("--uninstall"))
+    return GuardianInstaller.Uninstall(Console.WriteLine);
+
+// ── console smoke host ──────────────────────────────────────────────────────────────────────────────
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-// Open (or create) the TPM/PCP head-seal key in THIS process's context. Run as the LocalSystem service, the key
-// is SYSTEM-scoped and unusable by the medium-IL agent; run in a console for smoke tests, it's user-scoped.
 using var authority = GuardianAuthority.CreateWithTpmKey();
 Console.WriteLine($"Foreman Guardian {GuardianAuthority.Version} — pipe '{GuardianPipeServer.PipeName}', headKey={(authority.HeadKeyAvailable ? "available" : "unavailable (no TPM)")} (Ctrl+C to stop).");
 
-var server = new GuardianPipeServer(authority);
-try
-{
-    await server.RunAsync(cts.Token);
-}
+var server = new GuardianPipeServer(authority, Console.WriteLine);
+try { await server.RunAsync(cts.Token); }
 catch (OperationCanceledException) { /* clean shutdown */ }
-
 return 0;
+
+bool Has(string flag) => args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
+
+string? ArgValue(string flag)
+{
+    for (var i = 0; i < args.Length - 1; i++)
+        if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
+            return args[i + 1];
+    return null;
+}

@@ -15,4 +15,10 @@
     <ProjectReference Include="..\Foreman.Core\Foreman.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Run as a Windows service (ServiceBase) + best-effort OS-event-log records for the blackbox handoff. -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" />
+    <PackageReference Include="System.Diagnostics.EventLog" />
+  </ItemGroup>
+
 </Project>
