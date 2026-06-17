@@ -198,7 +198,7 @@ public static class ForemanMcpTools
         return new { events };
     }
 
-    [McpServerTool, Description("Pre-flight check a command line. Foreman heuristically evaluates it and returns allow/block/escalate.")]
+    [McpServerTool, Description("Pre-flight check a command line. Foreman heuristically evaluates it and returns allow / allow_once / escalate / block.")]
     public static object ReportSuspiciousCommand(
         [Description("The command line to evaluate")] string commandLine,
         [Description("What the harness is trying to accomplish")] string context = "",
@@ -248,7 +248,8 @@ public static class ForemanMcpTools
             DateTimeOffset.UtcNow,
             match.Severity,
             source,
-            $"Harness pre-checked command [{match.RuleId}]: {commandLine[..Math.Min(80, commandLine.Length)]}",
+            $"Harness pre-checked command [{match.RuleId}]: {commandLine[..Math.Min(80, commandLine.Length)]}"
+                + (string.IsNullOrWhiteSpace(context) ? "" : $" — context: {context[..Math.Min(200, context.Length)]}"),
             commandLine,
             match.RuleId,
             match.RuleName,
@@ -280,6 +281,7 @@ public static class ForemanMcpTools
             harnessId = resolvedHarness,
             profileName = profile?.Name,
             profileBlocked,
+            context = string.IsNullOrWhiteSpace(context) ? null : context,   // echoed back so the harness sees its intent was recorded
         };
     }
 
@@ -458,9 +460,15 @@ public static class ForemanMcpTools
     public static object GetMyPermissions(
         [Description("Optional harness ID, e.g. 'claude-code' or 'codex'")] string? harnessId = null,
         [Description("Optional caller process ID for live profile attribution")] int? processId = null,
-        [Description("Optional explicit profile name, e.g. 'codex-default'")] string? profileName = null)
+        [Description("Optional explicit profile name, e.g. 'codex-default'")] string? profileName = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        // A per-harness token may only read ITS OWN profile (get_MY_permissions). Ignore the requested
+        // harnessId/processId/profileName for a scoped caller so it can't read a sibling's enforcement posture
+        // (blocked patterns, denied paths). The raw install token authenticates as operator and may read any.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; profileName = null; }
         var resolvedHarness = state.ResolveHarnessId(harnessId, processId);
         var profile = state.ResolveProfile(profileName, resolvedHarness, processId);
         if (profile is null)
@@ -513,6 +521,9 @@ public static class ForemanMcpTools
     {
         var state = _state ?? new ForemanState();
         var caller = CallerScope.From(http);
+        // Scoped caller reads only its own modalities; the token identity wins over the param (the doc says
+        // "defaults to the caller's token identity"). Operator may query any harness.
+        if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; }
         var resolved = state.ResolveHarnessId(harnessId ?? caller.ScopeHarness, processId);
 
         var enabledIds = resolved is not null
@@ -676,11 +687,16 @@ public static class ForemanMcpTools
             }
         }
 
+        // Echo the EFFECTIVE severity (an unrecognised input was coerced to High above); note the coercion in
+        // reason so the caller isn't told a route was computed for the string it sent when it wasn't.
+        if (!string.Equals(severity, parsedSeverity.ToString(), StringComparison.OrdinalIgnoreCase))
+            reason = $"Unrecognised severity '{severity}' — routed as {parsedSeverity}. " + reason;
+
         return new
         {
             enabled = settings.Enabled,
             targetHarnessId,
-            severity,
+            severity = parsedSeverity.ToString(),
             selected,
             candidates,
             usedFallback = selection.UsedFallback,
@@ -775,22 +791,6 @@ public static class ForemanMcpTools
             findings = findings.Select(f => new { f.Server, f.Tool, f.Signal, f.Excerpt }).ToArray(),
         };
     }
-
-    private static bool TargetMatches(string[] targets, string targetHarnessId) =>
-        targets.Length == 0 ||
-        targets.Any(t => t == "*" || string.Equals(t, targetHarnessId, StringComparison.OrdinalIgnoreCase));
-
-    private static bool HandlesSeverity(string[] minimumSeverities, int severityRank)
-    {
-        if (minimumSeverities.Length == 0) return true;
-        return minimumSeverities
-            .Select(SeverityRank)
-            .Where(r => r >= 0)
-            .Any(min => severityRank >= min);
-    }
-
-    private static int SeverityRank(string severity) =>
-        Enum.TryParse<ForemanSeverity>(severity, true, out var parsed) ? (int)parsed : -1;
 
     private static object AskRequestShape(AskHarnessRequest request) => new
     {

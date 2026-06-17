@@ -28,6 +28,7 @@ public sealed class McpServerHost : IAsyncDisposable
     private readonly McpAuthToken _authToken = new();
     private readonly PairingManager _pairing = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _peerMismatchSeen = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _staleTokenSeen = new();
     private WebApplication? _app;
 
     public ForemanState State { get; } = new();
@@ -131,9 +132,11 @@ public sealed class McpServerHost : IAsyncDisposable
                         await Deny(ctx, StatusCodes.Status403Forbidden, verdict.Reason).ConfigureAwait(false);
                         return;
                     }
-                    var auth = _authToken.Authenticate(ExtractToken(ctx.Request));
+                    var presented = ExtractToken(ctx.Request);
+                    var auth = _authToken.Authenticate(presented);
                     if (!auth.Ok)
                     {
+                        MaybeReportStaleToken(presented);   // surface "your saved token went stale — reconnect"
                         ctx.Response.Headers.WWWAuthenticate = "Bearer";
                         await Deny(ctx, StatusCodes.Status401Unauthorized,
                             "A valid Foreman MCP token is required. See mcp-setup.txt in %LocalAppData%\\Foreman.").ConfigureAwait(false);
@@ -264,6 +267,26 @@ public sealed class McpServerHost : IAsyncDisposable
             $"presented '{claimed}'s per-harness token on a loopback connection — a harness token replayed by a different " +
             "process, i.e. possible token theft." +
             (_settings.McpPeerBindingEnforce ? " Request blocked." : " (Alert-only; binding enforcement is off.)")));
+    }
+
+    // A previously-minted per-harness token that no longer validates is almost always STALE: Foreman's install
+    // secret was rotated (e.g. mcp.token deleted/regenerated), orphaning the harness's saved token so it 401s
+    // silently with no hint to reconnect. Surface a throttled, operator-facing notice (via the bus, so it lands
+    // in the hash-chained event log, the OS event log, and the tray) pointing at the one-click fix. The id is the
+    // token's UNVERIFIED claim (bounded by McpAuthToken.LooksLikeStaleHarnessToken); we never act on it.
+    private void MaybeReportStaleToken(string? presented)
+    {
+        if (!_authToken.LooksLikeStaleHarnessToken(presented, out var id)) return;
+        var now = DateTimeOffset.UtcNow;
+        // De-dupe per claimed id (10 min); cap distinct ids so a forged-token spammer can't grow the dict / flood.
+        if (_staleTokenSeen.TryGetValue(id, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
+        if (_staleTokenSeen.Count > 64 && !_staleTokenSeen.ContainsKey(id)) return;
+        _staleTokenSeen[id] = now;
+
+        _bus.Publish(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.McpAuth",
+            $"Harness '{id}' presented a Foreman MCP token this server can't validate — most likely Foreman's token " +
+            $"secret was rotated, so '{id}'s saved token is stale. Open Connect Agent and reconnect '{id}' to re-issue " +
+            "its token. If you didn't expect this, it could be a forged token from another local process."));
     }
 
     private static string? ExtractToken(HttpRequest req)

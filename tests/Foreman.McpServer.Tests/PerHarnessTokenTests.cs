@@ -71,6 +71,40 @@ public sealed class McpAuthTokenTests : IDisposable
     [InlineData("fmh1.notbase64!.zzz")]
     [InlineData("fmh1.Y29kZXg")]            // missing mac segment
     public void Junk_IsRejected(string? presented) => Assert.False(_token.Authenticate(presented).Ok);
+
+    // ── Stale-token detection: a token minted under a now-rotated secret reads as "stale, reconnect" ──
+    [Fact]
+    public void LooksLikeStaleHarnessToken_TokenFromRotatedSecret_IsStale_AndExtractsId()
+    {
+        var otherDir = Path.Combine(Path.GetTempPath(), "foreman-token-old-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(otherDir);
+        try
+        {
+            var oldInstall = new McpAuthToken(otherDir);          // a different install secret
+            var staleForUs = oldInstall.MintHarnessToken("cursor"); // valid there, orphaned here
+            Assert.False(_token.Authenticate(staleForUs).Ok);
+            Assert.True(_token.LooksLikeStaleHarnessToken(staleForUs, out var id));
+            Assert.Equal("cursor", id);
+        }
+        finally { try { Directory.Delete(otherDir, true); } catch { } }
+    }
+
+    [Fact]
+    public void LooksLikeStaleHarnessToken_CurrentlyValidToken_IsNotStale()
+        => Assert.False(_token.LooksLikeStaleHarnessToken(_token.MintHarnessToken("codex"), out _));
+
+    [Fact]
+    public void LooksLikeStaleHarnessToken_OperatorToken_IsNotStale()
+        => Assert.False(_token.LooksLikeStaleHarnessToken(_token.Value, out _));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("garbage")]
+    [InlineData("fmh1.Y29kZXg")]        // missing mac segment
+    [InlineData("fmh1.QmFkSWQ.zzz")]    // decodes to "BadId" — uppercase, not a plausible harness id
+    public void LooksLikeStaleHarnessToken_JunkOrImplausibleId_IsFalse(string? presented)
+        => Assert.False(_token.LooksLikeStaleHarnessToken(presented, out _));
 }
 
 // ── Tool scoping: a per-harness caller can't see or act on another harness ───────
@@ -246,5 +280,27 @@ public sealed class CallerScopeToolTests : IDisposable
         using var doc = J(ForemanMcpTools.ReplyToAskHarnessRequest(req.RequestId, "done", harnessId: "claude-code", http: AsCodex));
         Assert.False(doc.RootElement.GetProperty("accepted").GetBoolean());
         Assert.Equal("pending", _state.GetAskHarnessRequest(req.RequestId)!.Status);
+    }
+
+    [Fact]
+    public void GetMyPermissions_CodexCaller_CannotReadClaudeByParam()
+    {
+        // get_MY_permissions: a scoped caller's token identity wins over the requested harnessId.
+        using var doc = J(ForemanMcpTools.GetMyPermissions(harnessId: "claude-code", http: AsCodex));
+        Assert.Equal("codex", doc.RootElement.GetProperty("harnessId").GetString());
+    }
+
+    [Fact]
+    public void GetMyInstructions_CodexCaller_CannotReadClaudeByParam()
+    {
+        using var doc = J(ForemanMcpTools.GetMyInstructions(http: AsCodex, harnessId: "claude-code"));
+        Assert.Equal("codex", doc.RootElement.GetProperty("harnessId").GetString());
+    }
+
+    [Fact]
+    public void GetMyInstructions_Operator_CanQueryAnyHarness()
+    {
+        using var doc = J(ForemanMcpTools.GetMyInstructions(http: AsOperator, harnessId: "claude-code"));
+        Assert.Equal("claude-code", doc.RootElement.GetProperty("harnessId").GetString());
     }
 }

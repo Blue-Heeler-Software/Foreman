@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -125,6 +126,37 @@ public sealed class McpAuthToken
         }
         return McpAuthResult.Fail;
     }
+
+    /// <summary>
+    /// True if a FAILED token is a structurally-valid per-harness token (<c>fmh1.&lt;b64(id)&gt;.&lt;mac&gt;</c>)
+    /// whose id is a plausible harness id — i.e. it failed only because the MAC doesn't match the CURRENT install
+    /// secret. The overwhelmingly common cause is secret rotation (the saved token went stale); the only other
+    /// cause is a forged token. The id is UNVERIFIED (carried in the token, not proven by the MAC), so callers
+    /// must treat it as a claim. Returns false for the operator token, missing/garbage tokens, or an implausible
+    /// id — so a forged token can't inject arbitrary text into a log line.
+    /// </summary>
+    public bool LooksLikeStaleHarnessToken(string? presented, out string harnessId)
+    {
+        harnessId = "";
+        if (string.IsNullOrEmpty(presented) || !presented.StartsWith(HarnessTokenPrefix, StringComparison.Ordinal))
+            return false;
+        if (Authenticate(presented).Ok) return false;   // a token that still validates isn't stale
+        var parts = presented.Split('.');
+        if (parts.Length != 3 || parts[0] != "fmh1") return false;
+        string id;
+        try { id = Encoding.UTF8.GetString(Base64UrlDecode(parts[1])); }
+        catch { return false; }
+        if (!IsPlausibleHarnessId(id)) return false;
+        harnessId = id;
+        return true;
+    }
+
+    // Harness ids are lowercase tokens like "codex", "claude-code", "lm-studio", "custom:foo.exe" (MintHarnessToken
+    // lower-cases them). Bound the shape and length so a forged token can't inject arbitrary/oversized text into the
+    // operator-facing stale-token notice.
+    private static bool IsPlausibleHarnessId(string id) =>
+        id.Length is > 0 and <= 64 &&
+        id.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c is '-' or '_' or ':' or '.');
 
     private static string ComputeMac(string secret, string harnessId)
     {
