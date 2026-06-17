@@ -41,6 +41,8 @@ public static class OsEventIds
     public const int CrashFatal = 1003;          // AppDomain unhandled; app dying
     public const int CrashUnobservedTask = 1004;
     public const int SecondInstanceBlocked = 1005;
+    public const int LogChainAnchor = 1006;      // external rollback witness for the on-disk audit chain head
+    public const int AbnormalTermination = 1007; // prior instance was killed (dangling run) — watchdog-of-the-watchdog
 
     // 2000–2099 — health / state
     public const int MonitoringDegraded = 2000;
@@ -80,7 +82,19 @@ public interface IOsEventLogSink
 
     /// <summary>Best-effort write of one entry. NEVER throws. <paramref name="message"/> is assumed already redacted.</summary>
     void Write(int eventId, OsEventCategory category, ForemanSeverity severity, string message);
+
+    /// <summary>
+    /// Reads back up to <paramref name="maxEntries"/> of THIS source's own recent entries, NEWEST FIRST, so the
+    /// app can recover the last log-chain anchor (offline-rollback detection) and the last lifecycle run-marker
+    /// (kill detection) from the durable external record on launch. Best-effort: returns empty when the platform
+    /// can't read its log or the source isn't registered. Default is empty so platforms that can only write
+    /// (or the no-op sink) need not implement it. NEVER throws.
+    /// </summary>
+    IReadOnlyList<OsEventRecord> ReadOwnRecent(int maxEntries) => [];
 }
+
+/// <summary>One entry read back from the OS event log: the numeric event id and its (already-redacted) message.</summary>
+public sealed record OsEventRecord(int EventId, string Message);
 
 /// <summary>No-op sink: the default, and what unsupported platforms / a disabled feature resolve to. Always unavailable.</summary>
 public sealed class NullOsEventLogSink : IOsEventLogSink

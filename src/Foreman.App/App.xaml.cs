@@ -34,6 +34,10 @@ public partial class App : Application
     // crash before settings load is still recorded; set from settings.OsEventLog.Enabled once loaded so the
     // operator's opt-out is honoured for stop + crash too, not just start.
     private bool _osLogEnabled = true;
+    // For the external rollback-anchor (B8): the on-disk audit log path + the chain head this launch inherited.
+    // We stamp the head into the OS event log at start and at clean stop so the next launch can detect a rollback.
+    private string? _eventLogPath;
+    private LogAnchor? _launchAnchor;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -59,6 +63,12 @@ public partial class App : Application
 
         // Pick the OS event-log sink before wiring crash handlers, so a crash on the way up is still handed off.
         _osLog = new WindowsEventLogSink();
+
+        // Watchdog-of-the-watchdog: ask Windows to relaunch Foreman if it terminates abnormally (crash/hang), and
+        // note whether THIS launch is such a relaunch. Best-effort; the OS-event-log kill detection below stands on
+        // its own even when the OS doesn't auto-restart (e.g. a hard TerminateProcess).
+        AppRecovery.RegisterForRestart();
+        var restartedByOs = AppRecovery.WasRestartedByOs(e.Args);
 
         // A tray watchdog must survive transient UI faults (e.g. a flaky Shell_NotifyIcon tray call) and
         // RECORD them, not crash. Recover on the dispatcher thread; log everything (incl. truly-fatal ones).
@@ -101,6 +111,14 @@ public partial class App : Application
         // Honour the operator's opt-out for the direct lifecycle/crash writes from here on (start/stop/crash).
         _osLogEnabled = settings.OsEventLog.Enabled;
 
+        // Read back Foreman's own recent OS-event-log entries ONCE (the durable external record): used below for the
+        // anti-rollback anchor (was the last witnessed chain head reverted?) and the kill detector (did the prior
+        // instance die without a clean stop or crash record?). Empty when the OS log is off/unavailable → no alarm.
+        var recentOsLog = _osLogEnabled ? _osLog.ReadOwnRecent(256) : (IReadOnlyList<OsEventRecord>)[];
+        var priorShutdown = LifecycleForensics.ClassifyFrom(recentOsLog);
+        var anchorVerdict = AnchorVerdict.NoPriorAnchor;
+        LogAnchor? witnessedAnchor = null;
+
         // Mirror the security-significant event stream to the OS event log (blackbox handoff). Lifecycle events
         // are written directly (below); this forwarder handles escalations/detections/violations, redacted.
         EventBus.Instance.Subscribe(new OsEventLogForwarder(_osLog, () => settings.OsEventLog.Enabled));
@@ -129,6 +147,17 @@ public partial class App : Application
             // Verify the PRIOR-session chain before we append anything this session; surface tamper as a
             // High notice rather than throwing into startup (a pre-chain "legacy" log verifies clean).
             var integrity = eventLog.Verify();
+
+            // External anti-rollback anchor (B8): snapshot the on-disk chain heads BEFORE this session appends, and
+            // compare against the head we last witnessed in the OS event log. The in-file chain alone can't catch a
+            // rollback — the agent reverts the JSONL and its seal together, so Verify still passes — but a revert
+            // removes the externally-witnessed head from the file, which the out-of-band OS-log witness exposes.
+            _eventLogPath = eventLog.FilePath;
+            foreach (var r in recentOsLog)
+                if (r.EventId == OsEventIds.LogChainAnchor && LogAnchor.TryParse(r.Message) is { } a) { witnessedAnchor = a; break; }
+            anchorVerdict = AnchorPolicy.Check(LogHeadReader.ReadChainedHashes(_eventLogPath), witnessedAnchor);
+            _launchAnchor = LogHeadReader.CurrentAnchor(_eventLogPath);
+
             var eventLogFailureReported = 0;
             EventBus.Instance.Subscribe(e =>
             {
@@ -383,6 +412,10 @@ public partial class App : Application
             var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1";
             _osLog.Write(OsEventIds.Started, OsEventCategory.Lifecycle, ForemanSeverity.Info,
                 $"Foreman Agent Safety started — v{ver}, pid {Environment.ProcessId}, MCP :{settings.McpPort}.");
+            // Stamp the chain head this launch inherited into the OS log as the external rollback witness for the
+            // NEXT launch (also re-stamped at clean stop). count 0 = nothing persisted yet, so nothing to witness.
+            if (_launchAnchor is { Count: > 0 } launchAnchor)
+                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info, launchAnchor.Format());
             if (!_osLog.IsAvailable && _osLog.UnavailableReason is { } why)
                 EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.OsLog", why));
         }
@@ -402,6 +435,27 @@ public partial class App : Application
                 "settings.json was modified outside Foreman — its security posture (presence lock, log persistence, " +
                 "decoy auditing, disabled harnesses, mutes, Trust) may have been weakened. Review Settings and re-apply " +
                 "from the UI to re-seal; investigate if you didn't make this change."));
+
+        // Anti-rollback canary (B8): the chain head Foreman last witnessed in the OS event log is gone from the
+        // on-disk log — it was reverted to an earlier state while Foreman was down. The in-file hash chain can't
+        // catch this (the agent rolls the chain + seal back together); the external OS-log witness can. Critical.
+        if (anchorVerdict == AnchorVerdict.Rolledback)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Critical, "Foreman.LogIntegrity",
+                "Event log ROLLBACK detected: the audit-chain head Foreman last recorded externally" +
+                (witnessedAnchor is { } w ? $" (count {w.Count})" : "") +
+                " is no longer present on disk. The on-disk log was reverted to an earlier state while Foreman was " +
+                "down — the classic same-user move to erase tracks. Treat recent on-disk history as untrustworthy and investigate."));
+
+        // Watchdog-of-the-watchdog (B9): the prior instance left a dangling run in the OS log — no clean stop and no
+        // crash record, the signature of a forced kill (an agent disabling its watchdog). Reconstructed here and
+        // re-logged, so the kill itself becomes a durable, surviving Critical.
+        if (priorShutdown == PriorShutdown.Killed)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Critical, "Foreman.Watchdog",
+                "The previous Foreman instance was terminated WITHOUT a clean shutdown or crash record — the " +
+                "signature of a forced kill. " + (restartedByOs ? "Windows auto-restarted Foreman. " : "") +
+                "Monitoring has resumed; review what a monitored agent was doing when Foreman stopped."));
 
         // first-run dialog deferred to idle so it doesn't block server startup
         var port = settings.McpPort;
@@ -536,8 +590,15 @@ public partial class App : Application
         // Blackbox handoff: record the clean stop BEFORE the disposal cascade, so the OS log shows a deliberate
         // shutdown (a missing StoppedClean between two Started entries = the process was killed or crashed).
         if (_osLogEnabled)
+        {
+            // Re-stamp the FINAL chain head as the external rollback witness: after a clean stop the file is
+            // untouched until the next launch, so next launch's anchor head must equal this — a mismatch then = an
+            // offline revert. Recompute from disk (the session appended since the start-anchor).
+            if (_eventLogPath is { } logPath && LogHeadReader.CurrentAnchor(logPath) is { Count: > 0 } finalAnchor)
+                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info, finalAnchor.Format());
             _osLog.Write(OsEventIds.StoppedClean, OsEventCategory.Lifecycle, ForemanSeverity.Info,
                 $"Foreman Agent Safety stopped (clean shutdown), pid {Environment.ProcessId}.");
+        }
 
         _cts?.Cancel();
         _alertResolver?.Dispose();

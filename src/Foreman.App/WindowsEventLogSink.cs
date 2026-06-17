@@ -65,6 +65,42 @@ public sealed class WindowsEventLogSink : IOsEventLogSink
         }
     }
 
+    /// <summary>
+    /// Reads back this source's own recent entries, newest first — the durable external record Foreman uses on
+    /// launch to detect an offline log rollback (the LogChainAnchor) and a prior hard-kill (the last lifecycle
+    /// run-marker). The Application log is shared, so we filter to our source and bound the raw scan so a busy box
+    /// can't make startup crawl. Best-effort: any failure yields an empty list (→ no false rollback/kill alarm).
+    /// </summary>
+    public IReadOnlyList<OsEventRecord> ReadOwnRecent(int maxEntries)
+    {
+        if (!_available || maxEntries <= 0) return [];
+        var found = new List<OsEventRecord>(Math.Min(maxEntries, 64));
+        try
+        {
+            using var log = new EventLog(LogName);
+            var entries = log.Entries;
+            var total = entries.Count;
+            // Scan newest→oldest; stop once we have enough of OUR entries or we've examined a generous raw cap
+            // (Foreman writes sparsely, so its recent entries can be spread across many other-source entries).
+            const int rawScanCap = 20_000;
+            var scanned = 0;
+            for (var i = total - 1; i >= 0 && found.Count < maxEntries && scanned < rawScanCap; i--, scanned++)
+            {
+                EventLogEntry e;
+                try { e = entries[i]; } catch { continue; }
+                if (!string.Equals(e.Source, SourceName, StringComparison.Ordinal)) continue;
+                var id = (int)(e.InstanceId & 0xFFFF);   // the event id as written via WriteEntry(..., eventId, ...)
+                found.Add(new OsEventRecord(id, e.Message ?? string.Empty));
+            }
+        }
+        catch
+        {
+            // Reading the event log can throw (access, service churn) — never let it disturb launch.
+            return found;
+        }
+        return found;
+    }
+
     private static EventLogEntryType MapType(ForemanSeverity s) => s switch
     {
         ForemanSeverity.Critical or ForemanSeverity.High => EventLogEntryType.Error,
