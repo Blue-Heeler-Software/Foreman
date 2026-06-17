@@ -139,17 +139,22 @@ public sealed class McpServerHost : IAsyncDisposable
                             "A valid Foreman MCP token is required. See mcp-setup.txt in %LocalAppData%\\Foreman.").ConfigureAwait(false);
                         return;
                     }
-                    // Carry the proven identity to the tools (read via IHttpContextAccessor). A per-harness
-                    // token scopes tools to that harness; the raw install token authenticates as operator.
-                    ctx.Items[CallerScope.HttpItemKey] = new CallerScope(auth.HarnessId, auth.IsOperator);
-
                     // Peer-PID binding (second factor): a per-harness token must be presented BY that harness's
                     // own process. Bind the token's claimed identity to the loopback peer the OS says opened the
-                    // socket. A different process replaying a harness's token is token theft — never legitimate:
-                    // log Critical, and block when enforcement is on. (Match / unattributed always pass.)
-                    if (auth.HarnessId is { Length: > 0 } claimedHarness
-                        && CheckPeerBinding(ctx, claimedHarness) == PeerBindingVerdict.Mismatch
-                        && _settings.McpPeerBindingEnforce)
+                    // socket. A different process replaying a harness's token is token theft — never legitimate.
+                    // (Match / unattributed always pass; the alert is raised inside CheckPeerBinding.)
+                    var peerVerdict = auth.HarnessId is { Length: > 0 } claimedHarness
+                        ? CheckPeerBinding(ctx, claimedHarness)
+                        : PeerBindingVerdict.Unattributed;   // operator token is not peer-bound
+
+                    // Carry the proven identity to the tools (read via IHttpContextAccessor). A per-harness token
+                    // scopes tools to that harness; the raw install token authenticates as operator. PeerMismatch
+                    // lets the MUTATING tools fail closed on token theft even when enforcement is off.
+                    ctx.Items[CallerScope.HttpItemKey] = new CallerScope(
+                        auth.HarnessId, auth.IsOperator, PeerMismatch: peerVerdict == PeerBindingVerdict.Mismatch);
+
+                    // When enforcement is on, a mismatch blocks the whole request (reads included).
+                    if (peerVerdict == PeerBindingVerdict.Mismatch && _settings.McpPeerBindingEnforce)
                     {
                         await Deny(ctx, StatusCodes.Status403Forbidden,
                             "Token/identity mismatch: this per-harness token belongs to a different harness than the calling process.").ConfigureAwait(false);

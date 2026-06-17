@@ -8,7 +8,7 @@ namespace Foreman.McpServer;
 /// <see cref="IHttpContextAccessor"/>). The raw install token authenticates as the unscoped OPERATOR;
 /// a per-harness token scopes the caller to its own harness so it can't read or act on another's data.
 /// </summary>
-public sealed record CallerScope(string? HarnessId, bool IsOperator)
+public sealed record CallerScope(string? HarnessId, bool IsOperator, bool PeerMismatch = false)
 {
     public const string HttpItemKey = "foreman.caller";
 
@@ -30,4 +30,13 @@ public sealed record CallerScope(string? HarnessId, bool IsOperator)
 
     /// <summary>The harness a non-operator caller is locked to (its own); null for operator (unscoped).</summary>
     public string? ScopeHarness => IsOperator ? null : HarnessId;
+
+    /// <summary>
+    /// May this caller invoke STATE-MUTATING tools (acknowledge / reset-metrics / reply-to-ask)? An operator
+    /// always may. A per-harness caller may NOT when its token was presented by a DIFFERENT process than the
+    /// harness it claims (<see cref="PeerMismatch"/>) — that is token theft, so it must not be able to
+    /// self-exonerate (ack its alerts, wipe its escalation, forge an Ask reply) even when peer-binding
+    /// ENFORCEMENT is off. Reads remain governed by <see cref="CanAccess"/>.
+    /// </summary>
+    public bool CanMutate => IsOperator || !PeerMismatch;
 }

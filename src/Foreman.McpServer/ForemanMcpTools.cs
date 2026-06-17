@@ -1,3 +1,4 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Mcp;
@@ -163,6 +164,8 @@ public static class ForemanMcpTools
         // A per-harness token may only acknowledge alerts about ITSELF — it can't clear a sibling's
         // alert to hide its tracks. Unattributable alerts are operator-only.
         var caller = CallerScope.From(http);
+        if (!caller.CanMutate)
+            return new { acknowledged = false, reason = "Refused: this per-harness token was presented by a different process than the harness it claims (possible token theft)." };
         if (!caller.IsOperator && !caller.CanAccess(state.ResolveAlertHarness(evt)))
             return new { acknowledged = false, reason = "That alert does not belong to your harness." };
 
@@ -321,6 +324,8 @@ public static class ForemanMcpTools
         var state = _state ?? new ForemanState();
         // A per-harness token may only reset ITS OWN metrics — it can't wipe a sibling's escalation.
         var caller = CallerScope.From(http);
+        if (!caller.CanMutate)
+            return new { reset = false, harnessId, reason = "Refused: this per-harness token was presented by a different process than the harness it claims (possible token theft)." };
         if (!caller.IsOperator && !caller.CanAccess(harnessId))
             return new { reset = false, harnessId, reason = "You can only reset your own harness's metrics." };
 
@@ -428,6 +433,8 @@ public static class ForemanMcpTools
         // can't impersonate another harness by passing a different harnessId. (ForemanState still
         // enforces request ownership against this resolved identity.)
         var caller = CallerScope.From(http);
+        if (!caller.CanMutate)
+            return new { accepted = false, reason = "Refused: this per-harness token was presented by a different process than the harness it claims (possible token theft)." };
         if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; }
 
         var result = state.ReplyToAskHarnessRequest(requestId, response.Trim(), actionTaken, harnessId, processId);
@@ -635,54 +642,77 @@ public static class ForemanMcpTools
     {
         var state = _state ?? new ForemanState();
         var settings = state.LlmTriage;
-        var severityRank = SeverityRank(severity);
+        if (!Enum.TryParse<ForemanSeverity>(severity, ignoreCase: true, out var parsedSeverity))
+            parsedSeverity = ForemanSeverity.High;
 
-        var candidates = settings.AuditorPreferences
-            .Where(p => p.Enabled)
-            .Where(p => TargetMatches(p.TargetHarnessIds, targetHarnessId))
-            .Where(p => !settings.PreventSelfAudit ||
-                        !string.Equals(p.AuditorId, targetHarnessId, StringComparison.OrdinalIgnoreCase))
-            .Where(p => HandlesSeverity(p.MinimumSeverities, severityRank))
-            .Select(p =>
-            {
-                var runningHarnessCount = string.Equals(p.AuditorType, "harness", StringComparison.OrdinalIgnoreCase)
-                    ? state.GetProcessesForHarness(p.AuditorId, includeChildren: false).Count()
-                    : 0;
-                var available = string.Equals(p.AuditorType, "api", StringComparison.OrdinalIgnoreCase)
-                    ? !string.IsNullOrWhiteSpace(p.ApiEndpoint)
-                    : runningHarnessCount > 0;
+        var snapshot = state.GetProcessSnapshot?.Invoke().ToList() ?? [];
+        var connected = BuildConnectedHarnessIds(state);
 
-                return new
-                {
-                    p.AuditorId,
-                    p.AuditorType,
-                    displayName = string.IsNullOrWhiteSpace(p.DisplayName) ? p.AuditorId : p.DisplayName,
-                    p.Priority,
-                    available,
-                    runningHarnessCount,
-                    p.ApiEndpoint,
-                    p.Model,
-                };
-            })
-            .Where(c => !requireAvailable || c.available)
-            .OrderByDescending(c => c.available)
-            .ThenByDescending(c => c.Priority)
+        var selection = AuditRouteResolver.Resolve(settings, targetHarnessId, parsedSeverity, snapshot, connected);
+        var candidates = selection.Candidates
+            .Where(c => !requireAvailable || c.Available)
+            .Select(ToAuditRouteDto)
             .ToArray();
+
+        object? selected = null;
+        string reason = selection.Reason;
+        if (selection.Selected is { } primary && (!requireAvailable || primary.Available))
+        {
+            selected = ToAuditRouteDto(primary);
+        }
+        else if (requireAvailable)
+        {
+            var available = selection.Candidates.FirstOrDefault(c => c.Available);
+            if (available is not null)
+            {
+                selected = ToAuditRouteDto(available);
+                reason = available.IsFallback
+                    ? selection.Reason
+                    : "Auditor selected from user preference list.";
+            }
+            else
+            {
+                reason = $"No available auditor matched {targetHarnessId} at this severity.";
+            }
+        }
 
         return new
         {
             enabled = settings.Enabled,
             targetHarnessId,
             severity,
-            selected = settings.Enabled ? candidates.FirstOrDefault() : null,
-            candidates = settings.Enabled ? candidates : [],
-            reason = !settings.Enabled
-                ? "LLM triage routing is disabled in settings."
-                : candidates.Length == 0
-                    ? "No auditor preference matched this target/severity."
-                    : "Auditor selected from user preference list.",
+            selected,
+            candidates,
+            usedFallback = selection.UsedFallback,
+            reason,
         };
     }
+
+    private static HashSet<string> BuildConnectedHarnessIds(ForemanState state)
+    {
+        var clients = state.GetMcpClients?.Invoke() ?? [];
+        var connected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var harness in KnownHarnesses.All)
+        {
+            if (clients.Any(c => SseSessionManager.MatchesHarness(c.Name, null, harness.Id)))
+                connected.Add(harness.Id);
+        }
+        return connected;
+    }
+
+    private static object ToAuditRouteDto(AuditRouteResolver.Candidate c) => new
+    {
+        c.AuditorId,
+        c.AuditorType,
+        displayName = c.DisplayName,
+        c.Priority,
+        available = c.Available,
+        runningHarnessCount = c.RunningHarnessCount,
+        mcpConnected = c.McpConnected,
+        isFallback = c.IsFallback,
+        c.ApiEndpoint,
+        c.Model,
+    };
 
     // Resets a harness's escalation and announces it. If the harness had actually escalated
     // (above Watch), the reset is published as a visible Medium alert rather than a silent Info,
