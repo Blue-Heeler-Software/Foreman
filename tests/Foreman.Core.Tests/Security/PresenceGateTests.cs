@@ -123,6 +123,19 @@ public sealed class PresenceGateTests
     }
 
     [Fact]
+    public async Task ApprovalTtl_ClampedToMax_ForcesReTap_NoIndefiniteReplay()  // B9 polish
+    {
+        var t = DateTimeOffset.UnixEpoch;
+        var s = On(ttl: 86_400);   // operator (or a tampered settings file) set a day-long approval window
+        var (gate, _, v) = Make(s, PresenceResult.Ok("Hello"), now: () => t);
+
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "first"));
+        t = t.AddSeconds(PresenceGate.MaxApprovalTtlSeconds + 1);   // past the hard ceiling, though within the configured day
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "second"));
+        Assert.Equal(2, v.VerifyCalls);   // the clamp forced a re-tap despite the huge configured TTL
+    }
+
+    [Fact]
     public async Task DeniedTap_DoesNotPrimeTheApprovalCache()
     {
         var t = DateTimeOffset.UnixEpoch;

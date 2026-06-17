@@ -14,6 +14,13 @@ public sealed record PresenceDecision(bool Granted, WeakeningAction Action, stri
 /// </summary>
 public sealed class PresenceGate
 {
+    /// <summary>
+    /// Hard ceiling on the approval cache (B9 polish): however high the operator sets ApprovalTtlSeconds, a cached
+    /// tap expires within this window, so an old approval can't be replayed to keep weakening Foreman indefinitely
+    /// — there's always a re-tap at least this often. 5 minutes balances Strict-mode friction against staleness.
+    /// </summary>
+    public const int MaxApprovalTtlSeconds = 300;
+
     private readonly Func<PresenceLockSettings> _settings;
     private readonly IPresenceVerifier _verifier;
     private readonly Action<PresenceDecision> _onDecision;
@@ -43,12 +50,14 @@ public sealed class PresenceGate
         var s = _settings();
         if (!PresenceLockPolicy.RequiresPresence(action, s)) return true;
 
-        // A recent successful tap covers rapid follow-ups within the configured window.
+        // A recent successful tap covers rapid follow-ups within the configured window — but never longer than
+        // MaxApprovalTtlSeconds, so a stale approval can't be replayed indefinitely (B9 polish).
         if (s.ApprovalTtlSeconds > 0)
         {
+            var ttl = Math.Min(s.ApprovalTtlSeconds, MaxApprovalTtlSeconds);
             lock (_lock)
             {
-                if (_now() - _lastApproval < TimeSpan.FromSeconds(s.ApprovalTtlSeconds))
+                if (_now() - _lastApproval < TimeSpan.FromSeconds(ttl))
                 {
                     Report(true, action, detail + " (within approval window)", null);
                     return true;

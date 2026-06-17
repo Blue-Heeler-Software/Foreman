@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Foreman.Core.Security;
@@ -40,6 +41,16 @@ public sealed class DecoyCredentialSettings
 
     /// <summary>Absolute paths Foreman has actually planted, so removal touches only its own decoys.</summary>
     public List<string> PlantedPaths { get; set; } = [];
+
+    /// <summary>
+    /// Per-install random sentinel token (B9 polish), generated on first plant and embedded in every decoy
+    /// alongside the static marker. The shipped binary reveals only the STATIC sentinel — a signature-based
+    /// harvester (e.g. a worm hardcoded to skip "FOREMAN-DECOY-CANARY") can recognise + avoid/scrub that, but it
+    /// cannot know THIS install's random token, so when it grabs a decoy the random token still trips cred-040.
+    /// Empty until the first plant. (A same-user agent that reads this settings file can still learn it — the
+    /// guardian could later hold it SYSTEM-side; this defeats signature harvesters, not per-install recon.)
+    /// </summary>
+    public string? InstanceSentinel { get; set; }
 }
 
 public enum DecoyKind
@@ -132,6 +143,10 @@ public static class DecoyCredentialPolicy
     public const string SentinelAwsKey = "AKIAF0REMANDEC0YAAAA";
     public const string SentinelGitHubToken = "ghp_F0REMANDEC0Y00000000000000000000000000";
 
+    /// <summary>A fresh per-install sentinel (B9 polish): 32 hex chars, no fixed prefix, so the binary reveals no
+    /// pattern a signature harvester could match. Stored in <see cref="DecoyCredentialSettings.InstanceSentinel"/>.</summary>
+    public static string NewInstanceSentinel() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+
     /// <summary>Credential paths the Miasma sweep enumerates — the candidate decoy slots (gaps-only at plant time).</summary>
     public static IReadOnlyList<DecoySpec> Candidates { get; } =
     [
@@ -175,7 +190,8 @@ public static class DecoyCredentialPolicy
         return placements;
     }
 
-    /// <summary>Believable, syntactically-valid, NON-functional content for a decoy of the given kind.</summary>
+    /// <summary>Believable, syntactically-valid, NON-functional content for a decoy of the given kind. Carries the
+    /// static sentinel (removal gate + baseline detection) AND, when set, the per-install sentinel (B9 polish).</summary>
     public static string GenerateContent(DecoyKind kind, DecoyCredentialSettings settings)
     {
         var awsKey = settings is { IncludeAwsCanaryToken: true, AwsCanaryAccessKeyId.Length: > 0 }
@@ -185,7 +201,7 @@ public static class DecoyCredentialPolicy
             ? settings.AwsCanarySecretAccessKey!
             : SentinelMarker + "/wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLE";
 
-        return kind switch
+        var body = kind switch
         {
             // The trailing comment guarantees the sentinel is present even when a real canary key is used
             // for the values, so Remove() can always verify this is Foreman's decoy before deleting it.
@@ -233,6 +249,12 @@ public static class DecoyCredentialPolicy
 
             _ => SentinelMarker + "\n",
         };
+
+        // Append the per-install sentinel so a harvester that grabs the decoy carries a token the binary never
+        // revealed — even if it scrubbed the known static markers, this still trips cred-040.
+        return string.IsNullOrEmpty(settings.InstanceSentinel)
+            ? body
+            : body + $"# {settings.InstanceSentinel}\n";
     }
 
     /// <summary>True if the given text is one of Foreman's decoys (carries the sentinel) — gate removal on this.</summary>
@@ -284,6 +306,11 @@ public sealed class DecoyCredentialManager(IDecoyFileSystem fs)
 {
     public DecoyPlantResult Plant(DecoyCredentialSettings settings)
     {
+        // Mint the per-install sentinel on first plant (B9 polish) so every decoy carries a token unique to this
+        // install, not the binary's well-known static marker.
+        if (string.IsNullOrEmpty(settings.InstanceSentinel))
+            settings.InstanceSentinel = DecoyCredentialPolicy.NewInstanceSentinel();
+
         var planted = new List<string>();
         var skipped = new List<string>();
         // Iterate candidates directly so a real file in a decoy slot is reported as skipped (gaps-only).

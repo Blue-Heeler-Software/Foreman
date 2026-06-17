@@ -400,6 +400,9 @@ public partial class SettingsWindow : Window
                 "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
+        // B9 polish: arm the (possibly just-minted) per-install decoy sentinel for cred-040 detection, live — no restart.
+        Foreman.Core.Heuristics.CommandAnalyzer.DecoySentinelToken = dc.InstanceSentinel;
+
         // Re-apply the elevated auditor whenever the AUDITED PATH SET changed — enable/disable, a reclaimed
         // slot, or a re-plant that added/removed bait — not just when the on/off boolean flipped. Otherwise the
         // sidecar can keep a stale SACL on a path the user just reclaimed for real credentials. UAC re-prompts

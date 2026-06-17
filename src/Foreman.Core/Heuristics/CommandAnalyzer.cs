@@ -8,6 +8,13 @@ public sealed class CommandAnalyzer
 {
     public static CommandAnalyzer Instance { get; } = new();
 
+    /// <summary>
+    /// The per-install decoy sentinel (B9 polish), set by the App from settings when decoys are planted. When this
+    /// random token (unknown to the shipped binary) appears in a command line, a harvester read a decoy and is
+    /// staging/exfiltrating it — synthesizes a Critical cred-040. Null/empty ⇒ only the static cred-040 rule applies.
+    /// </summary>
+    public static string? DecoySentinelToken { get; set; }
+
     private static readonly Regex _harnessEnvironmentSnapshot = new(
         @"(?is)\bGet-ChildItem\s+Env:(?!\w).*_SHELL_ENV_DELIMITER_",
         RegexOptions.Compiled | RegexOptions.IgnoreCase,
@@ -44,6 +51,17 @@ public sealed class CommandAnalyzer
             var normMatch = MatchRules(normalized, processName, profile);
             if (normMatch is not null && (match is null || normMatch.Severity > match.Severity))
                 match = normMatch;
+        }
+
+        // B9 polish: the per-install decoy sentinel (a random token the shipped binary never reveals) appearing in
+        // a command line means a harvester read one of our decoys and is staging its value — Critical, dominating
+        // any lesser match. Plain ordinal Contains (the token is hex, no regex needed).
+        var decoy = DecoySentinelToken;
+        if (!string.IsNullOrEmpty(decoy) && decoy.Length >= 8
+            && (commandLine.Contains(decoy, StringComparison.Ordinal) || normalized.Contains(decoy, StringComparison.Ordinal))
+            && (match is null || match.Severity < ForemanSeverity.Critical))
+        {
+            return DecoySentinelMatch();
         }
 
         // Codex's shell bridge runs `Get-ChildItem Env: … _SHELL_ENV_DELIMITER_` at startup, which trips
@@ -105,6 +123,15 @@ public sealed class CommandAnalyzer
         }
         catch (RegexMatchTimeoutException) { return false; }
     }
+
+    private static RuleMatch DecoySentinelMatch() => new(
+        "cred-040",
+        "decoy credential sentinel observed",
+        "A Foreman decoy (canary) credential's PER-INSTALL sentinel appeared in a command line. Nothing legitimate ever handles a decoy you planted as bait, so a process read one of the fake credential files and is now staging or exfiltrating its value — the highest-confidence sign of an active credential harvester (and the random token means it couldn't have been pre-scrubbed from knowledge of Foreman's binary).",
+        "Treat this as an active credential-theft incident. Identify the process handling the decoy and what it did with it. Real credentials adjacent to the decoy paths should be considered targeted: rotate them. Preserve the event for investigation.",
+        ForemanSeverity.Critical,
+        "cred",
+        "decoy sentinel");
 
     private static RuleMatch HarnessEnvironmentSnapshotNotice() => new(
         "cred-013-harness",

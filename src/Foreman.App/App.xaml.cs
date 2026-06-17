@@ -141,6 +141,9 @@ public partial class App : Application
                 DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Startup", startupDriveWarning));
 
         PatternLibrary.Instance.Initialize();
+        // B9 polish: arm the per-install decoy sentinel (random, not in the binary) so cred-040 fires if a harvester
+        // grabs a decoy. Empty until decoys are first planted; re-armed live by the Settings decoy-apply path.
+        CommandAnalyzer.DecoySentinelToken = settings.DecoyCredentials.InstanceSentinel;
 
         // Durable event log: persist every published event to disk (JSONL) so the Event Log tab
         // survives restarts. Subscribe before anything publishes. The Log VIEW merges these
