@@ -1,11 +1,26 @@
 namespace Foreman.Core.Models;
 
-/// <summary>Static metadata about a supported AI coding harness.</summary>
+/// <summary>What kind of harness this is — drives idle/hang/orphan expectations.</summary>
+public enum HarnessCategory
+{
+    /// <summary>An AI coding agent (Claude Code, Codex, …): bursty I/O, idle = possibly stalled.</summary>
+    CodingAgent,
+    /// <summary>
+    /// A local-model chat/inference host (LM Studio, Ollama, Jan, …). Its backend inference server is
+    /// LONG-LIVED and sits I/O-silent between prompts BY DESIGN, so hang / idle-cleanup / orphan rules tuned for
+    /// coding agents would false-positive on it. Foreman still tracks it and applies a profile, but exempts it
+    /// from those idle-driven signals.
+    /// </summary>
+    LocalModelHost,
+}
+
+/// <summary>Static metadata about a supported harness.</summary>
 public sealed record KnownHarness(
     string Id,
     string DisplayName,
     string Developer,
-    string Description
+    string Description,
+    HarnessCategory Category = HarnessCategory.CodingAgent
 );
 
 /// <summary>
@@ -26,8 +41,26 @@ public static class KnownHarnesses
         new("github-copilot", "GitHub Copilot CLI",     "GitHub / Microsoft","AI shell integration via 'gh copilot' commands"),
         new("cursor",         "Cursor",                 "Anysphere",         "AI-first code editor (VS Code fork)"),
         new("cline",          "Cline / Continue / Roo", "Community",         "VS Code AI coding extensions (Cline, Continue, Roo Code)"),
+
+        // ── Local-model chat / inference hosts ────────────────────────────────────────────────────────────
+        // Foreman tracks these like any harness, but their inference servers idle between prompts BY DESIGN, so
+        // HarnessCategory.LocalModelHost exempts them from the hang / idle-cleanup / orphan signals (see KnownHarnesses.IsLocalModelHost).
+        new("lm-studio",             "LM Studio",             "LM Studio",       "Local LLM desktop host (llama.cpp/MLX), OpenAI-compatible API on :1234", HarnessCategory.LocalModelHost),
+        new("ollama",                "Ollama",                "Ollama",          "Local LLM server + model runner, API on :11434",                        HarnessCategory.LocalModelHost),
+        new("jan",                   "Jan",                   "Menlo Research",  "Local LLM desktop host (llama.cpp), API on :1337",                      HarnessCategory.LocalModelHost),
+        new("koboldcpp",             "KoboldCpp",             "Community",       "Single-binary local LLM server (llama.cpp), API on :5001",              HarnessCategory.LocalModelHost),
+        new("localai",               "LocalAI",               "Ettore Di Giacinto", "Self-hosted OpenAI-compatible local inference server on :8080",      HarnessCategory.LocalModelHost),
+        new("text-generation-webui", "Text Generation WebUI", "oobabooga",       "Gradio local-LLM web UI + API (Transformers/ExLlama/llama.cpp)",         HarnessCategory.LocalModelHost),
     ];
 
     public static KnownHarness? GetById(string id) =>
         All.FirstOrDefault(h => h.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// True if <paramref name="harnessType"/> is a local-model host (LM Studio, Ollama, …) whose inference server
+    /// idles by design — so the hang / idle-cleanup / orphan detectors should not treat its quiet as a problem.
+    /// Tolerates null and custom ids (custom harnesses are coding-agent by default).
+    /// </summary>
+    public static bool IsLocalModelHost(string? harnessType) =>
+        harnessType is not null && GetById(harnessType)?.Category == HarnessCategory.LocalModelHost;
 }

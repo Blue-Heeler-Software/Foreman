@@ -287,9 +287,14 @@ public sealed class WmiProcessWatcher : IDisposable
 
             var orphans = _tree.OnProcessDeleted(pid, startTime, out var deleted);
 
+            // A local-model host (LM Studio, Ollama, …) exiting commonly leaves its inference server lingering for
+            // a moment — that's normal teardown, not an abandoned orphan. Skip orphan events for its children.
+            var deadParentIsLocalModelHost = KnownHarnesses.IsLocalModelHost(deleted?.HarnessType);
+
             // publish orphan events for any children that survived
             foreach (var orphan in orphans)
             {
+                if (deadParentIsLocalModelHost) continue;
                 _bus.Publish(new OrphanDetectedEvent(
                     DateTimeOffset.UtcNow,
                     "Foreman.Monitor",

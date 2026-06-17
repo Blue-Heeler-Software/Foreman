@@ -76,6 +76,9 @@ public sealed class IdleHarnessDetector : IDisposable
         foreach (var type in types)
         {
             if (_settings.DisabledHarnesses.Contains(type)) continue;
+            // A local-model host (LM Studio, Ollama, …) idling between prompts is normal, not abandoned work —
+            // never auto-nag it to "clean up". The manual Process-Monitor trigger still works if the operator wants it.
+            if (KnownHarnesses.IsLocalModelHost(type)) continue;
 
             var tree = _tree.GetTreeByHarnessType(type)
                 .Where(r => r.State != ProcessState.Terminated)

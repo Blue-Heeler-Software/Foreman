@@ -75,6 +75,43 @@ public static class HarnessClassifier
             [],
             "cline"
         ),
+
+        // ── Local-model hosts (HarnessCategory.LocalModelHost — exempt from hang/idle/orphan) ──────────────
+        // Match only HIGH-CONFIDENCE, non-generic exe names: a false "local-model host" match would wrongly EXEMPT
+        // an unrelated process from hang/orphan, so generic shared binaries (chat.exe/GPT4All, bare llama-server.exe,
+        // bare python.exe) are deliberately NOT matched here — their inference children are covered via the harness
+        // ancestor when parented by one of these hosts.
+        (
+            ["lm studio.exe", "lms.exe"],     // LM Studio GUI + its CLI (llama.cpp/MLX backend is a child)
+            [], [],
+            "lm-studio"
+        ),
+        (
+            ["ollama.exe", "ollama app.exe"], // tray, `ollama serve`, AND the `ollama runner` inference child (same binary)
+            [], [],
+            "ollama"
+        ),
+        (
+            ["jan.exe"],                      // Jan desktop (bundled llama-server child)
+            [], [],
+            "jan"
+        ),
+        (
+            ["koboldcpp.exe", "koboldcpp_cu12.exe", "koboldcpp_nocuda.exe"],
+            [], [],
+            "koboldcpp"
+        ),
+        (
+            ["local-ai.exe"],
+            [], [],
+            "localai"
+        ),
+        (
+            [],                               // oobabooga runs as python.exe server.py — match a specific cmdline
+            [],
+            ["text-generation-webui", "oobabooga", "server.py --portable"],
+            "text-generation-webui"
+        ),
     ];
 
     public static void Classify(

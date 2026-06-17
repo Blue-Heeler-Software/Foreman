@@ -74,6 +74,10 @@ public sealed class HangDetector
             if (harness.Pid == record.Pid) return;  // this IS the harness, not a child
         }
 
+        // Local-model hosts (LM Studio, Ollama, …) run inference servers that sit I/O-silent between prompts by
+        // design — a quiet stretch is expected, not a stall. Don't hang-flag them or their children.
+        if (KnownHarnesses.IsLocalModelHost(harness?.HarnessType)) return;
+
         var baseThreshold = _settings.HangThresholdMinutes;
         var silent        = record.SilentMinutes;
         var uptime        = record.UptimeMinutes;

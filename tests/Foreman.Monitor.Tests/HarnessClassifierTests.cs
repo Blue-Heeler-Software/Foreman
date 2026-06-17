@@ -58,4 +58,45 @@ public sealed class HarnessClassifierTests
         Assert.False(record.IsHarness);
         Assert.Null(record.HarnessType);
     }
+
+    // ── Local-model hosts (task #77) ──────────────────────────────────────────────────────────────────
+    [Theory]
+    [InlineData("LM Studio.exe", "", "lm-studio")]
+    [InlineData("lms.exe", "lms server start", "lm-studio")]
+    [InlineData("ollama.exe", "ollama serve", "ollama")]
+    [InlineData("ollama.exe", "ollama runner --ollama-engine --port 51234", "ollama")] // the inference child (same binary)
+    [InlineData("ollama app.exe", "", "ollama")]
+    [InlineData("jan.exe", "", "jan")]
+    [InlineData("koboldcpp.exe", "koboldcpp.exe --model m.gguf --port 5001", "koboldcpp")]
+    [InlineData("local-ai.exe", "", "localai")]
+    [InlineData("python.exe", "python server.py --portable --api", "text-generation-webui")]
+    public void Classify_DetectsLocalModelHosts(string name, string cmd, string expectedId)
+    {
+        var record = new ProcessRecord { Pid = 950_001, Name = name, CommandLine = cmd, StartTime = DateTimeOffset.UtcNow };
+        HarnessClassifier.Classify(record);
+        Assert.Equal(expectedId, record.HarnessType);
+        Assert.True(record.IsHarness);
+        Assert.True(KnownHarnesses.IsLocalModelHost(record.HarnessType));   // → exempt from hang/idle/orphan
+    }
+
+    [Fact]
+    public void CodingAgent_IsNotLocalModelHost()
+    {
+        Assert.False(KnownHarnesses.IsLocalModelHost("claude-code"));
+        Assert.False(KnownHarnesses.IsLocalModelHost("codex"));
+        Assert.False(KnownHarnesses.IsLocalModelHost(null));
+        Assert.False(KnownHarnesses.IsLocalModelHost("custom:foo.exe"));
+    }
+
+    [Theory]
+    [InlineData("chat.exe", "")]                                  // GPT4All — too generic to match by name (would falsely exempt)
+    [InlineData("llama-server.exe", "llama-server -m m.gguf")]    // shared inference binary — covered via parent, not matched bare
+    [InlineData("python.exe", "python manage.py runserver")]     // unrelated python server
+    public void Classify_DoesNotMatchGenericBinariesAsModelHost(string name, string cmd)
+    {
+        var record = new ProcessRecord { Pid = 950_101, Name = name, CommandLine = cmd, StartTime = DateTimeOffset.UtcNow };
+        HarnessClassifier.Classify(record);
+        Assert.False(record.IsHarness);
+        Assert.Null(record.HarnessType);
+    }
 }
