@@ -29,6 +29,8 @@ CI runs restore, build, and tests on `windows-latest`.
 | `Foreman.Monitor` | Windows process watching, tree attribution, harness classification, I/O polling, hang/orphan detection, and MCP inventory. |
 | `Foreman.McpServer` | Local Kestrel/MCP host, bearer-token auth, tool registry, and connected-session tracking. |
 | `Foreman.App` | WPF tray app, dashboard, settings, alert detail, and connection UI. |
+| `Foreman.EtwSidecar` | Optional elevated ETW sidecar for per-process network attribution and decoy-credential read-auditing. |
+| `Foreman.Guardian` | Optional LocalSystem guardian service: tamper-resistant signing of Foreman's own integrity seal (off by default). |
 
 Tests live under `tests/`.
 

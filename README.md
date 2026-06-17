@@ -156,9 +156,9 @@ Add this marked section to `~/.codex/AGENTS.md` as well, then restart Codex:
 When the `foreman` MCP server is available:
 
 - Identify this agent as `harnessId: "codex"` when Foreman Agent Safety tools accept a harness id.
-- At the start of a new task, call `ReportTaskStart(taskDescription, harnessId: "codex")`.
-- If `ForemanStatus` or `ReportTaskStart` reports `pendingAskHarnessRequests`, call `ListAskHarnessRequests(harnessId: "codex")`.
-- For each pending request addressed to Codex (Ask Harness or queued audit prompt), answer with `ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: "codex")`.
+- At the start of a new task, call `report_task_start(taskDescription, harnessId: "codex")`.
+- If `foreman_status` or `report_task_start` reports `pendingAskHarnessRequests`, call `list_ask_harness_requests(harnessId: "codex")`.
+- For each pending request addressed to Codex (Ask Harness or queued audit prompt), answer with `reply_to_ask_harness_request(requestId, response, actionTaken, harnessId: "codex")`.
 - Treat each request as a safety prompt: explain what happened, whether it was expected, and any corrective action you took or recommend.
 
 <!-- foreman-mcp:end -->
@@ -188,39 +188,46 @@ harness answer it. Useful flags: `--harness <id>` (codex, cursor, opencode, …)
 - Process command lines can contain secrets. Foreman Agent Safety displays and logs command lines locally, and masks obvious secrets before putting alert prompts on the clipboard.
 - Foreman Agent Safety is not a sandbox. A same-user local process can still do anything your user account can do.
 - The optional ETW network sidecar runs elevated only if you enable **Run elevated for per-process Network**.
+- The optional **Hardened Guardian** is the only other component that can run elevated (a LocalSystem service). It is opt-in, off by default, and only signs Foreman Agent Safety's own integrity seal — it does not sandbox or enforce policy on agents.
 - The optional MCP tool-description scan can make outbound HTTP/SSE connections to configured third-party MCP servers. It is off by default.
 
 ## How It Works
 
-The Foreman Agent Safety codebase is split into four main pieces:
+The Foreman Agent Safety codebase is split into these main pieces:
 
 - **Foreman.App:** WPF tray app, dashboard, settings, alert detail, and connection UI.
 - **Foreman.Monitor:** WMI process create/terminate watcher, process tree tracker, I/O polling, hang/orphan detection, MCP inventory monitor.
 - **Foreman.Core:** platform-agnostic models, event bus, heuristic rules, settings, profiles, escalation logic.
 - **Foreman.McpServer:** local MCP host, tool registry, bearer-token auth, connected-session tracking.
+- **Foreman.Guardian (optional, off by default):** an opt-in LocalSystem Windows service that holds a SYSTEM-scoped key to sign Foreman Agent Safety's own tamper-evident event-log/settings seal, so a same-user agent can't forge it. Enable/disable from Settings → Hardened Guardian (one UAC prompt); uninstalling Foreman prompts to remove it. This is self-protection for Foreman, not agent sandboxing.
 
 The embedded MCP server exposes tools including:
 
+Tools are registered in snake_case (the ModelContextProtocol SDK derives the tool name
+from the C# method name), so call them exactly as shown:
+
 | Tool | Purpose |
 | --- | --- |
-| `ForemanStatus` | Current health, active alerts, process count, uptime, version |
-| `ListConnectedMcpClients` | Debug connected client identities and sampling support |
-| `ListMonitoredProcesses` | Agent and child processes Foreman Agent Safety is tracking |
-| `QueryProcessDetail` | Details for one PID |
-| `ReportSuspiciousCommand` | Pre-flight a command line |
-| `ListRecentEvents` | Recent event log entries |
-| `ListAskHarnessRequests` | Receive pending Ask Harness prompts, including queued audit prompts, for a harness |
-| `ReplyToAskHarnessRequest` | Send Foreman Agent Safety a reply to a pending Ask Harness or queued audit prompt |
-| `AcknowledgeAlert` | Acknowledge low/medium alerts; high/critical require the UI |
-| `GetBehaviorMetrics` | Per-harness escalation state |
-| `ReportTaskStart` | Announce a task boundary |
-| `GetMyPermissions` | Resolved profile permissions |
-| `GetIntegrationInstructions` | Harness-specific MCP setup instructions |
-| `ValidateHarnessIntegration` | Check profile/process/MCP visibility |
-| `ListAuditPreferences` / `GetAuditRoute` | Cross-agent audit routing |
-| `ListMcpServers` | Discovered MCP servers across harness configs |
-| `ListMcpToolFindings` | Cached opt-in MCP tool-description findings |
-| `ScanRepoForAgentConfig` | Vet a repo's agent-config supply chain (`.claude`/`.gemini` hooks, `.cursor` rules, `.vscode` `folderOpen` tasks, `.github/setup.js`, `CLAUDE.md`/`AGENTS.md`) for the "rules file backdoor" planted-trigger class — *before* opening it in an agent |
+| `foreman_status` | Current health, active alerts, process count, uptime, version |
+| `list_connected_mcp_clients` | Debug connected client identities and sampling support |
+| `list_monitored_processes` | Agent and child processes Foreman Agent Safety is tracking |
+| `query_process_detail` | Details for one PID |
+| `report_suspicious_command` | Pre-flight a command line |
+| `list_recent_events` | Recent event log entries |
+| `list_ask_harness_requests` | Receive pending Ask Harness prompts, including queued audit prompts, for a harness |
+| `reply_to_ask_harness_request` | Send Foreman Agent Safety a reply to a pending Ask Harness or queued audit prompt |
+| `acknowledge_alert` | Acknowledge low/medium alerts; high/critical require the UI |
+| `get_behavior_metrics` | Per-harness escalation state |
+| `reset_behavior_metrics` | Reset a harness's escalation metrics for a fresh task |
+| `report_task_start` | Announce a task boundary |
+| `get_my_permissions` | Resolved profile permissions for the calling harness |
+| `get_my_instructions` | Self-service house-rules (modalities) for the calling harness |
+| `get_integration_instructions` | Harness-specific MCP setup instructions |
+| `validate_harness_integration` | Check profile/process/MCP visibility |
+| `list_audit_preferences` / `get_audit_route` | Cross-agent audit routing |
+| `list_mcp_servers` | Discovered MCP servers across harness configs |
+| `list_mcp_tool_findings` | Cached opt-in MCP tool-description findings |
+| `scan_repo_for_agent_config` | Vet a repo's agent-config supply chain (`.claude`/`.gemini` hooks, `.cursor` rules, `.vscode` `folderOpen` tasks, `.github/setup.js`, `CLAUDE.md`/`AGENTS.md`) for the "rules file backdoor" planted-trigger class — *before* opening it in an agent |
 
 See [docs/oversight-model.md](docs/oversight-model.md) for the Ask Harness vs Send for Audit model and the MCP supply-chain tiers.
 
@@ -253,6 +260,7 @@ The installer is per-user and requires no admin prompt. Both `Foreman.exe` (and 
 - Add first-class OpenCode/T3 MCP config adapters after more field testing.
 - Add native Windows toast notifications in place of tray balloons.
 - Continue tuning false positives from real agent workflows.
+- Browser extension (alpha): pairs to this machine over loopback for at-a-glance Foreman Agent Safety status — connect via **Connect Agent → Pair browser extension**. See [extension/README.md](extension/README.md) and [docs/closed-loop-spec.md](docs/closed-loop-spec.md).
 
 ## Contributing
 
