@@ -25,6 +25,51 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         Populate();
         RefreshPresenceLock();
+        RefreshGuardian();
+    }
+
+    private void RefreshGuardian()
+    {
+        var on = GuardianControl.IsInstalled;
+        GuardianButton.Content = on ? "Disable hardened guardian…" : "Enable hardened guardian…";
+        GuardianStatus.Text = on ? "Active (LocalSystem)." : "Off (per-user, tamper-evident).";
+    }
+
+    // Install / remove the opt-in guardian service. Immediate action (one UAC), independent of the Save button —
+    // mirrors the presence-lock pattern. Activation of hardened sealing takes effect on the next Foreman restart.
+    private void HardenedGuardianClick(object sender, RoutedEventArgs e)
+    {
+        if (GuardianControl.IsInstalled)
+        {
+            if (MessageBox.Show(
+                    "Disable the hardened guardian? This removes the LocalSystem service and returns the tamper-seal " +
+                    "to the per-user (tamper-evident, not tamper-proof) mode. One UAC prompt.",
+                    "Foreman Agent Safety — Hardened guardian", MessageBoxButton.YesNo, MessageBoxImage.Warning)
+                != MessageBoxResult.Yes)
+                return;
+
+            var (ok, msg) = GuardianControl.Uninstall();
+            MessageBox.Show(msg, "Foreman Agent Safety — Hardened guardian", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            RefreshGuardian();
+            return;
+        }
+
+        if (MessageBox.Show(
+                "Install the hardened guardian?\n\n" +
+                "Registers a small LocalSystem Windows service that holds Foreman's tamper-seal key out of reach of " +
+                "any process running as you — making the audit-log seal tamper-PROOF, not just tamper-evident. One " +
+                "UAC prompt. The default app is otherwise unchanged, and you can disable it here later.",
+                "Foreman Agent Safety — Enable hardened guardian", MessageBoxButton.OKCancel, MessageBoxImage.Question)
+            != MessageBoxResult.OK)
+            return;
+
+        var (ok2, msg2) = GuardianControl.Install();
+        MessageBox.Show(
+            msg2 + (ok2 ? "\n\nRestart Foreman Agent Safety to activate hardened sealing." : ""),
+            "Foreman Agent Safety — Hardened guardian", MessageBoxButton.OK,
+            ok2 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        RefreshGuardian();
     }
 
     private void RefreshPresenceLock()

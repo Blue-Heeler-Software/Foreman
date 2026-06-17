@@ -56,3 +56,21 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Foreman Agent Safety now"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// If the opt-in hardened guardian (a LocalSystem service) was installed, remove it BEFORE files are deleted.
+// The per-user uninstaller isn't elevated, so we ShellExec the guardian's own --uninstall with 'runas' (one UAC,
+// only when the guardian binary is actually present). If declined, the leftover service is inert and removable
+// later via 'sc delete Foreman.Guardian'.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+  GuardianExe: String;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    GuardianExe := ExpandConstant('{app}\guardian\Foreman.Guardian.exe');
+    if FileExists(GuardianExe) then
+      ShellExec('runas', GuardianExe, '--uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;

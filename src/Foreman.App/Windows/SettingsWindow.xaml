@@ -193,6 +193,17 @@
                     <TextBlock x:Name="PresenceLockStatus" VerticalAlignment="Center" Margin="12,0,0,0"
                                Foreground="{StaticResource TextMutedBrush}" />
                 </StackPanel>
+
+                <Separator Margin="0,16,0,8" />
+                <TextBlock Text="HARDENED GUARDIAN (ADVANCED)" FontSize="10" FontWeight="Bold"
+                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6" />
+                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6"
+                           Text="Installs a small LocalSystem service that holds Foreman's tamper-seal key behind the SYSTEM boundary, so a monitored agent running as you can no longer forge the audit log's seal — moving that protection from tamper-EVIDENT to tamper-PROOF. One UAC prompt to install; restart Foreman to activate. The default per-user app is otherwise unchanged. Off by default — most users don't need it." />
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="GuardianButton" Content="Enable hardened guardian…" Click="HardenedGuardianClick" Padding="12,5" />
+                    <TextBlock x:Name="GuardianStatus" VerticalAlignment="Center" Margin="12,0,0,0"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                </StackPanel>
             </StackPanel>
 
             <!-- ── Escalation Thresholds ─────────────────────────────────────── -->
