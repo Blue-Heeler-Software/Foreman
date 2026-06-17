@@ -49,19 +49,18 @@ That safety loop can also save money. Catching a runaway command or abandoned ag
 ## Screenshots
 
 <p align="center">
-  <img src="docs/assets/tab-processes.png" width="49%" alt="Color-coded process explorer">
-  <img src="docs/assets/tab-harnesses.png" width="49%" alt="Per-agent harness monitoring">
+  <img src="docs/assets/tab-overview.png" width="92%" alt="Overview command center">
+</p>
+<p align="center"><em>Overview command center — active alerts, agents running, MCP clients, and at-a-glance status lights.</em></p>
+
+<p align="center">
+  <img src="docs/assets/tab-processes.png" width="44%" alt="Color-coded process explorer">
+  <img src="docs/assets/tab-harnesses.png" width="54%" alt="Per-agent harness monitoring">
 </p>
 <p align="center"><em>Color-coded process explorer (orphaned = red &middot; hanging = amber &middot; the agent itself = blue) &nbsp;·&nbsp; per-agent monitoring with trust levels and wake-lock status.</em></p>
 
 <p align="center">
-  <img src="docs/assets/tab-overview.png" width="49%" alt="Overview command center">
-  <img src="docs/assets/tab-eventlog.png" width="49%" alt="Hash-chained event log">
-</p>
-<p align="center"><em>Overview command center (active alerts, agents running, MCP clients, live event feed) &nbsp;·&nbsp; the tamper-evident, hash-chained event log.</em></p>
-
-<p align="center">
-  <img src="docs/assets/tab-behavior.png" width="60%" alt="Per-agent behavior and escalation">
+  <img src="docs/assets/tab-behavior.png" width="80%" alt="Per-agent behavior and escalation">
 </p>
 <p align="center"><em>Per-agent behavior &amp; escalation (Watch &rarr; Alert &rarr; Alarm &rarr; Emergency).</em></p>
 
