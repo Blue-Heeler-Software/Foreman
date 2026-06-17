@@ -106,6 +106,9 @@ public partial class App : Application
         // direct (non-Foreman) edit of settings.json — the same-user agent's way around the UI presence gates.
         var installSecret = new McpAuthToken().Value;
         SettingsStore.IntegritySecret = () => installSecret;
+        // Phase A step 7: when the opt-in guardian is installed + SYSTEM-verified, seal settings through it (secret
+        // behind the SYSTEM boundary). Set BEFORE Load so the verdict uses the right key; null ⇒ local secret path.
+        SettingsStore.Sealer = GuardianSettingsSealer.TryCreate(() => installSecret);
 
         var settings = SettingsStore.Load();
         _cts = new CancellationTokenSource();

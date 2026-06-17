@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Foreman.Core.Events;
+using Foreman.Core.Settings;
 using Foreman.Guardian;
 
 namespace Foreman.Guardian.Tests;
@@ -69,5 +70,27 @@ public sealed class GuardianAuthorityTests
         var sealA = authA.SealHead("ABC", 7)!;
         var pinnedB = Convert.FromBase64String(authB.GetPinnedHeadKey()!);
         Assert.False(new SignedHeadSigner(null, pinnedB).VerifyHead("ABC", 7, sealA));
+    }
+
+    [Fact]
+    public void Settings_SealThenVerify_RoundTrips() // step 7: seal the projection with the SYSTEM-held secret
+    {
+        using var a = new GuardianAuthority(headKey: null, settingsSecret: () => "test-settings-secret-0123456789");
+        const string proj = "{\"presenceEnabled\":true}";
+
+        var seal = a.SealSettings(proj);
+        Assert.StartsWith(SettingsSeal.GuardianScheme, seal);                 // tagged so the app/local path recognise it
+        Assert.Equal(SettingsSealVerdict.Sealed, a.VerifySettings(proj, seal));
+        Assert.Equal(SettingsSealVerdict.Tampered, a.VerifySettings("{\"presenceEnabled\":false}", seal)); // edited projection
+        Assert.Equal(SettingsSealVerdict.Unsealed, a.VerifySettings(proj, null));
+    }
+
+    [Fact]
+    public void Settings_DifferentSecret_FailsVerify() // a forger without the SYSTEM secret can't make a passing seal
+    {
+        using var real = new GuardianAuthority(headKey: null, settingsSecret: () => "real-secret-abcdefghijklmnop");
+        using var forger = new GuardianAuthority(headKey: null, settingsSecret: () => "forged-secret-zyxwvutsrqpon");
+        const string proj = "{\"presenceEnabled\":true}";
+        Assert.Equal(SettingsSealVerdict.Tampered, real.VerifySettings(proj, forger.SealSettings(proj)));
     }
 }

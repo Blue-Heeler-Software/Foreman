@@ -107,6 +107,23 @@ public sealed class GuardianPipeServer
             case GuardianRpc.GetPinnedHeadKey:
                 return Ok(req, GuardianFrameJson.Encode(new PinnedHeadKeyResult { HeadPublicKeyB64 = _authority.GetPinnedHeadKey() }));
 
+            case GuardianRpc.VerifySettings:
+            {
+                var args = GuardianFrameJson.Decode<VerifySettingsArgs>(req.Payload);
+                if (args is null) return Bad(req, "missing VerifySettings args");
+                var verdict = _authority.VerifySettings(args.SecurityProjection, args.StoredSeal);
+                return Ok(req, GuardianFrameJson.Encode(new VerifySettingsResult { Verdict = verdict.ToString() }));
+            }
+
+            case GuardianRpc.SealSettings:
+            {
+                var args = GuardianFrameJson.Decode<SealSettingsArgs>(req.Payload);
+                if (args is null) return Bad(req, "missing SealSettings args");
+                // Client auth already proved this is the genuine Foreman; server-side presence enforcement of a
+                // weakening action is a noted future refinement. Seal the supplied projection.
+                return Ok(req, GuardianFrameJson.Encode(new SealSettingsResult { Seal = _authority.SealSettings(args.SecurityProjection) }));
+            }
+
             default:
                 return Bad(req, "not implemented (guardian scaffold)");
         }

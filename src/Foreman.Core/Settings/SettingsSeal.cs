@@ -62,21 +62,57 @@ public static class SettingsSeal
 
     private static string MuteKey(Models.MuteEntry m) => $"{m.Scope}|{m.Value}|{m.Until:O}";
 
-    /// <summary>HMAC-SHA256(install secret, security projection), base64. The seal written next to settings.json.</summary>
-    public static string Compute(ForemanSettings s, string secret)
+    /// <summary>
+    /// Prefix marking a seal computed behind the SYSTEM boundary by the guardian (circle-back Phase A, step 7). It
+    /// lets the local verify path recognise a guardian-scheme seal it CAN'T check (e.g. after opting out) and treat
+    /// it as Unsealed → adopt + re-seal locally, rather than crying false tamper.
+    /// </summary>
+    public const string GuardianScheme = "g1:";
+
+    /// <summary>HMAC-SHA256(secret, projection), base64 — the raw MAC, shared by the local path and the guardian.</summary>
+    public static string ComputeMac(string projection, string secret)
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        return Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(SecurityProjection(s))));
+        return Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(projection)));
     }
 
-    /// <summary>Compares the loaded settings' security subset to the stored seal (constant-time).</summary>
+    /// <summary>Constant-time compare of a candidate MAC to the stored one.</summary>
+    public static bool MacEquals(string computedMac, string storedMac)
+    {
+        var a = Encoding.UTF8.GetBytes(computedMac);
+        var b = Encoding.UTF8.GetBytes(storedMac);
+        return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
+    }
+
+    /// <summary>HMAC-SHA256(install secret, security projection), base64. The seal written next to settings.json.</summary>
+    public static string Compute(ForemanSettings s, string secret) => ComputeMac(SecurityProjection(s), secret);
+
+    /// <summary>
+    /// Compares the loaded settings' security subset to the stored seal (constant-time). A seal carrying the
+    /// guardian scheme prefix is NOT verifiable with the local secret, so it reads as Unsealed (adopt + re-seal),
+    /// never Tampered — that's the graceful opt-out path when the guardian is no longer present.
+    /// </summary>
     public static SettingsSealVerdict Verify(ForemanSettings loaded, string? storedSeal, string secret)
     {
         if (string.IsNullOrEmpty(storedSeal)) return SettingsSealVerdict.Unsealed;
-        var expected = Encoding.UTF8.GetBytes(Compute(loaded, secret));
-        var actual   = Encoding.UTF8.GetBytes(storedSeal);
-        return actual.Length == expected.Length && CryptographicOperations.FixedTimeEquals(actual, expected)
+        if (storedSeal.StartsWith(GuardianScheme, StringComparison.Ordinal)) return SettingsSealVerdict.Unsealed;
+        return MacEquals(Compute(loaded, secret), storedSeal)
             ? SettingsSealVerdict.Sealed
             : SettingsSealVerdict.Tampered;
     }
+}
+
+/// <summary>
+/// Seam for WHO computes/verifies the settings seal (circle-back Phase A, step 7). The default local path keys it
+/// by the install secret; the guardian-backed implementation keeps the secret behind the SYSTEM boundary so a
+/// same-user agent can't read it to forge the seal. <see cref="SettingsStore"/> uses this when set, else its local
+/// secret path.
+/// </summary>
+public interface ISettingsSealer
+{
+    /// <summary>Computes the seal string (including any scheme prefix) to write next to settings.json; null if unavailable.</summary>
+    string? Compute(ForemanSettings settings);
+
+    /// <summary>Verifies the stored seal against the loaded settings.</summary>
+    SettingsSealVerdict Verify(ForemanSettings settings, string? storedSeal);
 }

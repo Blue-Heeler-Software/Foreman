@@ -26,6 +26,14 @@ public sealed class SettingsStore
     public static Func<string?>? IntegritySecret { get; set; }
 
     /// <summary>
+    /// Optional guardian-backed sealer (circle-back Phase A, step 7). When set, settings sealing/verification runs
+    /// through it (the secret stays behind the SYSTEM boundary) instead of the local <see cref="IntegritySecret"/>
+    /// path. Null → the local secret path (the default / casual user). The App sets this only when the opt-in
+    /// guardian is installed and verified.
+    /// </summary>
+    public static ISettingsSealer? Sealer { get; set; }
+
+    /// <summary>
     /// The seal verdict from the most recent <see cref="Load()"/>: Tampered means settings.json was edited by
     /// something other than Foreman (the watchdog's own posture may have been weakened on disk). The App reads
     /// this after the event bus is wired and raises a Critical tamper alert. Unsealed when no secret/seal yet.
@@ -51,7 +59,9 @@ public sealed class SettingsStore
             // lock / log persistence) — bypassing the UI gates entirely. Foreman re-seals on every save, so a
             // mismatch here means the file was changed by something other than Foreman. We can't PREVENT that
             // (no privilege boundary), but the App turns this verdict into a loud Critical + OS-event-log entry.
-            if (IntegritySecret?.Invoke() is { Length: > 0 } secret)
+            if (Sealer is { } sealer)
+                LastSealVerdict = sealer.Verify(settings, ReadSeal(path));
+            else if (IntegritySecret?.Invoke() is { Length: > 0 } secret)
                 LastSealVerdict = SettingsSeal.Verify(settings, ReadSeal(path), secret);
 
             return settings;
@@ -93,11 +103,15 @@ public sealed class SettingsStore
         }
 
         // Re-seal the security-significant projection so any later edit Foreman didn't make is detectable at load.
-        if (IntegritySecret?.Invoke() is { Length: > 0 } secret)
+        // Through the guardian when set (secret behind the SYSTEM boundary), else the local install-secret path.
+        try
         {
-            try { File.WriteAllText(SealPath(path), SettingsSeal.Compute(settings, secret)); }
-            catch { /* seal is best-effort; a missing seal reads as Unsealed, never blocks the save */ }
+            var seal = Sealer is { } sealer
+                ? sealer.Compute(settings)
+                : IntegritySecret?.Invoke() is { Length: > 0 } secret ? SettingsSeal.Compute(settings, secret) : null;
+            if (seal is not null) File.WriteAllText(SealPath(path), seal);
         }
+        catch { /* seal is best-effort; a missing seal reads as Unsealed, never blocks the save */ }
     }
 
     private static string SealPath(string path) => path + ".seal";

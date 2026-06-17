@@ -1,5 +1,6 @@
 using Foreman.Core.Events;
 using Foreman.Core.Ipc.Guardian;
+using Foreman.Core.Settings;
 
 namespace Foreman.Guardian;
 
@@ -21,16 +22,19 @@ public sealed class GuardianAuthority : IDisposable
 
     private readonly IHeadSealKey? _headKey;
     private readonly SignedHeadSigner? _signer;
+    private readonly Func<string> _settingsSecret;
 
     /// <summary>
     /// Production ctor: opens (or creates) the TPM/PCP key in the current process context. Test ctor: inject a
-    /// software <see cref="IHeadSealKey"/> to exercise the sign/verify round-trip without a TPM.
+    /// software <see cref="IHeadSealKey"/> and/or a fixed settings secret to exercise the round-trips without a
+    /// TPM or %ProgramData% access.
     /// </summary>
-    public GuardianAuthority(IHeadSealKey? headKey)
+    public GuardianAuthority(IHeadSealKey? headKey, Func<string>? settingsSecret = null)
     {
         _headKey = headKey;
         // Sign against the key's own public half; the app pins that same public key via GetPinnedHeadKey.
         _signer = _headKey is null ? null : new SignedHeadSigner(_headKey, _headKey.PublicKey);
+        _settingsSecret = settingsSecret ?? new GuardianSecret().Get;
     }
 
     /// <summary>Opens the real TPM/PCP key (null on a no-TPM box). Separate from the ctor so tests stay TPM-free.</summary>
@@ -51,6 +55,26 @@ public sealed class GuardianAuthority : IDisposable
 
     /// <summary>Base64 SubjectPublicKeyInfo of the head-seal key, for the app to pin; null when unavailable.</summary>
     public string? GetPinnedHeadKey() => _headKey is null ? null : Convert.ToBase64String(_headKey.PublicKey);
+
+    /// <summary>
+    /// Seals the settings security projection with the SYSTEM-held secret, tagged with the guardian scheme so the
+    /// app/local path recognise it. Step 7: the secret never leaves the SYSTEM boundary, so the agent can't forge
+    /// a weakened-settings seal. (Client auth already ensures only the genuine Foreman can call this.)
+    /// </summary>
+    public string SealSettings(string projection) =>
+        SettingsSeal.GuardianScheme + SettingsSeal.ComputeMac(projection, _settingsSecret());
+
+    /// <summary>Verifies a guardian-scheme settings seal against the projection, using the SYSTEM-held secret.</summary>
+    public SettingsSealVerdict VerifySettings(string projection, string? storedSeal)
+    {
+        if (string.IsNullOrEmpty(storedSeal)) return SettingsSealVerdict.Unsealed;
+        var mac = storedSeal.StartsWith(SettingsSeal.GuardianScheme, StringComparison.Ordinal)
+            ? storedSeal[SettingsSeal.GuardianScheme.Length..]
+            : storedSeal;
+        return SettingsSeal.MacEquals(SettingsSeal.ComputeMac(projection, _settingsSecret()), mac)
+            ? SettingsSealVerdict.Sealed
+            : SettingsSealVerdict.Tampered;
+    }
 
     public void Dispose() => (_headKey as IDisposable)?.Dispose();
 }
