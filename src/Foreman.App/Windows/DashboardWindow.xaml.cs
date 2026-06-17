@@ -27,6 +27,7 @@ public partial class DashboardWindow : Window, IEventSink
 {
     private readonly Func<IEnumerable<BehaviorProfile>> _getProfiles;
     private readonly ObservableCollection<DashboardAlertVm> _alerts = [];
+    private string _lastAlertSig = "";   // so the alert feed only rebuilds (and resets scroll) when events change
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _usageTimer;
     private readonly ResourceSampler _usageSampler = new();
@@ -84,7 +85,8 @@ public partial class DashboardWindow : Window, IEventSink
         EventBus.Instance.Subscribe(this);
 
         // Periodic refresh so relative time labels stay accurate
-        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        // 5s so harness tiles / stat counts feel live (the alert feed only rebuilds on change — see _lastAlertSig).
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _refreshTimer.Tick += (_, _) => Refresh();
         _refreshTimer.Start();
 
@@ -207,9 +209,16 @@ public partial class DashboardWindow : Window, IEventSink
             .Take(50)
             .ToList();
 
-        _alerts.Clear();
-        foreach (var evt in relevant)
-            _alerts.Add(DashboardAlertVm.From(evt));
+        // Only rebuild the feed when the event set actually changed — keeps the user's scroll position on the
+        // now-5s refresh cadence (the cards/tiles below rebuild every tick; the feed shouldn't reset under them).
+        var sig = relevant.Count == 0 ? "0" : $"{relevant.Count}:{relevant[0].Id}:{relevant[^1].Id}";
+        if (sig != _lastAlertSig)
+        {
+            _lastAlertSig = sig;
+            _alerts.Clear();
+            foreach (var evt in relevant)
+                _alerts.Add(DashboardAlertVm.From(evt));
+        }
 
         var allProfiles = _getProfiles().ToList();
         var settings = GetSettings?.Invoke() ?? new ForemanSettings();
