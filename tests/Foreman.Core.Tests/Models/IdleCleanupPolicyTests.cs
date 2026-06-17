@@ -85,7 +85,7 @@ public sealed class IdleCleanupPolicyTests
         var (system, user) = IdleCleanupPolicy.BuildPrompts("claude-code", 50, ["bash.exe", "node.exe"], manual: false);
         Assert.Contains("claude-code", system);
         Assert.Contains("50 minute", user);
-        Assert.Contains("ReplyToAskHarnessRequest", user);
+        Assert.Contains("reply_to_ask_harness_request", user);
         Assert.Contains("bash.exe", user);
     }
 

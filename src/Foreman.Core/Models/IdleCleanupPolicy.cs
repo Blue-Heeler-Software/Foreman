@@ -87,8 +87,8 @@ public static class IdleCleanupPolicy
             "1. Finish or checkpoint your current work (save files; commit only if your own instructions allow it).\n" +
             "2. Stop any leftover child processes you spawned (builds, dev servers, file watchers, shells).\n" +
             "3. Release file locks and clean up temp resources you own.\n" +
-            $"4. Reply via ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: \"{harnessId}\") " +
-            "— the requestId is shown by ListAskHarnessRequests.\n" +
+            $"4. Reply via reply_to_ask_harness_request(requestId, response, actionTaken, harnessId: \"{harnessId}\") " +
+            "— the requestId is shown by list_ask_harness_requests.\n" +
             "5. If this session is still needed (mid-task, waiting for the user), reply saying so and Foreman will leave you alone.";
 
         return (system, user);

@@ -47,8 +47,8 @@ public sealed class CodexMcpConnectorTests : IDisposable
 
         var agents = File.ReadAllText(_agents);
         Assert.Contains("Foreman Agent Safety MCP Monitor", agents);
-        Assert.Contains("ListAskHarnessRequests(harnessId: \"codex\")", agents);
-        Assert.Contains("ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId: \"codex\")", agents);
+        Assert.Contains("list_ask_harness_requests(harnessId: \"codex\")", agents);
+        Assert.Contains("reply_to_ask_harness_request(requestId, response, actionTaken, harnessId: \"codex\")", agents);
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public sealed class CodexMcpConnectorTests : IDisposable
         Assert.DoesNotContain("Bearer PLAINTEXT", toml);
 
         var agents = File.ReadAllText(_agents);
-        Assert.Contains("ReplyToAskHarnessRequest", agents);
+        Assert.Contains("reply_to_ask_harness_request", agents);
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public sealed class CodexMcpConnectorTests : IDisposable
         Assert.Contains("# My Codex instructions", agents);
         Assert.Contains("Keep answers concise.", agents);
         Assert.Contains("Leave this alone.", agents);
-        Assert.Contains("ReportTaskStart(taskDescription, harnessId: \"codex\")", agents);
+        Assert.Contains("report_task_start(taskDescription, harnessId: \"codex\")", agents);
         Assert.Contains("pendingAskHarnessRequests", agents);
         Assert.Contains("queued audit prompt", agents);
         Assert.DoesNotContain("stale foreman text", agents);

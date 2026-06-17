@@ -362,7 +362,7 @@ public static class ForemanMcpTools
                     harnessId = caller.HarnessId,
                     pendingAskHarnessRequests = caller.HarnessId is null ? 0 : state.CountAskHarnessRequests(caller.HarnessId),
                     reason = "Task start recorded, but you can only reset your own harness's metrics.",
-                    hint = "If pendingAskHarnessRequests is non-zero, call ListAskHarnessRequests and answer with ReplyToAskHarnessRequest.",
+                    hint = "If pendingAskHarnessRequests is non-zero, call list_ask_harness_requests and answer with reply_to_ask_harness_request.",
                 };
             }
 
@@ -383,14 +383,14 @@ public static class ForemanMcpTools
             pendingAskHarnessRequests = harnessId is null
                 ? state.CountAskHarnessRequests()
                 : state.CountAskHarnessRequests(harnessId),
-            hint = "If pendingAskHarnessRequests is non-zero, call ListAskHarnessRequests and answer with ReplyToAskHarnessRequest.",
+            hint = "If pendingAskHarnessRequests is non-zero, call list_ask_harness_requests and answer with reply_to_ask_harness_request.",
         };
     }
 
     [McpServerTool, Description(
         "Lists pending Foreman 'Ask Harness' prompts for a harness. Call this when Foreman flags you, " +
-        "when ForemanStatus or ReportTaskStart reports pendingAskHarnessRequests, or at task boundaries. " +
-        "Then answer each prompt with ReplyToAskHarnessRequest.")]
+        "when foreman_status or report_task_start reports pendingAskHarnessRequests, or at task boundaries. " +
+        "Then answer each prompt with reply_to_ask_harness_request.")]
     public static object ListAskHarnessRequests(
         [Description("Optional harness ID to scope prompts, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
         [Description("Optional caller process ID; used to infer the caller's harness tree")] int? processId = null,
@@ -409,16 +409,16 @@ public static class ForemanMcpTools
             harnessId = resolvedHarness ?? harnessId,
             pendingCount = requests.Count(r => r.Status == "pending"),
             requests = requests.Select(AskRequestShape).ToArray(),
-            nextAction = "If any request is pending, answer with ReplyToAskHarnessRequest(requestId, response, actionTaken, harnessId/processId).",
+            nextAction = "If any request is pending, answer with reply_to_ask_harness_request(requestId, response, actionTaken, harnessId/processId).",
         };
     }
 
     [McpServerTool, Description(
-        "Replies to a Foreman 'Ask Harness' prompt. Use this after ListAskHarnessRequests returns a " +
+        "Replies to a Foreman 'Ask Harness' prompt. Use this after list_ask_harness_requests returns a " +
         "pending request for your harness. Be factual: explain what you were doing, whether it was expected, " +
         "and what corrective action you took or recommend.")]
     public static object ReplyToAskHarnessRequest(
-        [Description("The requestId returned by ListAskHarnessRequests")] string requestId,
+        [Description("The requestId returned by list_ask_harness_requests")] string requestId,
         [Description("Your reply to Foreman Agent Safety's prompt")] string response,
         [Description("Optional concise action taken, e.g. 'stopped pid 1234', 'left running', 'needs operator review'")] string? actionTaken = null,
         [Description("Optional harness ID, e.g. 'codex' or 'claude-code'")] string? harnessId = null,
@@ -497,8 +497,8 @@ public static class ForemanMcpTools
             askHarness = new
             {
                 pendingRequests = resolvedHarness is null ? 0 : state.CountAskHarnessRequests(resolvedHarness),
-                receiveTool = "ListAskHarnessRequests",
-                replyTool = "ReplyToAskHarnessRequest",
+                receiveTool = "list_ask_harness_requests",
+                replyTool = "reply_to_ask_harness_request",
             },
         };
     }
@@ -562,8 +562,8 @@ public static class ForemanMcpTools
             },
             askHarness = new
             {
-                receive = "Call ListAskHarnessRequests with your harnessId or processId to receive pending Ask Harness prompts, including queued audit prompts.",
-                reply = "Call ReplyToAskHarnessRequest with the requestId and your response so Foreman Agent Safety records the answer.",
+                receive = "Call list_ask_harness_requests with your harnessId or processId to receive pending Ask Harness prompts, including queued audit prompts.",
+                reply = "Call reply_to_ask_harness_request with the requestId and your response so Foreman Agent Safety records the answer.",
             },
             note = "Pass harnessId or processId to Foreman Agent Safety MCP tools so permissions, process listings, and Ask Harness requests can be scoped to this harness.",
         };
