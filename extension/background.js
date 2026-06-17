@@ -12,12 +12,15 @@
  * server cross-origin without CORS. Nothing here ever talks to a remote host.
  */
 import { loadSettings, saveSettings, onSettingsChanged } from './settings.js';
+import { callMcpTool, openMcpSession } from './mcp-client.js';
 
 let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '' };
 let connected = false;
 let lastStatus = null;          // last foreman_status payload (or null)
+let lastMcpError = null;
 let sidePanelPort = null;
 let pollTimer = null;
+let mcpSession = null;
 const POLL_MS = 5000;
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
@@ -25,8 +28,6 @@ const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
 
 // ── Pairing ────────────────────────────────────────────────────────────────
 
-// HMAC-SHA256(code, challenge) as UPPERCASE hex — must match Foreman's
-// ChallengeResponse.Respond (Convert.ToHexString of HMACSHA256.HashData(UTF8(key), UTF8(challenge))).
 async function hmacHex(key, message) {
     const enc = new TextEncoder();
     const k = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -54,6 +55,7 @@ async function pair(code) {
 
         cfg = { ...cfg, token: body.token || '', pairedOrigin: body.origin || selfOrigin() };
         await saveSettings({ token: cfg.token, pairedOrigin: cfg.pairedOrigin });
+        mcpSession = null;
         await refresh();
         return { ok: true };
     } catch (e) {
@@ -70,46 +72,28 @@ async function checkHealth() {
     } catch { return false; }
 }
 
-// Minimal MCP-over-HTTP call (streamable HTTP). The token proves we're the paired extension.
-// NOTE: the MCP initialize/session handshake is the part most likely to need tweaking in-browser —
-// verify against the running server. Falls back gracefully: if this fails we still show liveness from /health.
+async function ensureMcpSession() {
+    if (!cfg.token) return null;
+    if (mcpSession) return mcpSession;
+    mcpSession = await openMcpSession(base(), cfg.token);
+    return mcpSession;
+}
+
 async function mcpStatus() {
     if (!cfg.token) return null;
     try {
-        const headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            'Authorization': `Bearer ${cfg.token}`,
-        };
-        const init = await fetch(`${base()}/mcp`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                jsonrpc: '2.0', id: 1, method: 'initialize',
-                params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'foreman-extension', version: '0.1.0' } },
-            }),
-        });
-        const sessionId = init.headers.get('Mcp-Session-Id');
-        if (!sessionId) return null;   // handshake shape differs — leave for in-Chrome verification
-        if (sessionId) headers['Mcp-Session-Id'] = sessionId;
-
-        const res = await fetch(`${base()}/mcp`, {
-            method: 'POST', headers,
-            body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'foreman_status', arguments: {} } }),
-        });
-        const text = await res.text();
-        // streamable HTTP may wrap the result in SSE ("data: {...}"); pull the last JSON object out.
-        const jsonLine = text.split('\n').reverse().find((l) => l.trim().startsWith('{') || l.startsWith('data:'));
-        if (!jsonLine) return null;
-        const parsed = JSON.parse(jsonLine.replace(/^data:\s*/, ''));
-        return parsed?.result ?? null;
-    } catch {
+        const session = await ensureMcpSession();
+        return await callMcpTool(session, 'foreman_status');
+    } catch (e) {
+        mcpSession = null;   // stale session — reopen on next poll
+        lastMcpError = String(e?.message || e);
         return null;
     }
 }
 
 async function refresh() {
     connected = await checkHealth();
+    lastMcpError = null;
     lastStatus = connected ? await mcpStatus() : null;
     broadcast();
 }
@@ -131,6 +115,7 @@ chrome.runtime.onConnect.addListener((port) => {
             const r = await pair(msg.code);
             safePost({ kind: 'pair-result', ...r });
         } else if (msg?.kind === 'refresh') {
+            mcpSession = null;
             await refresh();
         }
     });
@@ -142,10 +127,10 @@ function broadcast() {
         kind: 'status',
         connected,
         paired: !!cfg.token,
-        // The closed-loop assurance: paired + connected over loopback with a token == on-device, verified.
-        verified: !!cfg.token && connected,
+        verified: !!cfg.token && connected && !!lastStatus,
         base: base(),
         status: lastStatus,
+        mcpError: lastMcpError,
     });
 }
 
@@ -161,7 +146,6 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }); } catch { /* Chrome < 114 */ }
 
-// Pairing can also be driven from the options page.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.kind === 'pair') { pair(msg.code).then(sendResponse); return true; }
     return false;
@@ -173,7 +157,12 @@ async function bootstrap() {
     try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
     startPolling();
 }
-onSettingsChanged(async () => { try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* keep */ } });
+onSettingsChanged(async () => {
+    try {
+        cfg = { ...cfg, ...(await loadSettings()) };
+        mcpSession = null;
+    } catch { /* keep */ }
+});
 chrome.runtime.onStartup.addListener(bootstrap);
 chrome.runtime.onInstalled.addListener(bootstrap);
 bootstrap();

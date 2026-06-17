@@ -1,3 +1,4 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Models;
@@ -192,15 +193,39 @@ public partial class AlertDetailWindow : Window
         var severity = AuditPolicy.QualifiesForAudit(_event) && _event.Severity < ForemanSeverity.High
             ? ForemanSeverity.High
             : _event.Severity;
-        var route  = ResolveAuditRoute(targetHarnessId, severity);
-        var prompt = BuildAuditPrompt(targetHarnessId, route.Selected);
+        var route = ResolveAuditRoute(targetHarnessId, severity);
+        var selected = route.UsedFallback && route.Candidates.Count > 1
+            ? AuditHarnessPickerDialog.Pick(this, targetHarnessId, route.Candidates) ?? route.Selected
+            : route.Selected ?? PromptForAuditHarness(targetHarnessId, route.Candidates);
+        if (selected is null)
+        {
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(targetHarnessId)
+                    ? "No auditor could be selected for this alert."
+                    : $"No auditor is configured or available to review {targetHarnessId}.\n\n" +
+                      "Start another harness (Codex, Claude Code, etc.) and connect it to Foreman, " +
+                      "or set a preferred auditor in Settings.",
+                "Foreman Agent Safety - Send for Audit",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (route.UsedFallback &&
+            !string.IsNullOrWhiteSpace(targetHarnessId) &&
+            Services is not null &&
+            !AuditRouteResolver.HasConfiguredAuditor(Services.GetLlmTriageSettings(), targetHarnessId, severity))
+        {
+            OfferSaveAuditorPreference(targetHarnessId, selected);
+        }
+
+        var prompt = BuildAuditPrompt(targetHarnessId, selected);
         const string systemPrompt =
             "You are an independent safety auditor reviewing another AI coding harness on this machine. " +
             "Be concise and factual: decide whether the behavior is expected, risky, or malicious, " +
             "then recommend the next operator action.";
 
-        if (route.Selected is { AuditorType: var type } selected &&
-            type.Equals("harness", StringComparison.OrdinalIgnoreCase))
+        if (selected.AuditorType.Equals("harness", StringComparison.OrdinalIgnoreCase))
         {
             AskHarnessRequest? queued = Services?.QueueAskHarnessRequest(
                 selected.AuditorId,
@@ -225,6 +250,10 @@ public partial class AlertDetailWindow : Window
                 ? false
                 : TrySetClipboard(prompt);
 
+            var routeNote = route.UsedFallback
+                ? $"\n\n(No preferred auditor was configured for {Blank(targetHarnessId, "this harness")} — used {selected.DisplayName}.)"
+                : string.Empty;
+
             switch (result?.Outcome)
             {
                 case AskOutcome.Sampled:
@@ -240,7 +269,8 @@ public partial class AlertDetailWindow : Window
                     MessageBox.Show(
                         $"Asked the live {Blank(result.MatchedClient, selected.DisplayName)} session to audit this alert.\n\n" +
                         $"Its response:\n\n{Blank(result.ReplyText, "(the auditor returned an empty response)")}\n\n" +
-                        PendingLine(queued),
+                        PendingLine(queued) +
+                        routeNote,
                         "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
 
@@ -251,7 +281,8 @@ public partial class AlertDetailWindow : Window
                         $"Delivered the audit request to the live {Blank(result.MatchedClient, selected.DisplayName)} MCP session.\n\n" +
                         "This client does not support a direct query/reply round trip. It can reply by calling " +
                         "ReplyToAskHarnessRequest with the pending request id.\n\n" +
-                        PendingLine(queued),
+                        PendingLine(queued) +
+                        routeNote,
                         "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
             }
@@ -265,7 +296,8 @@ public partial class AlertDetailWindow : Window
                 (clipped
                     ? "The prompt is also on your clipboard as a manual fallback."
                     : "Clipboard fallback failed, but the pending request remains queued.") +
-                ConnectionHelp(selected.AuditorId),
+                ConnectionHelp(selected.AuditorId) +
+                routeNote,
                 "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -278,9 +310,9 @@ public partial class AlertDetailWindow : Window
         }
 
         EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
-            $"Audit prompt prepared for alert [{_event.Id}] via {route.Selected?.DisplayName ?? "manual route"}"));
+            $"Audit prompt prepared for alert [{_event.Id}] via {selected.DisplayName}"));
 
-        MessageBox.Show(BuildAuditMessage(targetHarnessId, route),
+        MessageBox.Show(BuildAuditMessage(targetHarnessId, selected, route.UsedFallback),
             "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
@@ -305,31 +337,28 @@ public partial class AlertDetailWindow : Window
         return $"\n\nTo fix automatic delivery: open Foreman Agent Safety Dashboard or tray menu > Connect agent > {agent} > Connect automatically, then restart {agent}.";
     }
 
-    private string BuildAuditMessage(string? targetHarnessId, AuditRouteSelection route)
+    private string BuildAuditMessage(string? targetHarnessId, AuditRouteResolver.Candidate auditor, bool usedFallback)
     {
         var target = Blank(targetHarnessId, "this process");
         var sb = new StringBuilder();
         sb.AppendLine("An audit prompt for this alert is on your clipboard.");
         sb.AppendLine();
 
-        if (route.Selected is not { } a)
+        if (usedFallback)
+            sb.AppendLine($"No preferred auditor was configured for {target} — using {auditor.DisplayName} for this audit.");
+        else
+            sb.AppendLine($"Suggested reviewer: {auditor.DisplayName} (configurable in Settings).");
+        if (auditor.AuditorType.Equals("api", StringComparison.OrdinalIgnoreCase))
         {
-            sb.AppendLine($"No configured reviewer matched {target}, so paste it into whichever harness or API you'd like to review it.");
-            return sb.ToString().TrimEnd();
-        }
-
-        sb.AppendLine($"Suggested reviewer: {a.DisplayName} (configurable in Settings).");
-        if (a.AuditorType.Equals("api", StringComparison.OrdinalIgnoreCase))
-        {
-            sb.AppendLine(a.Available
-                ? $"Send it to the {a.DisplayName} API to review {target}."
-                : $"{a.DisplayName} is your preferred reviewer for {target}, but no API endpoint is configured yet.");
+            sb.AppendLine(auditor.Available
+                ? $"Send it to the {auditor.DisplayName} API to review {target}."
+                : $"{auditor.DisplayName} is your preferred reviewer for {target}, but no API endpoint is configured yet.");
         }
         else
         {
-            sb.AppendLine(a.Available
-                ? $"You have {a.RunningHarnessCount} {a.DisplayName} instance{(a.RunningHarnessCount == 1 ? "" : "s")} running — paste it into one to review {target}."
-                : $"{a.DisplayName} is your preferred reviewer for {target}, but isn't running right now — start it, or paste the prompt into any AI.");
+            sb.AppendLine(auditor.Available
+                ? $"You have {auditor.RunningHarnessCount} {auditor.DisplayName} instance{(auditor.RunningHarnessCount == 1 ? "" : "s")} running — paste it into one to review {target}."
+                : $"{auditor.DisplayName} is your preferred reviewer for {target}, but isn't running right now — start it, or paste the prompt into any AI.");
         }
 
         return sb.ToString().TrimEnd();
@@ -458,7 +487,7 @@ public partial class AlertDetailWindow : Window
         Close();
     }
 
-    private string BuildAuditPrompt(string? targetHarnessId, AuditCandidate? route)
+    private string BuildAuditPrompt(string? targetHarnessId, AuditRouteResolver.Candidate? route)
     {
         var vm = DataContext as AlertDetailVm;
         var targetPid = ResolveTargetPid();
@@ -580,59 +609,87 @@ public partial class AlertDetailWindow : Window
         }
     }
 
-    private AuditRouteSelection ResolveAuditRoute(string? targetHarnessId, ForemanSeverity severity)
+    private AuditRouteResolver.Selection ResolveAuditRoute(string? targetHarnessId, ForemanSeverity severity)
     {
         var settings = Services?.GetLlmTriageSettings();
         if (settings is null)
-            return new AuditRouteSelection(null, "No LLM triage settings are available.", false);
-        if (!settings.Enabled)
-            return new AuditRouteSelection(null, "LLM triage routing is disabled in settings.", false);
+            return new AuditRouteResolver.Selection(null, [], "No LLM triage settings are available.", false);
 
-        var candidates = FindAuditCandidates(settings, targetHarnessId, severity, honorSeverity: true);
-        return candidates.Count > 0
-            ? new AuditRouteSelection(candidates[0], "Auditor selected from user preference list.", false)
-            : new AuditRouteSelection(null, "No auditor preference matched this target harness at this severity.", false);
+        var snapshot = Services?.GetProcessSnapshot().ToList() ?? [];
+        var connected = Services?.GetConnectedHarnessIds();
+        return AuditRouteResolver.Resolve(settings, targetHarnessId, severity, snapshot, connected);
     }
 
-    private static List<AuditCandidate> FindAuditCandidates(
-        LlmTriageSettings settings,
+    private AuditRouteResolver.Candidate? PromptForAuditHarness(
         string? targetHarnessId,
-        ForemanSeverity severity,
-        bool honorSeverity)
+        IReadOnlyList<AuditRouteResolver.Candidate> candidates)
     {
-        var snapshot = Services?.GetProcessSnapshot().ToList() ?? [];
-        var targetKnown = !string.IsNullOrWhiteSpace(targetHarnessId);
-        var severityRank = (int)severity;
+        if (candidates.Count == 0)
+            return PromptConfigureAuditorPreference(targetHarnessId);
 
-        return settings.AuditorPreferences
-            .Where(p => p.Enabled)
-            .Where(p => !targetKnown || TargetMatches(p.TargetHarnessIds, targetHarnessId!))
-            .Where(p => !targetKnown ||
-                        !settings.PreventSelfAudit ||
-                        !string.Equals(p.AuditorId, targetHarnessId, StringComparison.OrdinalIgnoreCase))
-            .Where(p => !honorSeverity || HandlesSeverity(p.MinimumSeverities, severityRank))
-            .Select(p =>
-            {
-                var isApi = p.AuditorType.Equals("api", StringComparison.OrdinalIgnoreCase);
-                var runningHarnessCount = isApi
-                    ? 0
-                    : snapshot.Count(proc => string.Equals(proc.HarnessType, p.AuditorId, StringComparison.OrdinalIgnoreCase));
-                var available = isApi ? !string.IsNullOrWhiteSpace(p.ApiEndpoint) : runningHarnessCount > 0;
+        if (candidates.Count == 1)
+            return candidates[0];
 
-                return new AuditCandidate(
-                    p.AuditorId,
-                    p.AuditorType,
-                    string.IsNullOrWhiteSpace(p.DisplayName) ? p.AuditorId : p.DisplayName,
-                    p.Priority,
-                    available,
-                    runningHarnessCount,
-                    p.ApiEndpoint,
-                    p.Model);
-            })
-            .OrderByDescending(c => c.Available)
-            .ThenByDescending(c => c.Priority)
-            .ThenBy(c => c.DisplayName, StringComparer.OrdinalIgnoreCase)
+        return AuditHarnessPickerDialog.Pick(this, targetHarnessId, candidates);
+    }
+
+    private AuditRouteResolver.Candidate? PromptConfigureAuditorPreference(string? targetHarnessId)
+    {
+        if (string.IsNullOrWhiteSpace(targetHarnessId) || Services is null)
+            return null;
+
+        var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetHarnessId };
+        var choices = KnownHarnesses.All
+            .Where(h => !excluded.Contains(h.Id))
+            .Select(h => new AuditRouteResolver.Candidate(
+                h.Id,
+                "harness",
+                h.DisplayName,
+                Priority: 0,
+                Available: false,
+                RunningHarnessCount: 0,
+                McpConnected: false,
+                ApiEndpoint: null,
+                Model: null,
+                IsFallback: true))
             .ToList();
+
+        var picked = AuditHarnessPickerDialog.Pick(
+            this,
+            targetHarnessId,
+            choices,
+            title: "Choose preferred auditor",
+            prompt: $"No preferred auditor is configured for {targetHarnessId}, and no other harness is running or connected.\n\nPick one to save as the default reviewer for future alerts:");
+
+        if (picked is null)
+            return null;
+
+        OfferSaveAuditorPreference(targetHarnessId, picked, forceSave: true);
+        return picked;
+    }
+
+    private void OfferSaveAuditorPreference(
+        string targetHarnessId,
+        AuditRouteResolver.Candidate auditor,
+        bool forceSave = false)
+    {
+        if (Services is null)
+            return;
+
+        if (!forceSave)
+        {
+            var answer = MessageBox.Show(
+                $"Save {auditor.DisplayName} as the preferred auditor for {targetHarnessId} alerts?",
+                "Foreman Agent Safety - Send for Audit",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes)
+                return;
+        }
+
+        Services.SaveAuditorPreference(targetHarnessId, auditor.AuditorId, auditor.DisplayName);
+        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman",
+            $"Saved {auditor.DisplayName} as preferred auditor for {targetHarnessId}"));
     }
 
     private int? ResolveTargetPid() => _event switch
@@ -703,34 +760,6 @@ public partial class AlertDetailWindow : Window
 
     private static string Blank(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
-
-    private static bool TargetMatches(string[] targets, string targetHarnessId) =>
-        targets.Length == 0 ||
-        targets.Any(t => t == "*" || string.Equals(t, targetHarnessId, StringComparison.OrdinalIgnoreCase));
-
-    private static bool HandlesSeverity(string[] minimumSeverities, int severityRank)
-    {
-        if (minimumSeverities.Length == 0) return true;
-        return minimumSeverities
-            .Select(s => Enum.TryParse<ForemanSeverity>(s, true, out var parsed) ? (int)parsed : -1)
-            .Where(r => r >= 0)
-            .Any(min => severityRank >= min);
-    }
-
-    private sealed record AuditRouteSelection(
-        AuditCandidate? Selected,
-        string Reason,
-        bool UsedSeverityFallback);
-
-    private sealed record AuditCandidate(
-        string AuditorId,
-        string AuditorType,
-        string DisplayName,
-        int Priority,
-        bool Available,
-        int RunningHarnessCount,
-        string? ApiEndpoint,
-        string? Model);
 
     // Quiet this kind of alert's popup. The menu offers only durations the guardrail allows: a
     // protected detection (Critical / emergency rule / cred-net-priv category) gets snooze-only options;

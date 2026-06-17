@@ -4,6 +4,7 @@ using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Integration;
 using Foreman.Core.Models;
+using Foreman.Core.Power;
 using Foreman.Core.Settings;
 using Foreman.McpServer;
 using H.NotifyIcon;
@@ -60,6 +61,11 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — per-PID network bytes/sec from the elevated sidecar (null when off).</summary>
     public Func<int, double?>?                                GetNetRate            { get; set; }
 
+    public Func<WakeRequestSnapshot>?                         GetWakeRequests       { get; set; }
+
+    /// <summary>Injected from App — an agent's self-reported context/token budget (report_usage MCP tool).</summary>
+    public Func<string, Foreman.Core.Models.HarnessContextUsage?>? GetContextUsage   { get; set; }
+
     /// <summary>Injected from App — applies the Run Elevated toggle (persist + start/stop the sidecar).</summary>
     public Action<bool>?                                      ApplyRunElevated      { get; set; }
 
@@ -80,6 +86,9 @@ public sealed class TrayController : IEventSink, IDisposable
 
     /// <summary>Injected from App — connected MCP clients + capabilities, for the Connect-agent guide.</summary>
     public Func<IReadOnlyList<McpClientInfo>>?                GetConnectedClients   { get; set; }
+
+    /// <summary>Injected from ForemanState — pending Ask Harness count (null harness = total).</summary>
+    public Func<string?, int>?                                 GetPendingAskCount    { get; set; }
 
     /// <summary>Injected from App — true when the elevated network sidecar is connected and feeding.</summary>
     public Func<bool>?                                        GetNetCaptureActive   { get; set; }
@@ -437,22 +446,30 @@ public sealed class TrayController : IEventSink, IDisposable
             w.GetMcpClientCount = GetMcpClientCount;
             w.GetNetCaptureConnected = GetNetCaptureActive;
             w.GetConnectedClients = GetConnectedClients;
+            Func<IEnumerable<Foreman.Core.Models.ProcessRecord>> snap = GetProcessSnapshot ?? (() => []);
             // "Agents running" = distinct harness types currently in the process tree (live), which is
             // far more intuitive than a count of behaviour profiles (which sits at 0 until something fires).
-            w.GetRunningAgentCount = () => GetProcessSnapshot?.Invoke()
+            w.GetRunningAgentCount = () => snap()
                 .Where(p => p.IsHarness)
                 .Select(p => p.HarnessType)
                 .Where(t => !string.IsNullOrEmpty(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count() ?? 0;
+                .Count();
+            w.GetProcessSnapshot = snap;
+            w.GetSettings = () => _settings;
+            w.GetProcessesByHarness = type => GetProcessesByHarness?.Invoke(type) ?? [];
+            w.GetNetRate = GetNetRate;
+            w.GetWakeRequests = GetWakeRequests;
+            w.GetContextUsage = id => GetContextUsage?.Invoke(id);
+            w.GetPendingAskCount = id => GetPendingAskCount?.Invoke(id) ?? 0;
+            w.GetGameModeActive = () => GameModeActive;
             w.McpPort = _settings.McpPort;
 
             // The monitoring views are now tabs inside the dashboard; build them here (the tray is the
             // composition root that holds the data providers) and hand them to the dashboard to host.
-            Func<IEnumerable<Foreman.Core.Models.ProcessRecord>> snap = GetProcessSnapshot ?? (() => []);
             w.HostViews(
                 processes: new ProcessMonitorWindow(snap, GetNetRate, RequestHarnessCleanup),
-                harnesses: new HarnessesWindow(_settings, snap),
+                harnesses: new HarnessesWindow(_settings, snap, GetWakeRequests),
                 behavior:  new BehaviorMetricsWindow(
                     _settings,
                     GetBehaviorProfiles   ?? (() => []),

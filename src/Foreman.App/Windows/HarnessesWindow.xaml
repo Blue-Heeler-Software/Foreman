@@ -54,11 +54,13 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="130" />
                 <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="86" />
                 <ColumnDefinition Width="24" />
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="1" Text="Harness" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
             <TextBlock Grid.Column="2" Text="Developer" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
             <TextBlock Grid.Column="3" Text="Status" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" HorizontalAlignment="Right" />
+            <TextBlock Grid.Column="4" Text="Power" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" HorizontalAlignment="Right" />
         </Grid>
 
         <!-- Harness list -->
@@ -73,6 +75,7 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="130" />
                                     <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="86" />
                                     <ColumnDefinition Width="24" />
                                 </Grid.ColumnDefinitions>
 
@@ -104,8 +107,17 @@
                                                FontSize="10" FontWeight="Bold" />
                                 </Border>
 
+                                <Border Grid.Column="4" CornerRadius="3" Padding="5,2"
+                                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                                        ToolTip="{Binding WakeToolTip}"
+                                        Background="{Binding WakeBackground}">
+                                    <TextBlock Text="{Binding WakeText}"
+                                               Foreground="{Binding WakeForeground}"
+                                               FontSize="10" FontWeight="Bold" />
+                                </Border>
+
                                 <!-- Delete button — only visible for custom harnesses -->
-                                <Button Grid.Column="4" Content="×"
+                                <Button Grid.Column="5" Content="×"
                                         Style="{StaticResource DeleteBtn}"
                                         Visibility="{Binding DeleteVisibility}"
                                         Tag="{Binding}"

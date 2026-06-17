@@ -10,6 +10,7 @@ using System.Text.Json;
 using Foreman.Core.Events;
 using Foreman.Core.Ipc;
 using Foreman.Core.Models;
+using Foreman.Core.Power;
 
 namespace Foreman.App;
 
@@ -28,8 +29,10 @@ public sealed class ElevatedSidecarController : IDisposable
     private readonly object _gate = new();
     private CancellationTokenSource? _cts;
     private volatile Dictionary<int, double> _rates = new();
+    private volatile WakeRequestSnapshot _wakeRequests = WakeRequestSnapshot.Unavailable("Elevated sidecar is not connected.");
     private volatile bool _connected;
     private bool _captureNet = true;
+    private bool _captureWakeRequests = true;
     private IReadOnlyList<string> _decoyPaths = [];
     private string? _decoyPathsFile;
 
@@ -37,9 +40,10 @@ public sealed class ElevatedSidecarController : IDisposable
     /// Sets what the next launch does: per-PID network capture and/or SACL read-auditing of the given decoy
     /// paths. Call before <see cref="Start"/> / <see cref="Restart"/>.
     /// </summary>
-    public void Configure(bool captureNet, IReadOnlyList<string>? decoyPaths)
+    public void Configure(bool captureNet, IReadOnlyList<string>? decoyPaths, bool captureWakeRequests = true)
     {
         _captureNet = captureNet;
+        _captureWakeRequests = captureWakeRequests;
         _decoyPaths = decoyPaths ?? [];
     }
 
@@ -55,6 +59,9 @@ public sealed class ElevatedSidecarController : IDisposable
     /// <summary>Latest network bytes/sec for a PID, or null when the sidecar isn't feeding it.</summary>
     public double? GetRate(int pid) =>
         _connected && _rates.TryGetValue(pid, out var rate) ? rate : null;
+
+    public WakeRequestSnapshot GetWakeRequests() =>
+        _connected ? _wakeRequests : WakeRequestSnapshot.Unavailable("Elevated sidecar is not connected.");
 
     public void Start()
     {
@@ -77,6 +84,7 @@ public sealed class ElevatedSidecarController : IDisposable
             _connected = false;
             _cts?.Cancel();
             _rates = new();
+            _wakeRequests = WakeRequestSnapshot.Unavailable("Elevated sidecar is not connected.");
         }
     }
 
@@ -141,6 +149,11 @@ public sealed class ElevatedSidecarController : IDisposable
         {
             if (JsonSerializer.Deserialize<DecoyReadMessage>(line) is { } d) OnDecoyRead?.Invoke(d);
         }
+        else if (kind == SidecarFrame.WakeRequests)
+        {
+            if (JsonSerializer.Deserialize<WakeRequestsMessage>(line) is { } msg)
+                _wakeRequests = new WakeRequestSnapshot(msg.Available, msg.Requests, msg.Error);
+        }
         else if (JsonSerializer.Deserialize<NetworkRatesMessage>(line) is { } msg)
         {
             _rates = msg.Rates;
@@ -180,6 +193,7 @@ public sealed class ElevatedSidecarController : IDisposable
 
         var args = $"--pipe {pipeName} --nonce {nonce} --parent {Environment.ProcessId}";
         if (_captureNet) args += " --capture-net";
+        if (_captureWakeRequests) args += " --wake-requests";
 
         _decoyPathsFile = null;
         if (_decoyPaths.Count > 0)

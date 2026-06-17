@@ -289,7 +289,7 @@ public sealed class LlmTriageSettings
             AuditorId = "codex",
             AuditorType = "harness",
             DisplayName = "Codex CLI",
-            TargetHarnessIds = ["claude-code", "opencode", "t3-code"],
+            TargetHarnessIds = ["claude-code", "cursor", "opencode", "t3-code"],
             MinimumSeverities = ["High", "Critical"],
             Priority = 100,
         },
@@ -298,7 +298,7 @@ public sealed class LlmTriageSettings
             AuditorId = "claude-code",
             AuditorType = "harness",
             DisplayName = "Claude Code",
-            TargetHarnessIds = ["codex", "opencode", "t3-code"],
+            TargetHarnessIds = ["codex", "cursor", "opencode", "t3-code"],
             MinimumSeverities = ["High", "Critical"],
             Priority = 100,
         },
@@ -307,7 +307,7 @@ public sealed class LlmTriageSettings
             AuditorId = "opencode",
             AuditorType = "harness",
             DisplayName = "OpenCode",
-            TargetHarnessIds = ["claude-code", "codex", "t3-code"],
+            TargetHarnessIds = ["claude-code", "codex", "cursor", "t3-code"],
             MinimumSeverities = ["High", "Critical"],
             Priority = 100,
         },
@@ -338,6 +338,42 @@ public sealed class LlmTriageSettings
             if (Enum.TryParse<Foreman.Core.Models.ForemanSeverity>(m, ignoreCase: true, out var min) && severity >= min)
                 return true;
         return false;
+    }
+
+    /// <summary>
+    /// Ensures <paramref name="auditorId"/> is the preferred harness reviewer for alerts from
+    /// <paramref name="targetHarnessId"/>. Updates an existing preference for the same auditor or
+    /// appends a new one.
+    /// </summary>
+    public void UpsertAuditorPreference(string targetHarnessId, string auditorId, string? displayName = null)
+    {
+        if (string.IsNullOrWhiteSpace(targetHarnessId) || string.IsNullOrWhiteSpace(auditorId))
+            return;
+
+        var existing = AuditorPreferences.FirstOrDefault(p =>
+            p.Enabled &&
+            string.Equals(p.AuditorId, auditorId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(p.AuditorType, "harness", StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            if (!existing.TargetHarnessIds.Contains(targetHarnessId, StringComparer.OrdinalIgnoreCase))
+                existing.TargetHarnessIds = [.. existing.TargetHarnessIds, targetHarnessId];
+            if (!string.IsNullOrWhiteSpace(displayName))
+                existing.DisplayName = displayName;
+            return;
+        }
+
+        var known = Foreman.Core.Models.KnownHarnesses.GetById(auditorId);
+        AuditorPreferences.Add(new AuditorPreference
+        {
+            AuditorId = auditorId,
+            AuditorType = "harness",
+            DisplayName = displayName ?? known?.DisplayName ?? auditorId,
+            TargetHarnessIds = [targetHarnessId],
+            MinimumSeverities = ["High", "Critical"],
+            Priority = 100,
+        });
     }
 }
 

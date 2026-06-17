@@ -303,4 +303,22 @@ public sealed class CallerScopeToolTests : IDisposable
         using var doc = J(ForemanMcpTools.GetMyInstructions(http: AsOperator, harnessId: "claude-code"));
         Assert.Equal("claude-code", doc.RootElement.GetProperty("harnessId").GetString());
     }
+
+    [Fact]
+    public void ReportUsage_CodexCaller_RecordsForItself_NotClaudeByParam()
+    {
+        using var doc = J(ForemanMcpTools.ReportUsage(percentRemaining: 40, harnessId: "claude-code", http: AsCodex));
+        Assert.True(doc.RootElement.GetProperty("recorded").GetBoolean());
+        Assert.Equal("codex", doc.RootElement.GetProperty("harnessId").GetString());   // token scope wins over param
+        Assert.Equal(40, doc.RootElement.GetProperty("remainingPercent").GetDouble());
+        Assert.NotNull(_state.GetContextUsage("codex"));
+        Assert.Null(_state.GetContextUsage("claude-code"));    // not recorded for the sibling
+    }
+
+    [Fact]
+    public void ReportUsage_DerivesRemainingPercentFromTokens()
+    {
+        using var doc = J(ForemanMcpTools.ReportUsage(tokensUsed: 75, tokensBudget: 100, http: AsCodex));
+        Assert.Equal(25, doc.RootElement.GetProperty("remainingPercent").GetDouble());   // (100-75)/100
+    }
 }

@@ -18,6 +18,7 @@ public sealed class ForemanState : IEventSink
     private readonly ConcurrentQueue<ForemanEvent> _eventLog = new();
     private readonly ConcurrentDictionary<string, ForemanEvent> _alertById = new();
     private readonly ConcurrentDictionary<string, AskHarnessRequest> _askRequests = new();
+    private readonly ConcurrentDictionary<string, HarnessContextUsage> _contextUsage = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxEvents = 1000;
     private const int MaxAlerts = 1000;
     private const int MaxAskHarnessRequests = 200;
@@ -86,6 +87,16 @@ public sealed class ForemanState : IEventSink
     }
 
     /// <summary>Returns the tracked alert with the given id, or null. Used to gate ack by severity.</summary>
+    /// <summary>Record an agent's self-reported context/token budget (latest wins).</summary>
+    public void SetContextUsage(string harnessId, HarnessContextUsage usage)
+    {
+        if (!string.IsNullOrWhiteSpace(harnessId)) _contextUsage[harnessId] = usage;
+    }
+
+    /// <summary>The latest context usage a harness reported, or null if it never has.</summary>
+    public HarnessContextUsage? GetContextUsage(string harnessId) =>
+        harnessId is not null && _contextUsage.TryGetValue(harnessId, out var u) ? u : null;
+
     public ForemanEvent? GetAlert(string alertId) =>
         _alertById.TryGetValue(alertId, out var evt) ? evt : null;
 

@@ -211,7 +211,7 @@ public sealed class ForemanMcpToolsTests : IDisposable
         using var route = ToJson(ForemanMcpTools.GetAuditRoute("codex", severity: "High", requireAvailable: true));
 
         Assert.Equal(0, route.RootElement.GetProperty("candidates").GetArrayLength());
-        Assert.True(route.RootElement.GetProperty("reason").GetString()?.Contains("No auditor preference") == true);
+        Assert.True(route.RootElement.GetProperty("reason").GetString()?.Contains("No available auditor") == true);
     }
 
     public void Dispose()

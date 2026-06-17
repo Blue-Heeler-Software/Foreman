@@ -1,3 +1,4 @@
+using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Models;
 using Foreman.Core.Settings;
@@ -27,6 +28,12 @@ public sealed class AlertDetailServices
 
     /// <summary>The user-defined LLM-triage routing preferences.</summary>
     public required Func<LlmTriageSettings> GetLlmTriageSettings { get; init; }
+
+    /// <summary>Harness IDs with a live MCP session right now (for audit delivery + fallback routing).</summary>
+    public required Func<IReadOnlySet<string>> GetConnectedHarnessIds { get; init; }
+
+    /// <summary>Persists a preferred cross-harness auditor for a target harness.</summary>
+    public required Action<string, string, string?> SaveAuditorPreference { get; init; }
 
     /// <summary>Terminates the alert target (PID + captured start-time identity pin; refused on PID reuse).</summary>
     public required Func<int, DateTimeOffset?, bool> KillProcessByPid { get; init; }

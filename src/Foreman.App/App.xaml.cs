@@ -217,6 +217,7 @@ public partial class App : Application
         _tray.GetMcpToken                   = () => _mcpHost.McpToken;
         _tray.MintHarnessToken              = id => _mcpHost.MintHarnessToken(id);
         _tray.GetConnectedClients           = () => _mcpHost.Sessions.DescribeSessions();
+        _tray.GetPendingAskCount            = id => _mcpHost.State.CountAskHarnessRequests(id);
         _tray.BeginPairing                  = () => _mcpHost.BeginExtensionPairing();
 
         // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a
@@ -229,6 +230,12 @@ public partial class App : Application
             GetHarnessAncestorByPid = pid => _monitor.Tree.FindHarnessTypeAncestor(pid),
             GetProcessSnapshot      = () => _monitor.Tree.GetAll(),
             GetLlmTriageSettings    = () => settings.LlmTriage,
+            GetConnectedHarnessIds  = () => BuildConnectedHarnessIds(_mcpHost.Sessions.DescribeSessions()),
+            SaveAuditorPreference   = (target, auditor, display) =>
+            {
+                settings.LlmTriage.UpsertAuditorPreference(target, auditor, display);
+                SettingsStore.Save(settings);
+            },
             KillProcessByPid        = (pid, startTime) => _monitor.Tree.KillProcess(pid, startTime),
             // Click-to-mute: persist an operator mute (notification suppression only; guardrailed by MutePolicy).
             AddMute                 = m => { settings.Mutes.Add(m); SettingsStore.Save(settings); },
@@ -300,13 +307,15 @@ public partial class App : Application
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     settings.DecoyCredentials.PlantedPaths)
                 : (IReadOnlyList<string>)new List<string>();
-            _sidecar!.Configure(settings.RunElevated, auditDecoys);
+            _sidecar!.Configure(settings.RunElevated, auditDecoys, captureWakeRequests: true);
             if (settings.RunElevated || auditDecoys.Count > 0) _sidecar.Restart();
             else _sidecar.Stop();
         }
 
         ApplySidecarState();
         _tray.GetNetRate = pid => _sidecar.GetRate(pid);
+        _tray.GetWakeRequests = () => _sidecar.GetWakeRequests();
+        _tray.GetContextUsage = id => _mcpHost.State.GetContextUsage(id);
         _tray.GetNetCaptureActive = () => _sidecar?.IsConnected ?? false;
         // SettingsWindow persists the flags; these just re-apply the sidecar state (enabling an elevated
         // feature raises the UAC prompt).
@@ -558,6 +567,17 @@ public partial class App : Application
     // A behavior profile keyed "proc:<image>" belongs to an unrecognized OS/system process the classifier could
     // not attribute to a connected harness. It has no MCP channel, so it cannot answer an Ask-Harness request or
     // be routed to an auditor — the agent-to-agent response machinery does not apply to it.
+    private static HashSet<string> BuildConnectedHarnessIds(IReadOnlyList<McpClientInfo> clients)
+    {
+        var connected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var harness in KnownHarnesses.All)
+        {
+            if (clients.Any(c => SseSessionManager.MatchesHarness(c.Name, null, harness.Id)))
+                connected.Add(harness.Id);
+        }
+        return connected;
+    }
+
     private static bool IsUninterrogableProcess(string harnessId) =>
         harnessId.StartsWith("proc:", StringComparison.Ordinal);
 

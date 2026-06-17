@@ -61,6 +61,9 @@ public partial class DashboardWindow : Window, IEventSink
     public Func<string?, int>? GetPendingAskCount { get; set; }
     public Func<bool>? GetGameModeActive { get; set; }
 
+    /// <summary>An agent's self-reported context/token budget (via the report_usage MCP tool); null if never reported.</summary>
+    public Func<string, HarnessContextUsage?>? GetContextUsage { get; set; }
+
     /// <summary>Opens the "Connect agent" guide window.</summary>
     public Action? OpenConnectAgentRequested { get; set; }
 
@@ -254,7 +257,8 @@ public partial class DashboardWindow : Window, IEventSink
                     procs.Count,
                     usage,
                     pending,
-                    wakeCount);
+                    wakeCount,
+                    GetContextUsage?.Invoke(h.Id));
             })
             .Where(c => c.McpConnected)   // overview shows only harnesses actually connected to Foreman's MCP
             .OrderByDescending(c => c.IsRunning)
@@ -1068,7 +1072,8 @@ public sealed class DashboardHarnessCardVm
         int processCount,
         HarnessUsage usage,
         int pendingAsk,
-        int wakeLocks)
+        int wakeLocks,
+        HarnessContextUsage? contextUsage = null)
     {
         HarnessId = harness.Id;
         DisplayName = harness.DisplayName;
@@ -1090,13 +1095,15 @@ public sealed class DashboardHarnessCardVm
         EscalationForeground = EscalationColors(EscalationLevel).fg;
 
         var alerts = profile?.TotalAlerts ?? 0;
-        DetailLine = mcpConnected
+        var detail = mcpConnected
             ? $"MCP linked · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
             : isRunning
                 ? $"No MCP · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
                 : alerts > 0
                     ? $"{alerts} alert{(alerts == 1 ? "" : "s")} · not running"
                     : "Not running · connect MCP for Ask Harness";
+        // Append the agent's self-reported context budget (via report_usage), when it has reported one.
+        DetailLine = contextUsage?.ShortLabel is { } ctx ? $"{detail} · {ctx}" : detail;
 
         BorderBrush = EscalationLevel >= EscalationLevel.Alarm
             ? new SolidColorBrush(Color.FromRgb(0x66, 0x33, 0x11))

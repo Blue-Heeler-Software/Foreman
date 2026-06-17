@@ -456,6 +456,36 @@ public static class ForemanMcpTools
         };
     }
 
+    [McpServerTool, Description(
+        "Reports this harness's remaining context/token budget so the operator can see how much room each agent " +
+        "has left on the dashboard. Call it at task boundaries or when your context crosses a threshold (e.g. drops " +
+        "below 50%). All values optional — send percentRemaining, or tokensUsed + tokensBudget, or just a note.")]
+    public static object ReportUsage(
+        [Description("Percent of the context window REMAINING (0-100), if known")] double? percentRemaining = null,
+        [Description("Tokens used so far, if known")] long? tokensUsed = null,
+        [Description("Total token budget / context window size, if known")] long? tokensBudget = null,
+        [Description("Optional short note, e.g. 'compacting soon'")] string? note = null,
+        [Description("Optional harness ID; ignored for a scoped per-harness token (it reports for itself)")] string? harnessId = null,
+        [Description("Optional caller process ID")] int? processId = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        // A per-harness token reports for ITSELF; only the operator may report on behalf of a named harness.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; }
+        var resolved = state.ResolveHarnessId(harnessId, processId);
+        if (string.IsNullOrWhiteSpace(resolved))
+            return new { recorded = false, reason = "Couldn't resolve which harness this usage belongs to. Pass harnessId, or present a per-harness token." };
+
+        var usage = new HarnessContextUsage(
+            percentRemaining is { } p ? Math.Clamp(p, 0, 100) : null,
+            tokensUsed, tokensBudget,
+            string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
+            DateTimeOffset.UtcNow);
+        state.SetContextUsage(resolved, usage);
+        return new { recorded = true, harnessId = resolved, remainingPercent = usage.RemainingPercent, note = usage.Note };
+    }
+
     [McpServerTool, Description("Returns the permission profile that applies to the calling harness.")]
     public static object GetMyPermissions(
         [Description("Optional harness ID, e.g. 'claude-code' or 'codex'")] string? harnessId = null,

@@ -9,7 +9,7 @@ using Microsoft.Diagnostics.Tracing.Session;
 
 // Foreman elevated sidecar (capture-only). The ONLY elevated component.
 //   Usage: Foreman.EtwSidecar --pipe <name> --nonce <token> --parent <pid>
-//          [--capture-net] [--audit-decoys <pathsFile>]
+//          [--capture-net] [--audit-decoys <pathsFile>] [--wake-requests]
 // It connects to the app's local pipe, proves itself with the nonce, then streams self-describing JSON
 // frames: per-PID network byte rates (--capture-net) and/or decoy-credential read alerts (--audit-decoys).
 // It exits when the pipe breaks or the parent exits, and on the way out reverts every SACL / audit-policy
@@ -22,6 +22,7 @@ static int Run(string[] args)
     string? pipeName = null, nonce = null, decoyFile = null;
     var parentPid = 0;
     var captureNet = false;
+    var wakeRequests = false;
     for (var i = 0; i < args.Length; i++)
     {
         switch (args[i])
@@ -31,6 +32,7 @@ static int Run(string[] args)
             case "--parent":       _ = int.TryParse(Next(args, ref i), out parentPid); break;
             case "--audit-decoys": decoyFile = Next(args, ref i); break;
             case "--capture-net":  captureNet = true; break;
+            case "--wake-requests": wakeRequests = true; break;
         }
     }
 
@@ -59,7 +61,7 @@ static int Run(string[] args)
             decoyAudit.Start();   // sets SACLs + auditpol; degrades to no-op on failure
         }
 
-        if (capture is null && decoyAudit is null) return 6;   // nothing to do
+        if (capture is null && decoyAudit is null && !wakeRequests) return 6;   // nothing to do
 
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
         try { pipe.Connect(5000); }
@@ -72,6 +74,7 @@ static int Run(string[] args)
         var parent = SafeGetProcess(parentPid);
         var clock = Stopwatch.StartNew();
         var interval = TimeSpan.FromMilliseconds(1000);
+        var nextWakeRead = DateTimeOffset.MinValue;
 
         while (pipe.IsConnected)
         {
@@ -98,6 +101,20 @@ static int Run(string[] args)
                 var msg = new NetworkRatesMessage { TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
                 foreach (var (pid, bytes) in drained)
                     msg.Rates[pid] = bytes / elapsed;
+                if (!TryWrite(writer, msg)) break;
+            }
+
+            if (wakeRequests && DateTimeOffset.UtcNow >= nextWakeRead)
+            {
+                nextWakeRead = DateTimeOffset.UtcNow.AddSeconds(5);
+                var snapshot = WakeRequestProbe.Read();
+                var msg = new WakeRequestsMessage
+                {
+                    TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Available = snapshot.Available,
+                    Error = snapshot.Error,
+                    Requests = snapshot.Requests.ToList(),
+                };
                 if (!TryWrite(writer, msg)) break;
             }
         }

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Foreman.Platform.Linux</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Foreman.Core\Foreman.Core.csproj" />
+    <ProjectReference Include="..\Foreman.Platform\Foreman.Platform.csproj" />
+  </ItemGroup>
+
+</Project>

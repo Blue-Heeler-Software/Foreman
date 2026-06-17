@@ -5,6 +5,7 @@ public static class SidecarFrame
 {
     public const string Net = "net";
     public const string DecoyRead = "decoyRead";
+    public const string WakeRequests = "wakeRequests";
 }
 
 /// <summary>
@@ -41,4 +42,14 @@ public sealed class DecoyReadMessage
 
     /// <summary>The reading process's image path (from the audit event), if available.</summary>
     public string Image { get; set; } = string.Empty;
+}
+
+/// <summary>One frame from the elevated sidecar: current process power/wake requests.</summary>
+public sealed class WakeRequestsMessage
+{
+    public string Kind { get; set; } = SidecarFrame.WakeRequests;
+    public long TimestampUnixMs { get; set; }
+    public bool Available { get; set; }
+    public string? Error { get; set; }
+    public List<Foreman.Core.Power.WakeRequestEntry> Requests { get; set; } = [];
 }
