@@ -211,6 +211,7 @@ public sealed class ProcessMonitorVm
     public string UptimeLabel    { get; }
     public string SilentLabel    { get; }
     public Brush  RowForeground  { get; }
+    public Brush  RowBackground  { get; }   // Process-Explorer-style row tint by state/role
 
     // ── Live resource metrics ────────────────────────────────────────────────
     public string CpuLabel { get; }
@@ -265,16 +266,23 @@ public sealed class ProcessMonitorVm
         UptimeLabel = FormatMinutes(p.UptimeMinutes);
         SilentLabel = p.IoCountersUnavailable ? "n/a" : FormatMinutes(p.SilentMinutes);
 
-        RowForeground = p.State switch
+        // Color coding (Process-Explorer style): tint the whole row by state/role so the eye finds trouble at a
+        // glance. Orphaned (parent gone) = red, Hanging (no I/O) = amber, the harness agent itself = blue, a normal
+        // child = neutral, terminated = dim. Selection/hover override the tint in the row style.
+        var (fg, bg) = p.State switch
         {
-            ProcessState.Hanging  or
-            ProcessState.Orphaned => new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x44)),
-            ProcessState.Terminated => new SolidColorBrush(Color.FromRgb(0x55, 0x58, 0x65)),
+            ProcessState.Orphaned   => (Rgb(0xFF, 0x9A, 0x9A), Rgb(0x3A, 0x1A, 0x1E)),   // red
+            ProcessState.Hanging    => (Rgb(0xFF, 0xC8, 0x82), Rgb(0x33, 0x29, 0x1A)),   // amber
+            ProcessState.Terminated => (Rgb(0x55, 0x58, 0x60), Brushes.Transparent),     // dim, no tint
             _ => p.IsHarness
-                ? new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0))
-                : new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90)),
+                ? (Rgb(0xCF, 0xE0, 0xF0), Rgb(0x16, 0x20, 0x2E))                         // the agent: blue
+                : (Rgb(0xA8, 0xB0, 0xBC), Brushes.Transparent),                          // normal child: neutral
         };
+        RowForeground = fg;
+        RowBackground = bg;
     }
+
+    private static SolidColorBrush Rgb(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
 
     private static string FormatMinutes(int mins)
     {
