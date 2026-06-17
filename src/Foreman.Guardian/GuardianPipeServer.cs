@@ -53,9 +53,11 @@ public sealed class GuardianPipeServer
         var sec = new PipeSecurity();
         sec.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         sec.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
-        // Authenticated users may CONNECT (read/write) — but the per-connection Authenticode check below decides who
-        // is actually answered, so a connecting agent that isn't the genuine Foreman gets rejected before any work.
-        sec.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        // Authenticated users may CONNECT (read/write) and READ THE OWNER (ReadPermissions) — the latter lets the
+        // app confirm this pipe is owned by SYSTEM (anti pipe-name-squatting) before trusting it. The per-connection
+        // Authenticode check below still decides who is actually answered.
+        sec.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+            PipeAccessRights.ReadWrite | PipeAccessRights.ReadPermissions, AccessControlType.Allow));
 
         return NamedPipeServerStreamAcl.Create(
             PipeName, PipeDirection.InOut, maxNumberOfServerInstances: 1,

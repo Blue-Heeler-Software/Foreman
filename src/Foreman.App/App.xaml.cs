@@ -145,9 +145,10 @@ public partial class App : Application
         // session-scoped so reloading the log never resurrects old alerts as "active".
         if (settings.EventLogPersist)
         {
-            // Tamper-evident hash chain + the TPM-backed signed head (Phase B). Falls back to unsigned on a box
-            // with no usable Platform Crypto Provider; TOFU-pins the key's public half on first run.
-            var headSeal = HeadSealFactory.Build(settings, SettingsStore.Save);
+            // Tamper-evident hash chain + signed head. Routes through the opt-in LocalSystem guardian when it's
+            // installed (key behind the SYSTEM boundary, unforgeable by the agent), else the per-user TPM/unsigned
+            // path (Phase B) — the casual user is unchanged. TOFU-pins the key's public half on first run.
+            var headSeal = GuardianSignerFactory.Build(settings, SettingsStore.Save);
             _headSealKey = headSeal.Owns;
             headSealNotice = headSeal.Notice;
             var eventLog = new EventLogStore(integrity: settings.LogIntegrity, signer: headSeal.Signer);

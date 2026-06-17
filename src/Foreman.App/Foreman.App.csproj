@@ -18,6 +18,8 @@
     <!-- Build the elevated sidecar first; its full output is copied next to the app (below).
          No assembly reference — it is a separate process, launched on demand. -->
     <ProjectReference Include="..\Foreman.EtwSidecar\Foreman.EtwSidecar.csproj" ReferenceOutputAssembly="false" />
+    <!-- Same pattern for the opt-in guardian service (separate process, installed on demand). -->
+    <ProjectReference Include="..\Foreman.Guardian\Foreman.Guardian.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Stage the sidecar under <app>\sidecar so ElevatedSidecarController can launch it. -->
@@ -27,6 +29,16 @@
     </ItemGroup>
     <Copy SourceFiles="@(_SidecarOutput)"
           DestinationFiles="@(_SidecarOutput->'$(OutDir)sidecar\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Stage the guardian under <app>\guardian so the opt-in install action can launch it (elevated). -->
+  <Target Name="CopyGuardian" AfterTargets="Build">
+    <ItemGroup>
+      <_GuardianOutput Include="$(MSBuildThisFileDirectory)..\Foreman.Guardian\bin\$(Configuration)\$(TargetFramework)\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_GuardianOutput)"
+          DestinationFiles="@(_GuardianOutput->'$(OutDir)guardian\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 

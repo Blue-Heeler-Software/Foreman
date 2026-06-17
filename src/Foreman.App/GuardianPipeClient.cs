@@ -1,5 +1,7 @@
 using System.IO;
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Foreman.Core.Guardian;
 using Foreman.Core.Ipc.Guardian;
 
@@ -19,6 +21,26 @@ internal sealed class GuardianPipeClient : IGuardianClient
 
     // Constructed only when GuardianDiscovery found the service registered; an unreachable pipe still degrades per-call.
     public bool IsAvailable => true;
+
+    /// <summary>
+    /// Anti pipe-name-squatting: confirms the pipe is OWNED by LocalSystem before the app trusts its key. A
+    /// same-user process that squatted the pipe name would own it as the user, not SYSTEM, and can't set a SYSTEM
+    /// owner without privilege. Fail-closed: any failure (can't read owner, not connected) ⇒ false ⇒ not trusted.
+    /// </summary>
+    public async Task<bool> IsServerSystemOwnedAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var pipe = new NamedPipeClientStream(".", GuardianPipe.Name, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(_connectTimeoutMs, ct).ConfigureAwait(false);
+            var owner = pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            return owner is not null && owner.IsWellKnown(WellKnownSidType.LocalSystemSid);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public async Task<HelloResult?> HelloAsync(CancellationToken ct = default) =>
         GuardianFrameJson.Decode<HelloResult>(await RpcAsync(GuardianRpc.Hello, null, ct).ConfigureAwait(false));
