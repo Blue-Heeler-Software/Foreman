@@ -86,6 +86,16 @@ public partial class HarnessDetailWindow : Window
             mcpConnected ? Color.FromRgb(0x12, 0x2A, 0x1C) : Color.FromRgb(0x22, 0x16, 0x16),
             mcpConnected ? Color.FromRgb(0x6E, 0xC8, 0x8E) : Color.FromRgb(0xC8, 0x7E, 0x7E));
 
+        // Context budget badge — the agent's self-reported remaining context (report_usage). Green/amber/red by
+        // how much is left; absent when the agent hasn't reported.
+        if (_ctx.GetContextUsage?.Invoke() is { RemainingPercent: { } pct })
+        {
+            var (cbg, cfg) = pct >= 50 ? (Color.FromRgb(0x12, 0x2A, 0x1C), Color.FromRgb(0x7E, 0xC8, 0x78))
+                           : pct >= 20 ? (Color.FromRgb(0x2A, 0x24, 0x10), Color.FromRgb(0xE8, 0xB2, 0x3C))
+                           :             (Color.FromRgb(0x2A, 0x12, 0x12), Color.FromRgb(0xE0, 0x6C, 0x6C));
+            AddBadge($"ctx {pct:0}% left", cbg, cfg);
+        }
+
         // ── Live usage ──────────────────────────────────────────────────────────
         UpdateUsage(procs, running);
 
@@ -323,6 +333,40 @@ public partial class HarnessDetailWindow : Window
             new(level <= EscalationLevel.Watch ? "ok" : "warn", "Escalation",
                 level <= EscalationLevel.Watch ? "calm (Watch)" : level.ToString().ToUpperInvariant()),
         ];
+    }
+
+    private void ContextBudgetClick(object sender, RoutedEventArgs e)
+    {
+        var u = _ctx.GetContextUsage?.Invoke();
+        if (u is null)
+        {
+            ShowActionResult("No context budget reported yet. The agent reports it via the report_usage MCP tool — " +
+                "make sure it's MCP-connected (Connect agent) and its instructions tell it to report at task boundaries.");
+            return;
+        }
+        var parts = new List<string>();
+        if (u.RemainingPercent is { } p) parts.Add($"{p:0}% remaining");
+        if (u.TokensUsed is { } used && u.TokensBudget is { } bud) parts.Add($"{used:N0} / {bud:N0} tokens");
+        else if (u.TokensUsed is { } onlyUsed) parts.Add($"{onlyUsed:N0} tokens used");
+        if (!string.IsNullOrWhiteSpace(u.Note)) parts.Add($"“{u.Note}”");
+        parts.Add($"reported {RelativeTime(u.ReportedAtUtc)}");
+        ShowActionResult("Context budget — " + string.Join("  ·  ", parts));
+    }
+
+    private void CopySummaryClick(object sender, RoutedEventArgs e)
+    {
+        var procs = _ctx.GetProcesses().ToList();
+        var profile = _ctx.GetProfile();
+        var mcp = _ctx.GetClients().Any(c => SseSessionManager.MatchesHarness(c.Name, null, _ctx.HarnessId));
+        var u = _ctx.GetContextUsage?.Invoke();
+        var summary =
+            $"{TitleText.Text} ({_ctx.HarnessId}) · {(procs.Count > 0 ? "running" : "idle")} · " +
+            $"{(mcp ? "MCP linked" : "no MCP")} · escalation {(profile?.CurrentLevel ?? EscalationLevel.Watch)} · " +
+            $"{profile?.TotalAlerts ?? 0} alerts" +
+            (u?.ShortLabel is { } s ? $" · {s}" : "") +
+            (procs.Count > 0 ? $" · {procs.Count} proc(s)" : "");
+        try { Clipboard.SetText(summary); ShowActionResult("Copied: " + summary); }
+        catch (Exception ex) { ShowActionResult("Couldn't copy: " + ex.Message); }
     }
 
     private void RequestCleanupClick(object sender, RoutedEventArgs e)
