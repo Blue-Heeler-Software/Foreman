@@ -26,6 +26,7 @@ public sealed class HarnessIntegrationRegistryTests
     [InlineData("gemini-cli")]
     [InlineData("github-copilot")]
     [InlineData("lm-studio")]
+    [InlineData("cursor")]
     public void NewConnectors_HaveIntegrationMetadata(string harnessId)
     {
         var integ = HarnessIntegrationRegistry.Get(harnessId);

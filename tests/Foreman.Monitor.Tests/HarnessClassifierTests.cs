@@ -10,6 +10,9 @@ public sealed class HarnessClassifierTests
     [InlineData("node.exe", "node W:\\src\\t3code\\apps\\desktop\\main.js", "t3-code")]
     [InlineData("opencode.exe", "", "opencode")]
     [InlineData("node.exe", "node C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode", "opencode")]
+    [InlineData("copilot.exe", "", "github-copilot")]   // standalone GitHub Copilot CLI, not 'gh copilot'
+    [InlineData("node.exe", "node C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\@github\\copilot\\index.js", "github-copilot")]
+    [InlineData("cursor.exe", "", "cursor")]
     public void Classify_DetectsNewBuiltInHarnesses(string processName, string commandLine, string expectedHarnessId)
     {
         var record = new ProcessRecord

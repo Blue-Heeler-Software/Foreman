@@ -1,0 +1,48 @@
+{
+  "name": "cursor-default",
+  "version": "1.0",
+  "description": "Default profile for Cursor (AI-first editor) processes. Cursor is a long-lived editor that idles between prompts, so hang/orphan notification is relaxed relative to a bursty CLI agent.",
+  "processMatch": {
+    "executableNames": ["cursor.exe", "cursor-tunnel.exe"],
+    "commandLineContains": ["cursor/resources/app", "cursor-server", "cursor-rpc"],
+    "parentExecutableNames": []
+  },
+  "fileSystem": {
+    "allowedWritePaths": [
+      "%USERPROFILE%\\*",
+      "%TEMP%\\cursor-*\\*",
+      "%LOCALAPPDATA%\\cursor\\*",
+      "%APPDATA%\\Cursor\\*",
+      "%USERPROFILE%\\.cursor\\*"
+    ],
+    "deniedPaths": [
+      "C:\\Windows\\*",
+      "C:\\Windows\\System32\\*",
+      "%USERPROFILE%\\.ssh\\*",
+      "%USERPROFILE%\\.aws\\*",
+      "%USERPROFILE%\\.gnupg\\*"
+    ],
+    "enforceMode": "alert"
+  },
+  "commands": {
+    "blockedPatterns": ["cred-001", "cred-004", "cred-005", "priv-002", "priv-003", "priv-004", "win-004"],
+    "enforceMode": "alert"
+  },
+  "processLimits": {
+    "maxRuntimeMinutes": 1440,
+    "hangThresholdMinutes": 60,
+    "hookJamThresholdMinutes": 5
+  },
+  "claudeCodeIntegration": {
+    "readSettingsJson": false,
+    "trustGrantedPermissions": false
+  },
+  "alerts": {
+    "notifyOnHang": false,
+    "notifyOnOrphan": true,
+    "notifyOnViolation": true,
+    "suppressDuplicatesWindowMinutes": 5,
+    "trustedHookPathMarkers": [],
+    "launcherSuppressedRuleIds": []
+  }
+}

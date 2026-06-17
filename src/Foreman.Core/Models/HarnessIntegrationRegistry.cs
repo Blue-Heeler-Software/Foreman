@@ -121,6 +121,23 @@ public static class HarnessIntegrationRegistry
             }
             """),
         new(
+            "cursor",
+            "Cursor",
+            "cursor-default",
+            [],
+            [],
+            "Add Foreman Agent Safety's MCP endpoint to ~/.cursor/mcp.json under mcpServers (a remote server — identified by 'url', with NO 'type' field). Use Foreman's Connect Agent window to write it automatically, then restart Cursor or refresh the foreman server in Settings -> Tools & MCP.",
+            """
+            {
+              "mcpServers": {
+                "foreman": {
+                  "url": "http://localhost:{port}/mcp",
+                  "headers": { "Authorization": "Bearer <token>" }
+                }
+              }
+            }
+            """),
+        new(
             "lm-studio",
             "LM Studio",
             "lm-studio-default",

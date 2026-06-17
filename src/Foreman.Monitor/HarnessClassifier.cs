@@ -56,8 +56,8 @@ public static class HarnessClassifier
             "aider"
         ),
         (
-            ["gh.exe"],                                  // 'gh copilot' shell extension
-            ["@githubnext/github-copilot-cli", "github-copilot-cli", "gh-copilot", "copilot-cli"],
+            ["copilot.exe", "copilot", "gh.exe"],        // standalone GitHub Copilot CLI (@github/copilot) + legacy 'gh copilot' extension
+            ["@github/copilot", "@github\\copilot", "@githubnext/github-copilot-cli", "github-copilot-cli", "gh-copilot", "copilot-cli"],
             [],
             "github-copilot"
         ),

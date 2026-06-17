@@ -38,7 +38,7 @@ public static class KnownHarnesses
         new("gemini-cli",     "Gemini CLI",             "Google",            "Google's terminal-based AI coding agent"),
         new("amazon-q",       "Amazon Q Developer",     "Amazon / AWS",      "AWS AI development assistant CLI"),
         new("aider",          "Aider",                  "Paul Gauthier",     "AI pair programming in your terminal"),
-        new("github-copilot", "GitHub Copilot CLI",     "GitHub / Microsoft","AI shell integration via 'gh copilot' commands"),
+        new("github-copilot", "GitHub Copilot CLI",     "GitHub / Microsoft","GitHub's terminal 'copilot' CLI (@github/copilot); also the legacy 'gh copilot' extension"),
         new("cursor",         "Cursor",                 "Anysphere",         "AI-first code editor (VS Code fork)"),
         new("cline",          "Cline / Continue / Roo", "Community",         "VS Code AI coding extensions (Cline, Continue, Roo Code)"),
 
