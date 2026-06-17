@@ -1,5 +1,26 @@
 # Functionality-audit hand-off (Codex-owned files)
 
+## ⚠️ CRITICAL live regression — Harnesses tab bricks the dashboard (uncommitted wake feature)
+The uncommitted wake-request work in `HarnessesWindow.xaml.cs` runs its probe on the **UI thread**:
+`Loaded` and a 5s `DispatcherTimer.Tick` both call `Refresh()` → `RefreshLiveState()` →
+`_getWakeRequests?.Invoke()`, which blocks on the elevated sidecar. Result: switching to the Harnesses
+tab **hangs and renders nothing**, `_items` never populates, and because `HasUnsavedChanges()` then
+compares an empty row set against persisted `DisabledHarnesses`/`CustomHarnessExes`, every tab switch
+fires a false **"You have unsaved changes on the Harnesses tab"** dialog — trapping the user.
+**Fix:** run the wake probe OFF the UI thread (`Task.Run` + marshal back via Dispatcher) with a short
+timeout, populate `_items` from settings FIRST (independent of wake data), and only overlay wake state
+when/if it arrives; treat probe failure as "Wake n/a", never a block. Until then the main-tree build is
+unusable — a clean build is running from a `HEAD` worktree as a stopgap (`W:\TOOLS\Foreman-head`).
+
+## ⚠️ HEAD does not build standalone — committed code references an untracked file
+`src/Foreman.McpServer/ForemanMcpTools.cs` (committed, `get_audit_route`) references
+`AuditRouteResolver`, but `src/Foreman.Core/Alerts/AuditRouteResolver.cs` is **untracked** — so a fresh
+checkout of HEAD fails to compile (`CS0246 AuditRouteResolver`). Commit `AuditRouteResolver.cs` (and its
+untracked test `tests/Foreman.Core.Tests/Alerts/AuditRouteResolverTests.cs`) so HEAD builds on its own.
+
+---
+
+
 A functionality/polish audit (2026-06-17) confirmed 25 findings. The 17 in clean files are fixed
 (commits `e45b26b`, `7723066`, `e06f809`, `b558fe2`, plus the snake_case tool-name fix `2726421`).
 The items below live in **Codex's uncommitted working tree**, so they were left for that branch to
