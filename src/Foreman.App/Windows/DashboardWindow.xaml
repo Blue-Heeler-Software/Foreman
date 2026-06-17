@@ -124,9 +124,11 @@
         <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />   <!-- r0: header -->
-            <RowDefinition Height="Auto" />   <!-- r1: status strip -->
-            <RowDefinition Height="*" />      <!-- r2: content -->
-            <RowDefinition Height="Auto" />   <!-- r3: footer toolbar -->
+            <RowDefinition Height="Auto" />   <!-- r1: system meta lights -->
+            <RowDefinition Height="Auto" />   <!-- r2: status strip -->
+            <RowDefinition Height="Auto" />   <!-- r3: harness overview -->
+            <RowDefinition Height="*" />      <!-- r4: content -->
+            <RowDefinition Height="Auto" />   <!-- r5: footer toolbar -->
         </Grid.RowDefinitions>
 
         <!-- ── Header ─────────────────────────────────────────────────────────── -->
@@ -165,9 +167,10 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- One chip per harness that has alerts.  Empty = "all clear" hint. -->
+                <!-- One chip per harness with activity (running, MCP, or alerts). Empty = all clear hint. -->
                 <ItemsControl Grid.Column="2" x:Name="HarnessPanel"
-                              VerticalAlignment="Center">
+                              VerticalAlignment="Center"
+                              MouseLeftButtonUp="HarnessChipClick">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel Orientation="Horizontal" />
@@ -176,7 +179,8 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Border CornerRadius="3" Padding="7,3" Margin="0,0,8,0"
-                                    Background="{Binding LevelBg}">
+                                    Background="{Binding LevelBg}" Cursor="Hand"
+                                    ToolTip="{Binding ToolTip}">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding LevelLabel}"
                                                FontSize="10" FontWeight="Bold"
@@ -185,9 +189,10 @@
                                     <TextBlock Text="{Binding DisplayName}"
                                                FontSize="10"
                                                Foreground="{Binding LevelFg}" />
-                                    <TextBlock Text="  ·  " FontSize="10"
-                                               Foreground="{Binding LevelFg}" Opacity="0.65" />
-                                    <TextBlock Text="{Binding CountLabel}"
+                                    <TextBlock Text="{Binding TrustLabel}"
+                                               FontSize="10"
+                                               Foreground="{Binding LevelFg}" Opacity="0.75" />
+                                    <TextBlock Text="{Binding McpLabel}"
                                                FontSize="10"
                                                Foreground="{Binding LevelFg}" Opacity="0.85" />
                                 </StackPanel>
@@ -244,7 +249,40 @@
             </Grid>
         </Border>
 
+        <!-- ── System meta lights (presence, sidecar, extension, usage posture) ── -->
         <Border Grid.Row="1"
+                Background="#FF0D0F14"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,8">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <ItemsControl x:Name="MetaLightsPanel">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <!-- Background=Transparent makes the whole chip (not just the dot/text) hit-testable;
+                                 click deep-links to the pertinent view (see MetaLightClick). -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,16,0"
+                                        ToolTip="{Binding ToolTip}"
+                                        Background="Transparent" Cursor="Hand"
+                                        MouseLeftButtonUp="MetaLightClick">
+                                <Ellipse Width="8" Height="8" Fill="{Binding DotBrush}"
+                                         VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="{Binding Label}" FontSize="10"
+                                           Foreground="{StaticResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="2"
                 Background="{StaticResource BackgroundBrush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1"
@@ -295,6 +333,11 @@
                                    Style="{StaticResource MetricValue}" />
                         <TextBlock Text="AGENTS RUNNING"
                                    Style="{StaticResource MetricCaption}" />
+                        <TextBlock x:Name="AgentUsageLabel"
+                                   FontSize="10"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Margin="0,4,0,0"
+                                   TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                 </Border>
 
@@ -354,8 +397,102 @@
             </Grid>
         </Border>
 
+        <!-- ── Harness overview cards ─────────────────────────────────────────── -->
+        <Border Grid.Row="3"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
+            <StackPanel>
+                <Grid Margin="0,0,0,8">
+                    <TextBlock Text="HARNESS STATUS"
+                               FontSize="10" FontWeight="Bold"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                    <TextBlock HorizontalAlignment="Right"
+                               Text="click a card → live detail"
+                               FontSize="10"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                </Grid>
+                <TextBlock x:Name="NoConnectedHarnessText"
+                           Text="No agents connected to Foreman's MCP — use Connect agent."
+                           FontSize="11"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           Visibility="Collapsed" />
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl x:Name="HarnessOverviewPanel"
+                                  MouseLeftButtonUp="HarnessOverviewClick">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="168" Margin="0,0,10,0"
+                                        CornerRadius="8"
+                                        Background="{StaticResource SurfaceRaisedBrush}"
+                                        BorderBrush="{Binding BorderBrush}"
+                                        BorderThickness="1"
+                                        Padding="12,10" Cursor="Hand"
+                                        ToolTip="{Binding ToolTip}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource TextPrimaryBrush}" />
+                                            <Border HorizontalAlignment="Right" CornerRadius="3" Padding="5,2"
+                                                    Background="{Binding StatusBackground}">
+                                                <TextBlock Text="{Binding StatusText}"
+                                                           FontSize="9" FontWeight="Bold"
+                                                           Foreground="{Binding StatusForeground}" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock Text="{Binding Subtitle}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   Margin="0,6,0,0"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <TextBlock Text="{Binding TrustLabel}"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource AccentBrush}" />
+                                            <TextBlock Text="  ·  " FontSize="10"
+                                                       Foreground="{StaticResource TextMutedBrush}" />
+                                            <TextBlock Text="{Binding EscalationLabel}"
+                                                       FontSize="10" FontWeight="Bold"
+                                                       Foreground="{Binding EscalationForeground}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding DetailLine}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   Margin="0,6,0,0"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <ItemsControl ItemsSource="{Binding Lights}" Margin="0,8,0,0">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Ellipse Width="8" Height="8" Fill="{Binding DotBrush}"
+                                                             Margin="0,0,5,0"
+                                                             ToolTip="{Binding ToolTip}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
         <!-- ── Empty state (shown when no security alerts exist) ─────────────── -->
-        <Grid Grid.Row="2" x:Name="EmptyPanel" Visibility="Collapsed">
+        <Grid Grid.Row="4" x:Name="EmptyPanel" Visibility="Collapsed">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Opacity="0.78">
                 <Border Width="82" Height="82" CornerRadius="14"
                         Background="#FF10131A"
@@ -378,7 +515,7 @@
 
         <!-- ── Alert feed ─────────────────────────────────────────────────────── -->
         <!-- Click any row to open AlertDetailWindow for that event. -->
-        <ListView Grid.Row="2" x:Name="AlertList"
+        <ListView Grid.Row="4" x:Name="AlertList"
                   Background="{StaticResource SurfaceBrush}"
                   Foreground="{StaticResource TextPrimaryBrush}"
                   BorderThickness="0"
@@ -489,7 +626,7 @@
         </ListView>
 
         <!-- ── Footer toolbar ─────────────────────────────────────────────────── -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="5"
                 Background="#FF0D0F16"
                 BorderBrush="#FF1E2030" BorderThickness="0,1,0,0"
                 Padding="12,8">

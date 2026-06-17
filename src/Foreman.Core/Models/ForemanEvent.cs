@@ -41,6 +41,18 @@ public abstract record ForemanEvent(
     public DateTimeOffset? ProcessStartTime { get; init; }
 
     /// <summary>
+    /// Append-time local ordering metadata set by EventLogStore. Event Timestamp remains the source/provider
+    /// wall-clock label; Sequence is the local ordering truth, and MonotonicTicks is the local interval truth
+    /// within TemporalSessionId.
+    /// </summary>
+    public string? TemporalSessionId { get; init; }
+    public long? Sequence { get; init; }
+    public DateTimeOffset? RecordedAtUtc { get; init; }
+    public long? MonotonicTicks { get; init; }
+    public long? MonotonicFrequency { get; init; }
+    public string[] TemporalAnomalies { get; init; } = [];
+
+    /// <summary>
     /// Append-only hash-chain link, set at WRITE TIME by <see cref="Foreman.Core.Events.EventLogStore"/>, not
     /// in the ctor — the in-memory copy on the EventBus carries the default (null). <see cref="PrevHash"/> is
     /// the hash of the previous on-disk record (empty string for the genesis record); <see cref="Hash"/> is

@@ -56,4 +56,14 @@ public sealed class LogChainTests
         Assert.Null(s.SealHead("h", 3));
         Assert.True(s.VerifyHead("h", 3, null));
     }
+
+    [Fact]
+    public void NullTimeAnchor_DoesNotAnchor_ButVerifies()
+    {
+        var a = new NullTimeAnchor();
+        var checkpoint = new TemporalCheckpoint("s", 1, T, 10, 1_000);
+        Assert.False(a.ExpectsAnchor);
+        Assert.Null(a.AnchorHead("h", 3, checkpoint));
+        Assert.True(a.VerifyAnchor("h", 3, checkpoint, null));
+    }
 }

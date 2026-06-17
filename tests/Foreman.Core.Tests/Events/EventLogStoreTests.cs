@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Models;
@@ -19,6 +20,14 @@ public sealed class EventLogStoreTests : IDisposable
     public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
 
     private static readonly DateTimeOffset T = DateTimeOffset.UnixEpoch;
+
+    private sealed class TestClock : ITemporalClock
+    {
+        public string SessionId { get; init; } = "session-a";
+        public DateTimeOffset UtcNow { get; set; } = T;
+        public long MonotonicTicks { get; set; }
+        public long MonotonicFrequency { get; init; } = 1_000;
+    }
 
     public static IEnumerable<object[]> AllEventTypes() => new[]
     {
@@ -111,6 +120,22 @@ public sealed class EventLogStoreTests : IDisposable
     private void WriteRaw(EventLogStore s, IEnumerable<string> lines)
         => File.WriteAllText(s.FilePath, string.Join("\n", lines) + "\n");
     private static ForemanEvent De(string line) => JsonSerializer.Deserialize<ForemanEvent>(line)!;
+    private static JsonObject Obj(ForemanEvent evt) => JsonSerializer.SerializeToNode<ForemanEvent>(evt)!.AsObject();
+
+    private static string HistoricalCanonical(JsonObject stored)
+    {
+        var canonical = JsonNode.Parse(stored.ToJsonString())!.AsObject();
+        canonical[nameof(ForemanEvent.Hash)] = null;
+        canonical[nameof(ForemanEvent.PrevHash)] = null;
+        return canonical.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+    }
+
+    private static string StoreHistorical(JsonObject stored, string prevHash)
+    {
+        stored[nameof(ForemanEvent.PrevHash)] = prevHash;
+        stored[nameof(ForemanEvent.Hash)] = LogChain.ComputeHash(prevHash, HistoricalCanonical(stored));
+        return stored.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+    }
 
     /// <summary>A deterministic stand-in for the P3 TPM signer so the head-seal path is testable without hardware.</summary>
     private sealed class StubSigner : ILogHeadSigner
@@ -118,6 +143,17 @@ public sealed class EventLogStoreTests : IDisposable
         public bool ExpectsSeal => true;
         public string? SealHead(string headHash, long recordCount) => $"{headHash}|{recordCount}|SIG";
         public bool VerifyHead(string headHash, long recordCount, string? seal) => seal == $"{headHash}|{recordCount}|SIG";
+    }
+
+    private sealed class StubTimeAnchor : ILogTimeAnchor
+    {
+        public bool ExpectsAnchor => true;
+        public string? AnchorHead(string headHash, long recordCount, TemporalCheckpoint checkpoint) =>
+            $"{headHash}|{recordCount}|{checkpoint.SessionId}|{checkpoint.Sequence}|TIME";
+
+        public bool VerifyAnchor(string headHash, long recordCount, TemporalCheckpoint? checkpoint, string? anchor) =>
+            checkpoint is not null &&
+            anchor == $"{headHash}|{recordCount}|{checkpoint.SessionId}|{checkpoint.Sequence}|TIME";
     }
 
     [Fact]
@@ -133,6 +169,64 @@ public sealed class EventLogStoreTests : IDisposable
         Assert.Equal("", e0.PrevHash);                     // genesis
         Assert.False(string.IsNullOrEmpty(e0.Hash));
         Assert.Equal(e0.Hash, e1.PrevHash);                // chained
+    }
+
+    [Fact]
+    public void Append_PopulatesTemporalOrderingMetadata()
+    {
+        var clock = new TestClock { SessionId = "temporal-test", UtcNow = T.AddSeconds(10), MonotonicTicks = 100 };
+        var store = new EventLogStore(_dir, clock: clock);
+
+        store.Append(new InfoEvent(T, "src", "one"));
+
+        var e = Assert.Single(store.Load());
+        Assert.Equal("temporal-test", e.TemporalSessionId);
+        Assert.Equal(1, e.Sequence);
+        Assert.Equal(T.AddSeconds(10), e.RecordedAtUtc);
+        Assert.Equal(100, e.MonotonicTicks);
+        Assert.Equal(1_000, e.MonotonicFrequency);
+        Assert.Empty(e.TemporalAnomalies);
+    }
+
+    [Fact]
+    public void Append_SequenceContinuesAcrossStoreInstances()
+    {
+        new EventLogStore(_dir, clock: new TestClock { SessionId = "a", MonotonicTicks = 10 })
+            .Append(new InfoEvent(T, "src", "one"));
+        new EventLogStore(_dir, clock: new TestClock { SessionId = "b", MonotonicTicks = 20 })
+            .Append(new InfoEvent(T, "src", "two"));
+
+        var loaded = new EventLogStore(_dir).Load();
+        Assert.Equal([1L, 2L], loaded.Select(e => e.Sequence!.Value).ToArray());
+        Assert.Equal(["a", "b"], loaded.Select(e => e.TemporalSessionId!).ToArray());
+    }
+
+    [Fact]
+    public void Append_FlagsWallClockRollback()
+    {
+        var clock = new TestClock { UtcNow = T.AddMinutes(10), MonotonicTicks = 100 };
+        var store = new EventLogStore(_dir, clock: clock);
+        store.Append(new InfoEvent(T, "src", "one"));
+
+        clock.UtcNow = T.AddMinutes(5);
+        clock.MonotonicTicks = 200;
+        store.Append(new InfoEvent(T, "src", "two"));
+
+        Assert.Contains("wall-clock-moved-backward", store.Load()[1].TemporalAnomalies);
+    }
+
+    [Fact]
+    public void Append_FlagsWallMonotonicDivergence()
+    {
+        var clock = new TestClock { UtcNow = T, MonotonicTicks = 0, MonotonicFrequency = 1_000 };
+        var store = new EventLogStore(_dir, clock: clock);
+        store.Append(new InfoEvent(T, "src", "one"));
+
+        clock.UtcNow = T.AddHours(1);
+        clock.MonotonicTicks = 1_000; // one monotonic second
+        store.Append(new InfoEvent(T, "src", "two"));
+
+        Assert.Contains("wall-monotonic-divergence", store.Load()[1].TemporalAnomalies);
     }
 
     [Fact]
@@ -186,6 +280,42 @@ public sealed class EventLogStoreTests : IDisposable
 
         var vr = new EventLogStore(_dir).Verify();
         Assert.Equal(VerifyStatus.BrokenLink, vr.Status);
+    }
+
+    [Fact]
+    public void Verify_RecomputedChainWithDuplicateSequence_DetectsBrokenLink()
+    {
+        var first = new InfoEvent(T, "src", "one")
+        {
+            TemporalSessionId = "s",
+            Sequence = 1,
+            RecordedAtUtc = T,
+            MonotonicTicks = 1,
+            MonotonicFrequency = 1_000,
+        };
+        var firstHash = LogChain.ComputeHash(LogChain.Genesis, LogChain.Canonicalize(first, new JsonSerializerOptions { WriteIndented = false }));
+        first = first with { PrevHash = LogChain.Genesis, Hash = firstHash };
+
+        var second = new InfoEvent(T, "src", "two")
+        {
+            TemporalSessionId = "s",
+            Sequence = 1,
+            RecordedAtUtc = T.AddSeconds(1),
+            MonotonicTicks = 2,
+            MonotonicFrequency = 1_000,
+        };
+        var secondHash = LogChain.ComputeHash(firstHash, LogChain.Canonicalize(second, new JsonSerializerOptions { WriteIndented = false }));
+        second = second with { PrevHash = firstHash, Hash = secondHash };
+
+        WriteRaw(new EventLogStore(_dir), [
+            JsonSerializer.Serialize<ForemanEvent>(first),
+            JsonSerializer.Serialize<ForemanEvent>(second),
+        ]);
+
+        var vr = new EventLogStore(_dir).Verify();
+        Assert.Equal(VerifyStatus.BrokenLink, vr.Status);
+        Assert.Equal(1, vr.Index);
+        Assert.Contains("sequence", vr.Message);
     }
 
     [Fact]
@@ -259,6 +389,24 @@ public sealed class EventLogStoreTests : IDisposable
     }
 
     [Fact]
+    public void Verify_TimeAnchor_IsRecordedAndEnforced()
+    {
+        var store = new EventLogStore(
+            _dir,
+            clock: new TestClock { SessionId = "anchored", UtcNow = T.AddMinutes(1), MonotonicTicks = 12 },
+            timeAnchor: new StubTimeAnchor());
+        store.Append(new InfoEvent(T, "src", "one"));
+
+        Assert.Equal(VerifyStatus.Valid, store.Verify().Status);
+        var head = File.ReadAllText(store.FilePath + ".head");
+        Assert.Contains("anchored", head);
+        Assert.Contains("TIME", head);
+
+        File.WriteAllText(store.FilePath + ".head", head.Replace("TIME", "FAKE"));
+        Assert.Equal(VerifyStatus.HeadUnsealed, store.Verify().Status);
+    }
+
+    [Fact]
     public void Verify_LegacyPrefix_IsNotTamper()   // enabling the chain over an existing un-chained log is graceful
     {
         var legacy = new EventLogStore(_dir, integrity: new LogIntegritySettings { HashChainEnabled = false });
@@ -272,5 +420,55 @@ public sealed class EventLogStoreTests : IDisposable
         var vr = chained.Verify();
         Assert.Equal(VerifyStatus.Valid, vr.Status);
         Assert.Equal(2, vr.Count);   // only the chained records counted; the legacy prefix is skipped
+    }
+
+    [Fact]
+    public void Load_MigratesMixedPreTemporalAndTemporalChain_ToNewCanonicalForm()
+    {
+        var store = new EventLogStore(_dir);
+
+        var preTemporal = Obj(new InfoEvent(T, "src", "pre-temporal"));
+        preTemporal.Remove(nameof(ForemanEvent.TemporalSessionId));
+        preTemporal.Remove(nameof(ForemanEvent.Sequence));
+        preTemporal.Remove(nameof(ForemanEvent.RecordedAtUtc));
+        preTemporal.Remove(nameof(ForemanEvent.MonotonicTicks));
+        preTemporal.Remove(nameof(ForemanEvent.MonotonicFrequency));
+        preTemporal.Remove(nameof(ForemanEvent.TemporalAnomalies));
+        var first = StoreHistorical(preTemporal, LogChain.Genesis);
+        var firstHash = JsonSerializer.Deserialize<ForemanEvent>(first)!.Hash!;
+
+        var temporal = Obj(new InfoEvent(T, "src", "temporal")
+        {
+            TemporalSessionId = "session-a",
+            Sequence = 1,
+            RecordedAtUtc = T.AddSeconds(1),
+            MonotonicTicks = 10,
+            MonotonicFrequency = 1_000,
+            TemporalAnomalies = [],
+        });
+        var second = StoreHistorical(temporal, firstHash);
+
+        WriteRaw(store, [first, second]);
+        Assert.Equal(VerifyStatus.BrokenLink, store.Verify().Status);
+
+        store.Load();
+
+        var migrated = new EventLogStore(_dir).Verify();
+        Assert.Equal(VerifyStatus.Valid, migrated.Status);
+        Assert.Equal(2, migrated.Count);
+    }
+
+    [Fact]
+    public void TryAppend_WhenPersistenceFails_ReturnsFalseAndStoresError()
+    {
+        var fileInsteadOfDirectory = Path.Combine(_dir, "not-a-directory");
+        File.WriteAllText(fileInsteadOfDirectory, "occupied");
+        var store = new EventLogStore(fileInsteadOfDirectory);
+
+        var ok = store.TryAppend(new InfoEvent(T, "src", "one"), out var error);
+
+        Assert.False(ok);
+        Assert.False(string.IsNullOrWhiteSpace(error));
+        Assert.NotNull(store.LastAppendError);
     }
 }

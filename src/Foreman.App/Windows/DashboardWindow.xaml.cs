@@ -2,9 +2,12 @@ using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
 using Foreman.Core.Models;
+using Foreman.Core.Power;
+using Foreman.Core.Settings;
 using Foreman.McpServer;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -25,6 +28,9 @@ public partial class DashboardWindow : Window, IEventSink
     private readonly Func<IEnumerable<BehaviorProfile>> _getProfiles;
     private readonly ObservableCollection<DashboardAlertVm> _alerts = [];
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _usageTimer;
+    private readonly ResourceSampler _usageSampler = new();
+    private Dictionary<int, ResourceSampler.Metrics> _liveMetrics = [];
     private readonly List<IDisposable> _hostedViews = [];
     private HarnessesWindow? _harnessView;
     private LogWindow? _logView;   // for tile deep-links that pre-set the severity filter
@@ -43,6 +49,18 @@ public partial class DashboardWindow : Window, IEventSink
     /// <summary>Live count of agents currently running (distinct harness types), wired by TrayController.</summary>
     public Func<int>? GetRunningAgentCount { get; set; }
 
+    /// <summary>Process snapshot for harness running/MCP attribution.</summary>
+    public Func<IEnumerable<ProcessRecord>>? GetProcessSnapshot { get; set; }
+
+    /// <summary>Settings for trust levels and disabled harnesses.</summary>
+    public Func<ForemanSettings>? GetSettings { get; set; }
+
+    public Func<string, IEnumerable<ProcessRecord>>? GetProcessesByHarness { get; set; }
+    public Func<int, double?>? GetNetRate { get; set; }
+    public Func<WakeRequestSnapshot>? GetWakeRequests { get; set; }
+    public Func<string?, int>? GetPendingAskCount { get; set; }
+    public Func<bool>? GetGameModeActive { get; set; }
+
     /// <summary>Opens the "Connect agent" guide window.</summary>
     public Action? OpenConnectAgentRequested { get; set; }
 
@@ -60,6 +78,10 @@ public partial class DashboardWindow : Window, IEventSink
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _refreshTimer.Tick += (_, _) => Refresh();
         _refreshTimer.Start();
+
+        _usageTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _usageTimer.Tick += (_, _) => SampleUsage();
+        _usageTimer.Start();
 
         SetPadlockVisual(Security.PresenceGuard.IsEnabled, animate: false);
         Activated += (_, _) => { if (!_padlockBusy) SetPadlockVisual(Security.PresenceGuard.IsEnabled, animate: false); };
@@ -180,23 +202,75 @@ public partial class DashboardWindow : Window, IEventSink
         foreach (var evt in relevant)
             _alerts.Add(DashboardAlertVm.From(evt));
 
-        // ── Harness chips ─────────────────────────────────────────────────────
         var allProfiles = _getProfiles().ToList();
-        var profiles = allProfiles
-            .Where(p => p.TotalAlerts > 0)
-            .OrderByDescending(p => (int)p.CurrentLevel)
-            .ThenByDescending(p => p.TotalAlerts)
+        var settings = GetSettings?.Invoke() ?? new ForemanSettings();
+        var connectedClients = GetConnectedClients?.Invoke() ?? [];
+        var snapshot = GetProcessSnapshot?.Invoke()?.ToList() ?? [];
+        var wake = GetWakeRequests?.Invoke();
+        var pendingTotal = GetPendingAskCount?.Invoke(null) ?? 0;
+
+        MetaLightsPanel.ItemsSource = BuildMetaLights(settings, connectedClients, pendingTotal);
+
+        var runningIds = snapshot
+            .Where(p => !string.IsNullOrEmpty(p.HarnessType))
+            .Select(p => p.HarnessType!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var profileById = allProfiles.ToDictionary(p => p.HarnessId, StringComparer.OrdinalIgnoreCase);
+        var wakeByHarness = wake is { Available: true }
+            ? BuildWakeMap(snapshot, wake)
+            : new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        var chipHarnesses = KnownHarnesses.All
+            .Where(h => !settings.DisabledHarnesses.Contains(h.Id))
+            .Select(h => new HarnessChipVm(
+                h,
+                profileById.GetValueOrDefault(h.Id),
+                runningIds.Contains(h.Id),
+                IsMcpConnected(connectedClients, h.Id),
+                settings.HarnessTrust.TryGetValue(h.Id, out var trust) ? Math.Clamp(trust, 1, 5) : 3))
+            .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0)
+            .OrderByDescending(c => (int)c.EscalationLevel)
+            .ThenByDescending(c => c.AlertCount)
+            .ThenBy(c => c.DisplayName)
             .ToList();
 
-        HarnessPanel.ItemsSource = profiles
-            .Select(p => new HarnessChipVm(p))
+        HarnessPanel.ItemsSource = chipHarnesses;
+
+        HarnessOverviewPanel.ItemsSource = KnownHarnesses.All
+            .Where(h => !settings.DisabledHarnesses.Contains(h.Id))
+            .Select(h =>
+            {
+                var procs = GetProcessesByHarness?.Invoke(h.Id)?.ToList()
+                            ?? snapshot.Where(p => string.Equals(p.HarnessType, h.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+                var usage = HarnessUsageAggregator.Aggregate(procs, _liveMetrics, GetNetRate);
+                var pending = GetPendingAskCount?.Invoke(h.Id) ?? 0;
+                wakeByHarness.TryGetValue(h.Id, out var wakeCount);
+                return new DashboardHarnessCardVm(
+                    h,
+                    profileById.GetValueOrDefault(h.Id),
+                    runningIds.Contains(h.Id),
+                    IsMcpConnected(connectedClients, h.Id),
+                    settings.HarnessTrust.TryGetValue(h.Id, out var trust2) ? Math.Clamp(trust2, 1, 5) : 3,
+                    procs.Count,
+                    usage,
+                    pending,
+                    wakeCount);
+            })
+            .Where(c => c.McpConnected)   // overview shows only harnesses actually connected to Foreman's MCP
+            .OrderByDescending(c => c.IsRunning)
+            .ThenByDescending(c => (int)c.EscalationLevel)
+            .ThenBy(c => c.DisplayName)
             .ToList();
+
+        NoConnectedHarnessText.Visibility =
+            ((IReadOnlyCollection<DashboardHarnessCardVm>)HarnessOverviewPanel.ItemsSource).Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        UpdateAgentUsageFootnote(snapshot);
 
         // ── Header summary ────────────────────────────────────────────────────
-        // "Active alerts" = unacknowledged events ABOVE Info severity. Counting by severity (not by
-        // InfoEvent type) keeps Info-severity notices — e.g. the MCP tool-scan summary, a
-        // MonitoringNoticeEvent at Info — from inflating the count. The header summary now mirrors this
-        // exact count, so "all clear" can no longer contradict a non-zero ACTIVE ALERTS card.
+        // "Active alerts" = unacknowledged events ABOVE Info severity.
         var active = history
             .Where(AlertActivity.IsActive)   // the one shared definition (tray/dashboard/MCP agree)
             .ToList();
@@ -219,12 +293,10 @@ public partial class DashboardWindow : Window, IEventSink
         McpClientsLabel.Text = (GetMcpClientCount?.Invoke() ?? 0).ToString(CultureInfo.InvariantCulture);
         NetCaptureLabel.Text = GetNetCaptureConnected?.Invoke() == true ? "On" : "Off";
 
-        // Per-session capability breakdown on the MCP CLIENTS card (hover): which connected agents
-        // support the sampling round-trip that makes Ask Harness a true poll vs. a one-way notify.
-        var clients = GetConnectedClients?.Invoke() ?? [];
-        McpClientsCard.ToolTip = clients.Count == 0
+        // Per-session capability breakdown on the MCP CLIENTS card (hover).
+        McpClientsCard.ToolTip = connectedClients.Count == 0
             ? "No agents connected to Foreman Agent Safety's MCP.\nClick to open the Connect agent guide."
-            : "Connected agents:\n" + string.Join("\n", clients.Select(c =>
+            : "Connected agents:\n" + string.Join("\n", connectedClients.Select(c =>
                 $"  • {c.Name}{(string.IsNullOrWhiteSpace(c.Version) ? "" : $" v{c.Version}")} — " +
                 $"sampling: {(c.Sampling ? "yes (Ask Harness gets a reply)" : "no (Ask Harness notifies one-way)")}"))
               + "\n\nClick to open the Connect agent guide.";
@@ -313,6 +385,238 @@ public partial class DashboardWindow : Window, IEventSink
 
     private void NetworkTileClick(object sender, MouseButtonEventArgs e) =>
         OpenSettingsRequested?.Invoke();
+
+    // Meta-light dots deep-link to the pertinent view (so a red dot like "Ask pending" isn't a dead end).
+    // Routed by the light's Label so this doesn't depend on the VM carrying a target.
+    private void MetaLightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FindDataContext<DashboardMetaLightVm>(e.OriginalSource) is not { } light) return;
+        switch (light.Label)
+        {
+            case "Ask pending":  ShowTab(DashboardTab.Harnesses); break;   // act on the harness holding the prompt
+            case "Event log":    ShowTab(DashboardTab.Log); break;
+            case "Extension":
+            case "MCP clients":  OpenConnectAgentRequested?.Invoke(); break;
+            default:             OpenSettingsRequested?.Invoke(); break;    // Presence, Game mode, Sidecar, MCP scan
+        }
+        e.Handled = true;
+    }
+
+    private void HarnessChipClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FindDataContext<HarnessChipVm>(e.OriginalSource) is { } chip)
+            OpenHarnessDetail(chip.HarnessId);
+        else
+            ShowTab(DashboardTab.Harnesses);
+    }
+
+    private void HarnessOverviewClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FindDataContext<DashboardHarnessCardVm>(e.OriginalSource) is { } card)
+            OpenHarnessDetail(card.HarnessId);
+        else
+            ShowTab(DashboardTab.Harnesses);
+    }
+
+    // Clicking a harness opens the verbose detail view (live usage + behavior + MCP + processes).
+    // "Harness settings" inside that window is the path to the editable trust/modality dialog.
+    private void OpenHarnessDetail(string harnessId)
+    {
+        if (GetSettings is null) return;
+
+        var ctx = new HarnessDetailContext
+        {
+            HarnessId = harnessId,
+            GetProcesses = () => GetProcessesByHarness?.Invoke(harnessId)
+                                 ?? (GetProcessSnapshot?.Invoke() ?? [])
+                                     .Where(p => string.Equals(p.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase)),
+            GetProfile = () => _getProfiles().FirstOrDefault(p =>
+                string.Equals(p.HarnessId, harnessId, StringComparison.OrdinalIgnoreCase)),
+            GetClients = () => GetConnectedClients?.Invoke() ?? [],
+            GetSettings = () => GetSettings?.Invoke() ?? new ForemanSettings(),
+            GetPendingAsk = () => GetPendingAskCount?.Invoke(harnessId) ?? 0,
+            GetWakeLocks = () => WakeLocksFor(harnessId),
+            GetNetRate = GetNetRate,
+            OpenSettings = () => OpenHarnessSettings(harnessId),
+            OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke(),
+        };
+
+        new HarnessDetailWindow(ctx) { Owner = this }.Show();
+    }
+
+    private int WakeLocksFor(string harnessId)
+    {
+        var wake = GetWakeRequests?.Invoke();
+        if (wake is not { Available: true }) return 0;
+        var snapshot = GetProcessSnapshot?.Invoke()?.ToList() ?? [];
+        return BuildWakeMap(snapshot, wake).GetValueOrDefault(harnessId);
+    }
+
+    private void OpenHarnessSettings(string harnessId)
+    {
+        var settings = GetSettings?.Invoke();
+        if (settings is null) return;
+
+        var display = KnownHarnesses.GetById(harnessId)?.DisplayName ?? harnessId;
+        var w = new HarnessSettingsWindow(harnessId, display, settings) { Owner = this };
+        if (w.ShowDialog() == true)
+            Refresh();
+    }
+
+    private void SampleUsage()
+    {
+        var pids = GetProcessSnapshot?.Invoke()?.Select(p => p.Pid).ToList();
+        if (pids is null || pids.Count == 0)
+        {
+            _liveMetrics = [];
+            return;
+        }
+
+        _liveMetrics = _usageSampler.Sample(pids);
+        Refresh();
+    }
+
+    private void UpdateAgentUsageFootnote(IReadOnlyList<ProcessRecord> snapshot)
+    {
+        if (AgentUsageLabel is null) return;
+        var harnessPids = snapshot.Where(p => p.IsHarness || !string.IsNullOrEmpty(p.HarnessType)).Select(p => p.Pid).ToList();
+        if (harnessPids.Count == 0)
+        {
+            AgentUsageLabel.Text = string.Empty;
+            return;
+        }
+
+        double cpu = 0;
+        long mem = 0;
+        foreach (var pid in harnessPids)
+        {
+            if (_liveMetrics.TryGetValue(pid, out var m))
+            {
+                cpu += m.CpuPercent;
+                mem += m.MemoryBytes;
+            }
+        }
+
+        AgentUsageLabel.Text = cpu > 0.5 || mem > 0
+            ? $"Σ {HarnessUsageAggregator.FormatCpu(cpu)} CPU · {HarnessUsageAggregator.FormatMem(mem)} RAM"
+            : string.Empty;
+    }
+
+    private IReadOnlyList<DashboardMetaLightVm> BuildMetaLights(
+        ForemanSettings settings,
+        IReadOnlyList<McpClientInfo> clients,
+        int pendingAsk)
+    {
+        var sidecarOn = GetNetCaptureConnected?.Invoke() == true;
+        var gameOn = GetGameModeActive?.Invoke() == true && settings.GameMode.Enabled;
+        var extPaired = settings.PairedExtensionOrigins.Count > 0;
+
+        return
+        [
+            new DashboardMetaLightVm(
+                "Presence",
+                Security.PresenceGuard.IsEnabled ? MetaLightState.Ok : MetaLightState.Off,
+                Security.PresenceGuard.IsEnabled
+                    ? $"Presence lock armed ({Security.PresenceGuard.AuthenticatorLabel})."
+                    : "Presence lock off — weakening actions need no tap."),
+            new DashboardMetaLightVm(
+                "Game mode",
+                gameOn ? MetaLightState.Warn : MetaLightState.Off,
+                gameOn
+                    ? "Fullscreen detected — on-screen popups paused."
+                    : settings.GameMode.Enabled ? "Game mode enabled, no fullscreen app detected." : "Game mode off."),
+            new DashboardMetaLightVm(
+                "Extension",
+                extPaired ? MetaLightState.Ok : MetaLightState.Off,
+                extPaired
+                    ? $"{settings.PairedExtensionOrigins.Count} browser extension origin(s) paired."
+                    : "Browser extension not paired — use Connect agent."),
+            new DashboardMetaLightVm(
+                "Sidecar",
+                sidecarOn ? MetaLightState.Ok
+                    : settings.RunElevated ? MetaLightState.Warn : MetaLightState.Off,
+                sidecarOn
+                    ? "Elevated sidecar connected — network + wake telemetry live."
+                    : settings.RunElevated
+                        ? "Run elevated is on but the sidecar is not connected."
+                        : "Elevated sidecar off (enable in Settings for network/wake columns)."),
+            new DashboardMetaLightVm(
+                "MCP scan",
+                settings.ScanMcpTools ? MetaLightState.Warn : MetaLightState.Off,
+                settings.ScanMcpTools
+                    ? "Opt-in MCP tool-description scan is ON (outbound HTTP/SSE)."
+                    : "MCP tool scan off."),
+            new DashboardMetaLightVm(
+                "Event log",
+                settings.EventLogPersist ? MetaLightState.Ok : MetaLightState.Off,
+                settings.EventLogPersist
+                    ? "Event log persisted to disk (hash-chained JSONL)."
+                    : "Event log is session-only."),
+            new DashboardMetaLightVm(
+                "Ask pending",
+                pendingAsk > 0 ? MetaLightState.Alert : MetaLightState.Off,
+                pendingAsk > 0
+                    ? $"{pendingAsk} unanswered Ask Harness / audit prompt(s) waiting on a harness."
+                    : "No pending Ask Harness requests."),
+            new DashboardMetaLightVm(
+                "MCP clients",
+                clients.Count > 0 ? MetaLightState.Ok : MetaLightState.Off,
+                clients.Count > 0
+                    ? $"{clients.Count} agent(s) connected to Foreman's MCP."
+                    : "No MCP clients connected."),
+        ];
+    }
+
+    private static Dictionary<string, int> BuildWakeMap(IReadOnlyList<ProcessRecord> snapshot, WakeRequestSnapshot wake)
+    {
+        var byPid = snapshot.ToDictionary(p => p.Pid);
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var request in wake.Requests.Where(r => string.Equals(r.RequesterType, "PROCESS", StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var process in snapshot.Where(p => MatchesWakeImage(p, request.Image)))
+            {
+                var harness = FindHarnessAncestor(byPid, process.Pid)?.HarnessType;
+                if (string.IsNullOrWhiteSpace(harness)) continue;
+                map[harness] = map.GetValueOrDefault(harness) + 1;
+            }
+        }
+        return map;
+    }
+
+    private static bool MatchesWakeImage(ProcessRecord process, string image)
+    {
+        if (string.IsNullOrWhiteSpace(image)) return false;
+        var name = Path.GetFileName(image.Replace('/', '\\'));
+        return string.Equals(name, process.Name, StringComparison.OrdinalIgnoreCase)
+               || (!string.IsNullOrWhiteSpace(process.ExecutablePath)
+                   && string.Equals(Path.GetFileName(process.ExecutablePath), name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static ProcessRecord? FindHarnessAncestor(IReadOnlyDictionary<int, ProcessRecord> byPid, int pid)
+    {
+        var seen = new HashSet<int>();
+        while (byPid.TryGetValue(pid, out var current) && seen.Add(pid))
+        {
+            if (!string.IsNullOrWhiteSpace(current.HarnessType)) return current;
+            if (current.ParentPid == 0 || current.ParentPid == current.Pid) break;
+            pid = current.ParentPid;
+        }
+        return null;
+    }
+
+    private static bool IsMcpConnected(IReadOnlyList<McpClientInfo> clients, string harnessId) =>
+        clients.Any(c => SseSessionManager.MatchesHarness(c.Name, null, harnessId));
+
+    private static T? FindDataContext<T>(object? source) where T : class
+    {
+        if (source is not DependencyObject d) return null;
+        while (d is not null)
+        {
+            if (d is FrameworkElement { DataContext: T ctx }) return ctx;
+            d = VisualTreeHelper.GetParent(d);
+        }
+        return null;
+    }
 
     // Bulk acknowledge: events are shared instances across EventBus history, ForemanState,
     // and the views, so flipping Acknowledged here clears the tray, the MCP counts, and this
@@ -437,6 +741,8 @@ public partial class DashboardWindow : Window, IEventSink
     {
         EventBus.Instance.Unsubscribe(this);
         _refreshTimer.Stop();
+        _usageTimer.Stop();
+        _usageSampler.Dispose();
         foreach (var d in _hostedViews) { try { d.Dispose(); } catch { /* best-effort */ } }
         _hostedViews.Clear();
         base.OnClosed(e);
@@ -674,37 +980,189 @@ public sealed class DashboardAlertVm
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HarnessChipVm — one status chip in the header strip
+// HarnessChipVm — compact header chip for active harnesses
 // ─────────────────────────────────────────────────────────────────────────────
 
 public sealed class HarnessChipVm
 {
+    public string HarnessId { get; }
     public string DisplayName { get; }
-    public string LevelLabel  { get; }   // "WATCH", "ALERT", "ALARM", "EMERGENCY"
-    public Brush  LevelBg     { get; }
-    public Brush  LevelFg     { get; }
-    public string CountLabel  { get; }   // "5 alerts"
+    public string LevelLabel { get; }
+    public Brush LevelBg { get; }
+    public Brush LevelFg { get; }
+    public string TrustLabel { get; }
+    public string McpLabel { get; }
+    public string ToolTip { get; }
+    public bool IsRunning { get; }
+    public bool McpConnected { get; }
+    public int AlertCount { get; }
+    public EscalationLevel EscalationLevel { get; }
 
-    public HarnessChipVm(BehaviorProfile profile)
+    public HarnessChipVm(KnownHarness harness, BehaviorProfile? profile, bool isRunning, bool mcpConnected, int trust)
     {
-        DisplayName = profile.DisplayName;
-        LevelLabel  = profile.CurrentLevel.ToString().ToUpperInvariant();
-        CountLabel  = $"{profile.TotalAlerts} alert{(profile.TotalAlerts == 1 ? "" : "s")}";
-        (LevelBg, LevelFg) = profile.CurrentLevel switch
-        {
-            EscalationLevel.Emergency => (
-                new SolidColorBrush(Color.FromRgb(0x44, 0x0A, 0x0A)),
-                new SolidColorBrush(Color.FromRgb(0xFF, 0x66, 0x66))),
-            EscalationLevel.Alarm => (
-                new SolidColorBrush(Color.FromRgb(0x3A, 0x20, 0x08)),
-                new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x44))),
-            EscalationLevel.Alert => (
-                new SolidColorBrush(Color.FromRgb(0x30, 0x28, 0x08)),
-                new SolidColorBrush(Color.FromRgb(0xE8, 0xB2, 0x3C))),
-            _ => (
-                new SolidColorBrush(Color.FromRgb(0x1A, 0x1C, 0x28)),
-                new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90))),
-        };
+        HarnessId = harness.Id;
+        DisplayName = harness.DisplayName;
+        IsRunning = isRunning;
+        McpConnected = mcpConnected;
+        AlertCount = profile?.TotalAlerts ?? 0;
+        EscalationLevel = profile?.CurrentLevel ?? EscalationLevel.Watch;
+        LevelLabel = EscalationLevel.ToString().ToUpperInvariant();
+        TrustLabel = $"  ·  T{trust}";
+        McpLabel = mcpConnected ? "  ·  MCP" : string.Empty;
+        (LevelBg, LevelFg) = EscalationColors(EscalationLevel);
+        ToolTip = BuildToolTip(harness.DisplayName, isRunning, mcpConnected, trust, AlertCount, EscalationLevel);
     }
+
+    private static (Brush bg, Brush fg) EscalationColors(EscalationLevel level) => level switch
+    {
+        EscalationLevel.Emergency => (
+            new SolidColorBrush(Color.FromRgb(0x44, 0x0A, 0x0A)),
+            new SolidColorBrush(Color.FromRgb(0xFF, 0x66, 0x66))),
+        EscalationLevel.Alarm => (
+            new SolidColorBrush(Color.FromRgb(0x3A, 0x20, 0x08)),
+            new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x44))),
+        EscalationLevel.Alert => (
+            new SolidColorBrush(Color.FromRgb(0x30, 0x28, 0x08)),
+            new SolidColorBrush(Color.FromRgb(0xE8, 0xB2, 0x3C))),
+        _ => (
+            new SolidColorBrush(Color.FromRgb(0x1A, 0x1C, 0x28)),
+            new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90))),
+    };
+
+    private static string BuildToolTip(string name, bool running, bool mcp, int trust, int alerts, EscalationLevel level) =>
+        $"{name}\n{(running ? "Running" : "Not running")} · Trust {trust} · {level}\n" +
+        $"{alerts} alert{(alerts == 1 ? "" : "s")}" +
+        (mcp ? " · MCP connected" : " · MCP not connected") +
+        "\nClick for live detail.";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DashboardHarnessCardVm — overview tab card per harness
+// ─────────────────────────────────────────────────────────────────────────────
+
+public sealed class DashboardHarnessCardVm
+{
+    public string HarnessId { get; }
+    public string DisplayName { get; }
+    public string Subtitle { get; }
+    public string StatusText { get; }
+    public Brush StatusBackground { get; }
+    public Brush StatusForeground { get; }
+    public string TrustLabel { get; }
+    public string EscalationLabel { get; }
+    public Brush EscalationForeground { get; }
+    public string DetailLine { get; }
+    public Brush BorderBrush { get; }
+    public string ToolTip { get; }
+    public bool IsRunning { get; }
+    public bool McpConnected { get; }
+    public EscalationLevel EscalationLevel { get; }
+    public IReadOnlyList<HarnessLightVm> Lights { get; }
+
+    public DashboardHarnessCardVm(
+        KnownHarness harness,
+        BehaviorProfile? profile,
+        bool isRunning,
+        bool mcpConnected,
+        int trust,
+        int processCount,
+        HarnessUsage usage,
+        int pendingAsk,
+        int wakeLocks)
+    {
+        HarnessId = harness.Id;
+        DisplayName = harness.DisplayName;
+        IsRunning = isRunning;
+        McpConnected = mcpConnected;
+        EscalationLevel = profile?.CurrentLevel ?? EscalationLevel.Watch;
+        Subtitle = harness.Developer;
+
+        StatusText = isRunning ? "Running" : "Idle";
+        StatusBackground = isRunning
+            ? new SolidColorBrush(Color.FromRgb(0x1A, 0x3A, 0x1A))
+            : new SolidColorBrush(Color.FromRgb(0x1E, 0x20, 0x28));
+        StatusForeground = isRunning
+            ? new SolidColorBrush(Color.FromRgb(0x7E, 0xC8, 0x78))
+            : new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90));
+
+        TrustLabel = $"Trust {trust}";
+        EscalationLabel = EscalationLevel.ToString().ToUpperInvariant();
+        EscalationForeground = EscalationColors(EscalationLevel).fg;
+
+        var alerts = profile?.TotalAlerts ?? 0;
+        DetailLine = mcpConnected
+            ? $"MCP linked · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
+            : isRunning
+                ? $"No MCP · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
+                : alerts > 0
+                    ? $"{alerts} alert{(alerts == 1 ? "" : "s")} · not running"
+                    : "Not running · connect MCP for Ask Harness";
+
+        BorderBrush = EscalationLevel >= EscalationLevel.Alarm
+            ? new SolidColorBrush(Color.FromRgb(0x66, 0x33, 0x11))
+            : mcpConnected
+                ? new SolidColorBrush(Color.FromRgb(0x2A, 0x4A, 0x2A))
+                : new SolidColorBrush(Color.FromRgb(0x2A, 0x2F, 0x37));
+
+        Lights = BuildLights(isRunning, mcpConnected, usage, pendingAsk, wakeLocks, EscalationLevel);
+        ToolTip = $"{harness.DisplayName} ({harness.Id})\n{DetailLine}\n{DescribeLights(Lights)}\nClick for live detail.";
+    }
+
+    private static IReadOnlyList<HarnessLightVm> BuildLights(
+        bool running, bool mcp, HarnessUsage usage, int pendingAsk, int wakeLocks, EscalationLevel esc)
+    {
+        var lights = new List<HarnessLightVm>
+        {
+            new(running ? MetaLightState.Ok : MetaLightState.Off,
+                running ? "Process tree active" : "Not running"),
+            new(mcp ? MetaLightState.Ok : MetaLightState.Off,
+                mcp ? "MCP session linked" : "No MCP connection"),
+        };
+
+        if (esc >= EscalationLevel.Alert)
+            lights.Add(new(esc >= EscalationLevel.Alarm ? MetaLightState.Alert : MetaLightState.Warn,
+                $"Escalation: {esc}"));
+
+        if (pendingAsk > 0)
+            lights.Add(new(MetaLightState.Alert, $"{pendingAsk} pending Ask Harness prompt(s)"));
+
+        if (wakeLocks > 0)
+            lights.Add(new(MetaLightState.Warn, $"{wakeLocks} wake lock(s) attributed"));
+
+        if (usage.CpuPercent >= 5)
+            lights.Add(new(MetaLightState.Warn, $"CPU {HarnessUsageAggregator.FormatCpu(usage.CpuPercent)} (tree)"));
+
+        if (usage.MemoryBytes >= 512L * 1024 * 1024)
+            lights.Add(new(MetaLightState.Ok, $"RAM {HarnessUsageAggregator.FormatMem(usage.MemoryBytes)} (tree)"));
+
+        if (usage.GpuPercent is >= 5)
+            lights.Add(new(MetaLightState.Warn, $"GPU {usage.GpuPercent:0}% (peak)"));
+
+        if (usage.NetBytesPerSec is > 1024)
+            lights.Add(new(MetaLightState.Ok, $"Net {HarnessUsageAggregator.FormatRate(usage.NetBytesPerSec.Value)} (tree)"));
+
+        if (usage.IoBytesPerSec > 256 * 1024)
+            lights.Add(new(MetaLightState.Ok, $"I/O {HarnessUsageAggregator.FormatRate(usage.IoBytesPerSec)} (tree)"));
+
+        return lights;
+    }
+
+    private static string DescribeLights(IReadOnlyList<HarnessLightVm> lights) =>
+        string.Join("\n", lights.Select(l => l.ToolTip));
+
+    private static (Brush bg, Brush fg) EscalationColors(EscalationLevel level) => level switch
+    {
+        EscalationLevel.Emergency => (
+            new SolidColorBrush(Color.FromRgb(0x44, 0x0A, 0x0A)),
+            new SolidColorBrush(Color.FromRgb(0xFF, 0x66, 0x66))),
+        EscalationLevel.Alarm => (
+            new SolidColorBrush(Color.FromRgb(0x3A, 0x20, 0x08)),
+            new SolidColorBrush(Color.FromRgb(0xFF, 0xAA, 0x44))),
+        EscalationLevel.Alert => (
+            new SolidColorBrush(Color.FromRgb(0x30, 0x28, 0x08)),
+            new SolidColorBrush(Color.FromRgb(0xE8, 0xB2, 0x3C))),
+        _ => (
+            new SolidColorBrush(Color.FromRgb(0x1A, 0x1C, 0x28)),
+            new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90))),
+    };
 }

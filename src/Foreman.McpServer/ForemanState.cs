@@ -195,6 +195,12 @@ public sealed class ForemanState : IEventSink
     {
         id        = e.Id,
         timestamp = e.Timestamp,
+        sequence  = e.Sequence,
+        recordedAtUtc = e.RecordedAtUtc,
+        temporalSessionId = e.TemporalSessionId,
+        monotonicTicks = e.MonotonicTicks,
+        monotonicFrequency = e.MonotonicFrequency,
+        temporalAnomalies = e.TemporalAnomalies,
         severity  = e.Severity.ToString(),
         source    = e.Source,
         message   = SecretRedactor.Redact(e.Message),   // egress to a connected agent — mask secrets

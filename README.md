@@ -41,6 +41,10 @@ That safety loop can also save money. Catching a runaway command or abandoned ag
 - Optionally scans HTTP/SSE MCP tool descriptions for prompt-injection or data-exfiltration wording. This opt-in scan is the only feature that connects to third-party MCP servers; stdio servers are never launched.
 - Exposes a local MCP server so agents can check Foreman Agent Safety status, pre-flight commands, inspect recent events, and get integration instructions.
 - Keeps a searchable/exportable event log and a dashboard for live process, harness, and behavior state.
+- Defines a shared-repo harness deconfliction model for leases, handoffs, and Git conflict evidence; see
+  [docs/harness-deconfliction.md](docs/harness-deconfliction.md).
+- Persists append-order and monotonic-clock metadata for event-log timing integrity; see
+  [docs/temporal-truth.md](docs/temporal-truth.md).
 
 ## Screenshots
 
