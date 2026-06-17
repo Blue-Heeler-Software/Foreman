@@ -48,7 +48,22 @@ That safety loop can also save money. Catching a runaway command or abandoned ag
 
 ## Screenshots
 
-The social preview above shows the current visual direction. Public app screenshots for the dashboard, alert detail, Connect Agent flow, process monitor, and settings should be captured from the first alpha installer before announcing a binary release.
+<p align="center">
+  <img src="docs/assets/tab-processes.png" width="49%" alt="Color-coded process explorer">
+  <img src="docs/assets/tab-harnesses.png" width="49%" alt="Per-agent harness monitoring">
+</p>
+<p align="center"><em>Color-coded process explorer (orphaned = red &middot; hanging = amber &middot; the agent itself = blue) &nbsp;·&nbsp; per-agent monitoring with trust levels and wake-lock status.</em></p>
+
+<p align="center">
+  <img src="docs/assets/tab-overview.png" width="49%" alt="Overview command center">
+  <img src="docs/assets/tab-eventlog.png" width="49%" alt="Hash-chained event log">
+</p>
+<p align="center"><em>Overview command center (active alerts, agents running, MCP clients, live event feed) &nbsp;·&nbsp; the tamper-evident, hash-chained event log.</em></p>
+
+<p align="center">
+  <img src="docs/assets/tab-behavior.png" width="60%" alt="Per-agent behavior and escalation">
+</p>
+<p align="center"><em>Per-agent behavior &amp; escalation (Watch &rarr; Alert &rarr; Alarm &rarr; Emergency).</em></p>
 
 ## Agent Support
 
@@ -254,7 +269,6 @@ The installer is per-user and requires no admin prompt. Both `Foreman.exe` (and 
 
 ## Roadmap
 
-- Capture and publish real app screenshots from the first alpha installer.
 - Move from .NET 10 preview to a stable SDK when practical.
 - Add a full settings UI for LLM triage preferences.
 - Add first-class OpenCode/T3 MCP config adapters after more field testing.
