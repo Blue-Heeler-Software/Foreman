@@ -87,6 +87,12 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — connected MCP clients + capabilities, for the Connect-agent guide.</summary>
     public Func<IReadOnlyList<McpClientInfo>>?                GetConnectedClients   { get; set; }
 
+    /// <summary>Injected from App — harness ids that made an authenticated MCP request recently (sticky "connected").</summary>
+    public Func<IReadOnlyCollection<string>>?                GetRecentlyConnectedHarnessIds { get; set; }
+
+    /// <summary>Injected from App — current MCP-server inventory (per-harness), for computer/browser-use flags.</summary>
+    public Func<IReadOnlyList<Foreman.Core.Mcp.McpServerEntry>>? GetMcpInventory   { get; set; }
+
     /// <summary>Injected from ForemanState — pending Ask Harness count (null harness = total).</summary>
     public Func<string?, int>?                                 GetPendingAskCount    { get; set; }
 
@@ -458,6 +464,8 @@ public sealed class TrayController : IEventSink, IDisposable
             w.GetMcpClientCount = GetMcpClientCount;
             w.GetNetCaptureConnected = GetNetCaptureActive;
             w.GetConnectedClients = GetConnectedClients;
+            w.GetRecentlyConnectedHarnessIds = GetRecentlyConnectedHarnessIds;
+            w.GetMcpInventory = GetMcpInventory;
             Func<IEnumerable<Foreman.Core.Models.ProcessRecord>> snap = GetProcessSnapshot ?? (() => []);
             // "Agents running" = distinct harness types currently in the process tree (live), which is
             // far more intuitive than a count of behaviour profiles (which sits at 0 until something fires).
@@ -639,7 +647,12 @@ public sealed class TrayController : IEventSink, IDisposable
 
         if (_connectWindow is null)
         {
-            var w = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken, BeginPairing);
+            var w = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken, BeginPairing,
+                () => (GetProcessSnapshot?.Invoke() ?? [])
+                    .Where(p => !string.IsNullOrEmpty(p.HarnessType))
+                    .Select(p => p.HarnessType!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray());
             w.Closed += (_, _) => _connectWindow = null;
             _connectWindow = w;
             w.Show();

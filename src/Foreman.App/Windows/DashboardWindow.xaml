@@ -462,10 +462,19 @@
                                             <TextBlock Text="{Binding EscalationLabel}"
                                                        FontSize="10" FontWeight="Bold"
                                                        Foreground="{Binding EscalationForeground}" />
+                                            <!-- Capability chips: C = computer-use (desktop control), B = browser automation. Hover explains. -->
+                                            <Border Visibility="{Binding ComputerUseVisibility}" Margin="8,0,0,0" CornerRadius="3" Padding="5,1"
+                                                    Background="#332608" ToolTip="{Binding ComputerUseTip}">
+                                                <TextBlock Text="C" FontSize="10" FontWeight="Bold" Foreground="#E8B23C" />
+                                            </Border>
+                                            <Border Visibility="{Binding BrowserUseVisibility}" Margin="4,0,0,0" CornerRadius="3" Padding="5,1"
+                                                    Background="#332608" ToolTip="{Binding BrowserUseTip}">
+                                                <TextBlock Text="B" FontSize="10" FontWeight="Bold" Foreground="#E8B23C" />
+                                            </Border>
                                         </StackPanel>
                                         <TextBlock Text="{Binding DetailLine}"
                                                    FontSize="10"
-                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   Foreground="{Binding DetailForeground}"
                                                    Margin="0,6,0,0"
                                                    TextTrimming="CharacterEllipsis" />
                                         <ItemsControl ItemsSource="{Binding Lights}" Margin="0,8,0,0">

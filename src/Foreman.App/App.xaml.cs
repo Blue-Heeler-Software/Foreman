@@ -217,6 +217,8 @@ public partial class App : Application
         _tray.GetMcpToken                   = () => _mcpHost.McpToken;
         _tray.MintHarnessToken              = id => _mcpHost.MintHarnessToken(id);
         _tray.GetConnectedClients           = () => _mcpHost.Sessions.DescribeSessions();
+        _tray.GetRecentlyConnectedHarnessIds = () => _mcpHost.Sessions.RecentlyActiveHarnessIds(TimeSpan.FromMinutes(5));
+        _tray.GetMcpInventory               = () => _monitor.McpInventory.Current;
         _tray.GetPendingAskCount            = id => _mcpHost.State.CountAskHarnessRequests(id);
         _tray.BeginPairing                  = () => _mcpHost.BeginExtensionPairing();
 

@@ -163,6 +163,11 @@ public sealed class McpServerHost : IAsyncDisposable
                             "Token/identity mismatch: this per-harness token belongs to a different harness than the calling process.").ConfigureAwait(false);
                         return;
                     }
+
+                    // Sticky "connected" signal for the dashboard: an authenticated, allowed request from a
+                    // per-harness token marks that harness recently-active. (Operator token has no harness id and
+                    // isn't tracked.) These clients hold no persistent session, so the live count alone reads ~0.
+                    Sessions.MarkSeen(auth.HarnessId);
                 }
                 await next().ConfigureAwait(false);
             }

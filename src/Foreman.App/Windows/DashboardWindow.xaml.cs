@@ -1,6 +1,8 @@
 using Foreman.Core.Alerts;
 using Foreman.Core.Behavior;
 using Foreman.Core.Events;
+using Foreman.Core.Integration;
+using Foreman.Core.Mcp;
 using Foreman.Core.Models;
 using Foreman.Core.Power;
 using Foreman.Core.Settings;
@@ -46,6 +48,13 @@ public partial class DashboardWindow : Window, IEventSink
 
     /// <summary>Connected MCP clients + capabilities, for the MCP CLIENTS tooltip.</summary>
     public Func<IReadOnlyList<McpClientInfo>>? GetConnectedClients { get; set; }
+
+    /// <summary>Harness ids that made an authenticated MCP request recently — sticky "connected" (these clients
+    /// hold no persistent session, so the live client list reads ~0 between calls).</summary>
+    public Func<IReadOnlyCollection<string>>? GetRecentlyConnectedHarnessIds { get; set; }
+
+    /// <summary>Current MCP-server inventory (per harness), for the computer-use / browser-use capability flags.</summary>
+    public Func<IReadOnlyList<Foreman.Core.Mcp.McpServerEntry>>? GetMcpInventory { get; set; }
 
     /// <summary>Live count of agents currently running (distinct harness types), wired by TrayController.</summary>
     public Func<int>? GetRunningAgentCount { get; set; }
@@ -223,11 +232,38 @@ public partial class DashboardWindow : Window, IEventSink
         var allProfiles = _getProfiles().ToList();
         var settings = GetSettings?.Invoke() ?? new ForemanSettings();
         var connectedClients = GetConnectedClients?.Invoke() ?? [];
+        var recentlyConnected = new HashSet<string>(
+            GetRecentlyConnectedHarnessIds?.Invoke() ?? [], StringComparer.OrdinalIgnoreCase);
         var snapshot = GetProcessSnapshot?.Invoke()?.ToList() ?? [];
         var wake = GetWakeRequests?.Invoke();
         var pendingTotal = GetPendingAskCount?.Invoke(null) ?? 0;
 
-        MetaLightsPanel.ItemsSource = BuildMetaLights(settings, connectedClients, pendingTotal);
+        // STICKY connection: a harness is "connected" if it has a live session (name-matched) OR made an
+        // authenticated MCP request within the recent window. These clients hold no persistent session, so the
+        // live list reads ~0 between calls — without this the cards flicker "restart to link" on working agents.
+        bool Connected(string id) => recentlyConnected.Contains(id) || IsMcpConnected(connectedClients, id);
+
+        // Per-harness MCP capability flags from the configured-server inventory: which agents are wired with a
+        // computer-use (mouse/keyboard/screen) or browser-automation server.
+        var inventory = GetMcpInventory?.Invoke() ?? [];
+        var capByHarness = inventory
+            .GroupBy(e => e.Harness, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => (
+                    Computer: g.Where(McpCapabilityClassifier.IsComputerUse).Select(e => e.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    Browser:  g.Where(McpCapabilityClassifier.IsBrowserUse).Select(e => e.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()),
+                StringComparer.OrdinalIgnoreCase);
+        (string[] Computer, string[] Browser) CapOf(string id) =>
+            capByHarness.TryGetValue(id, out var c) ? c : (Array.Empty<string>(), Array.Empty<string>());
+        static string HarnessName(string id) => KnownHarnesses.GetById(id)?.DisplayName ?? id;
+
+        var connectedCount = KnownHarnesses.All.Count(h => Connected(h.Id));
+        var computerHarnesses = capByHarness.Where(kv => kv.Value.Computer.Length > 0).Select(kv => HarnessName(kv.Key)).ToArray();
+        var browserHarnesses  = capByHarness.Where(kv => kv.Value.Browser.Length  > 0).Select(kv => HarnessName(kv.Key)).ToArray();
+
+        MetaLightsPanel.ItemsSource = BuildMetaLights(
+            settings, connectedClients, connectedCount, computerHarnesses, browserHarnesses, pendingTotal);
 
         var runningIds = snapshot
             .Where(p => !string.IsNullOrEmpty(p.HarnessType))
@@ -240,12 +276,14 @@ public partial class DashboardWindow : Window, IEventSink
 
         var chipHarnesses = KnownHarnesses.All
             .Where(h => !settings.DisabledHarnesses.Contains(h.Id))
-            .Select(h => new HarnessChipVm(
-                h,
-                profileById.GetValueOrDefault(h.Id),
-                runningIds.Contains(h.Id),
-                IsMcpConnected(connectedClients, h.Id),
-                settings.HarnessTrust.TryGetValue(h.Id, out var trust) ? Math.Clamp(trust, 1, 5) : 3))
+            .Select(h =>
+            {
+                var running = runningIds.Contains(h.Id);
+                var connected = Connected(h.Id);
+                var trust = settings.HarnessTrust.TryGetValue(h.Id, out var t) ? Math.Clamp(t, 1, 5) : 3;
+                return new HarnessChipVm(h, profileById.GetValueOrDefault(h.Id), running, connected, trust,
+                    running && !connected && IsHarnessConfigured(h.Id));
+            })
             .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0)
             .OrderByDescending(c => (int)c.EscalationLevel)
             .ThenByDescending(c => c.AlertCount)
@@ -263,17 +301,23 @@ public partial class DashboardWindow : Window, IEventSink
                 var usage = HarnessUsageAggregator.Aggregate(procs, _liveMetrics, GetNetRate);
                 var pending = GetPendingAskCount?.Invoke(h.Id) ?? 0;
                 wakeByHarness.TryGetValue(h.Id, out var wakeCount);
+                var running = runningIds.Contains(h.Id);
+                var connected = Connected(h.Id);
+                var (computerSrvs, browserSrvs) = CapOf(h.Id);
                 return new DashboardHarnessCardVm(
                     h,
                     profileById.GetValueOrDefault(h.Id),
-                    runningIds.Contains(h.Id),
-                    IsMcpConnected(connectedClients, h.Id),
+                    running,
+                    connected,
                     settings.HarnessTrust.TryGetValue(h.Id, out var trust2) ? Math.Clamp(trust2, 1, 5) : 3,
                     procs.Count,
                     usage,
                     pending,
                     wakeCount,
-                    GetContextUsage?.Invoke(h.Id));
+                    GetContextUsage?.Invoke(h.Id),
+                    running && !connected && IsHarnessConfigured(h.Id),
+                    computerSrvs,
+                    browserSrvs);
             })
             // Show every harness that's running, MCP-connected, OR has alerts (same set as the header chips), so
             // your agents stay visible even when none currently holds a live MCP session. The card itself shows
@@ -312,7 +356,7 @@ public partial class DashboardWindow : Window, IEventSink
             ? RelativeSummary(last.Timestamp)
             : "none";
 
-        McpClientsLabel.Text = (GetMcpClientCount?.Invoke() ?? 0).ToString(CultureInfo.InvariantCulture);
+        McpClientsLabel.Text = connectedCount.ToString(CultureInfo.InvariantCulture);
         NetCaptureLabel.Text = GetNetCaptureConnected?.Invoke() == true ? "On" : "Off";
 
         // Per-session capability breakdown on the MCP CLIENTS card (hover).
@@ -461,6 +505,7 @@ public partial class DashboardWindow : Window, IEventSink
             GetNetRate = GetNetRate,
             OpenSettings = () => OpenHarnessSettings(harnessId),
             OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke(),
+            IsConfigured = () => IsHarnessConfigured(harnessId),
             GetContextUsage = () => GetContextUsage?.Invoke(harnessId),
             RequestCleanup = RequestHarnessCleanup is null ? null : () => RequestHarnessCleanup(harnessId),
             ResetMetrics = ResetBehaviorMetrics is null ? null : () => ResetBehaviorMetrics(harnessId),
@@ -530,6 +575,9 @@ public partial class DashboardWindow : Window, IEventSink
     private IReadOnlyList<DashboardMetaLightVm> BuildMetaLights(
         ForemanSettings settings,
         IReadOnlyList<McpClientInfo> clients,
+        int connectedCount,
+        IReadOnlyList<string> computerHarnesses,
+        IReadOnlyList<string> browserHarnesses,
         int pendingAsk)
     {
         var sidecarOn = GetNetCaptureConnected?.Invoke() == true;
@@ -584,10 +632,27 @@ public partial class DashboardWindow : Window, IEventSink
                     ? $"{pendingAsk} unanswered Ask Harness / audit prompt(s) waiting on a harness."
                     : "No pending Ask Harness requests."),
             new DashboardMetaLightVm(
+                "Computer use",
+                computerHarnesses.Count > 0 ? MetaLightState.Warn : MetaLightState.Off,
+                computerHarnesses.Count > 0
+                    ? $"Computer use (desktop control) available to: {string.Join(", ", computerHarnesses)}. " +
+                      "These agents can move the mouse/keyboard and read the screen."
+                    : "No monitored agent has a computer-use (desktop-control) MCP server configured."),
+            new DashboardMetaLightVm(
+                "Browser use",
+                browserHarnesses.Count > 0 ? MetaLightState.Warn : MetaLightState.Off,
+                browserHarnesses.Count > 0
+                    ? $"Browser automation available to: {string.Join(", ", browserHarnesses)}. " +
+                      "These agents can drive a real browser."
+                    : "No monitored agent has a browser-automation MCP server configured."),
+            new DashboardMetaLightVm(
                 "MCP clients",
-                clients.Count > 0 ? MetaLightState.Ok : MetaLightState.Off,
-                clients.Count > 0
-                    ? $"{clients.Count} agent(s) connected to Foreman's MCP."
+                connectedCount > 0 ? MetaLightState.Ok : MetaLightState.Off,
+                connectedCount > 0
+                    ? $"{connectedCount} agent(s) connected to Foreman's MCP (active within the last few minutes)."
+                      + (clients.Count > 0
+                            ? "\nLive now: " + string.Join(", ", clients.Select(c => c.Name))
+                            : "")
                     : "No MCP clients connected."),
         ];
     }
@@ -631,6 +696,20 @@ public partial class DashboardWindow : Window, IEventSink
 
     private static bool IsMcpConnected(IReadOnlyList<McpClientInfo> clients, string harnessId) =>
         clients.Any(c => SseSessionManager.MatchesHarness(c.Name, null, harnessId));
+
+    // Whether this harness's config already points at Foreman's MCP endpoint (so a "No MCP" running agent just
+    // needs restarting to link, vs. one that was never connected). Cheap config-file read; callers gate it to
+    // running, not-yet-connected harnesses so it runs for only a handful per refresh.
+    private bool IsHarnessConfigured(string harnessId)
+    {
+        try
+        {
+            return HarnessConnectors.All
+                .FirstOrDefault(c => string.Equals(c.HarnessId, harnessId, StringComparison.OrdinalIgnoreCase))
+                ?.IsConfigured(McpPort) ?? false;
+        }
+        catch { return false; }
+    }
 
     private static T? FindDataContext<T>(object? source) where T : class
     {
@@ -1023,7 +1102,7 @@ public sealed class HarnessChipVm
     public int AlertCount { get; }
     public EscalationLevel EscalationLevel { get; }
 
-    public HarnessChipVm(KnownHarness harness, BehaviorProfile? profile, bool isRunning, bool mcpConnected, int trust)
+    public HarnessChipVm(KnownHarness harness, BehaviorProfile? profile, bool isRunning, bool mcpConnected, int trust, bool configured = false)
     {
         HarnessId = harness.Id;
         DisplayName = harness.DisplayName;
@@ -1033,9 +1112,9 @@ public sealed class HarnessChipVm
         EscalationLevel = profile?.CurrentLevel ?? EscalationLevel.Watch;
         LevelLabel = EscalationLevel.ToString().ToUpperInvariant();
         TrustLabel = $"  ·  T{trust}";
-        McpLabel = mcpConnected ? "  ·  MCP" : string.Empty;
+        McpLabel = mcpConnected ? "  ·  MCP" : configured ? "  ·  restart to link" : string.Empty;
         (LevelBg, LevelFg) = EscalationColors(EscalationLevel);
-        ToolTip = BuildToolTip(harness.DisplayName, isRunning, mcpConnected, trust, AlertCount, EscalationLevel);
+        ToolTip = BuildToolTip(harness.DisplayName, isRunning, mcpConnected, configured, trust, AlertCount, EscalationLevel);
     }
 
     private static (Brush bg, Brush fg) EscalationColors(EscalationLevel level) => level switch
@@ -1054,10 +1133,12 @@ public sealed class HarnessChipVm
             new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90))),
     };
 
-    private static string BuildToolTip(string name, bool running, bool mcp, int trust, int alerts, EscalationLevel level) =>
+    private static string BuildToolTip(string name, bool running, bool mcp, bool configured, int trust, int alerts, EscalationLevel level) =>
         $"{name}\n{(running ? "Running" : "Not running")} · Trust {trust} · {level}\n" +
         $"{alerts} alert{(alerts == 1 ? "" : "s")}" +
-        (mcp ? " · MCP connected" : " · MCP not connected") +
+        (mcp ? " · MCP connected"
+             : configured ? " · MCP configured — restart this agent to link"
+             : " · MCP not connected") +
         "\nClick for live detail.";
 }
 
@@ -1077,6 +1158,7 @@ public sealed class DashboardHarnessCardVm
     public string EscalationLabel { get; }
     public Brush EscalationForeground { get; }
     public string DetailLine { get; }
+    public Brush DetailForeground { get; }
     public Brush BorderBrush { get; }
     public string ToolTip { get; }
     public bool IsRunning { get; }
@@ -1084,6 +1166,14 @@ public sealed class DashboardHarnessCardVm
     public int AlertCount { get; }
     public EscalationLevel EscalationLevel { get; }
     public IReadOnlyList<HarnessLightVm> Lights { get; }
+
+    // Capability flags — does this agent have a computer-use / browser-automation MCP server configured?
+    public bool ComputerUse { get; }
+    public bool BrowserUse { get; }
+    public string ComputerUseTip { get; }
+    public string BrowserUseTip { get; }
+    public Visibility ComputerUseVisibility => ComputerUse ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility BrowserUseVisibility => BrowserUse ? Visibility.Visible : Visibility.Collapsed;
 
     public DashboardHarnessCardVm(
         KnownHarness harness,
@@ -1095,8 +1185,21 @@ public sealed class DashboardHarnessCardVm
         HarnessUsage usage,
         int pendingAsk,
         int wakeLocks,
-        HarnessContextUsage? contextUsage = null)
+        HarnessContextUsage? contextUsage = null,
+        bool configured = false,
+        string[]? computerUseServers = null,
+        string[]? browserUseServers = null)
     {
+        var cuse = computerUseServers ?? [];
+        var buse = browserUseServers ?? [];
+        ComputerUse = cuse.Length > 0;
+        BrowserUse = buse.Length > 0;
+        ComputerUseTip = ComputerUse
+            ? $"Computer use ENABLED — {harness.DisplayName} has a desktop-control MCP server ({string.Join(", ", cuse)}). It can move the mouse/keyboard and read the screen."
+            : "No computer-use (desktop-control) MCP server configured for this agent.";
+        BrowserUseTip = BrowserUse
+            ? $"Browser use ENABLED — {harness.DisplayName} has a browser-automation MCP server ({string.Join(", ", buse)}). It can drive a real browser."
+            : "No browser-automation MCP server configured for this agent.";
         HarnessId = harness.Id;
         DisplayName = harness.DisplayName;
         IsRunning = isRunning;
@@ -1118,15 +1221,37 @@ public sealed class DashboardHarnessCardVm
 
         var alerts = profile?.TotalAlerts ?? 0;
         AlertCount = alerts;
-        var detail = mcpConnected
-            ? $"MCP linked · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
-            : isRunning
-                ? $"No MCP · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
-                : alerts > 0
-                    ? $"{alerts} alert{(alerts == 1 ? "" : "s")} · not running"
-                    : "Not running · connect MCP for Ask Harness";
+        var pa = $"{processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}";
+        var muted = new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90));
+        string detail;
+        Brush detailFg = muted;
+        if (mcpConnected)
+        {
+            detail = $"MCP linked · {pa}";
+        }
+        else if (isRunning && configured)
+        {
+            // Foreman is in this agent's config, but the running instance started before that — MCP is only
+            // loaded at harness startup, so it must be restarted to actually connect. Make that actionable, not
+            // a dead-end "No MCP". (amber = the ball is in the agent's court, not Foreman's.)
+            detail = $"Configured · restart to link · {pa}";
+            detailFg = new SolidColorBrush(Color.FromRgb(0xE8, 0xB2, 0x3C));
+        }
+        else if (isRunning)
+        {
+            detail = $"No MCP · {pa}";
+        }
+        else if (alerts > 0)
+        {
+            detail = $"{alerts} alert{(alerts == 1 ? "" : "s")} · not running";
+        }
+        else
+        {
+            detail = "Not running · connect MCP for Ask Harness";
+        }
         // Append the agent's self-reported context budget (via report_usage), when it has reported one.
         DetailLine = contextUsage?.ShortLabel is { } ctx ? $"{detail} · {ctx}" : detail;
+        DetailForeground = detailFg;
 
         BorderBrush = EscalationLevel >= EscalationLevel.Alarm
             ? new SolidColorBrush(Color.FromRgb(0x66, 0x33, 0x11))

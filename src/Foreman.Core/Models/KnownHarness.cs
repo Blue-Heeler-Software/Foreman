@@ -32,7 +32,7 @@ public static class KnownHarnesses
     public static readonly IReadOnlyList<KnownHarness> All =
     [
         new("claude-code",    "Claude Code",            "Anthropic",         "AI coding agent with file editing and bash execution"),
-        new("codex",          "Codex CLI",              "OpenAI",            "OpenAI's command-line AI coding agent"),
+        new("codex",          "Codex",                  "OpenAI",            "OpenAI's AI coding agent — CLI and Desktop app (same engine, shared ~/.codex config)"),
         new("t3-code",        "T3 Code",                "T3 Tools",          "Open-source control plane for coding agents"),
         new("opencode",       "OpenCode",               "Anomaly",           "Open-source terminal and desktop AI coding agent"),
         new("gemini-cli",     "Gemini CLI",             "Google",            "Google's terminal-based AI coding agent"),

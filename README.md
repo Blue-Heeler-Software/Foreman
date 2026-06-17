@@ -71,7 +71,7 @@ Tested on-machine so far:
 | ID | Agent | Integration status |
 | --- | --- | --- |
 | `claude-code` | Claude Code | one-click MCP setup, process/profile detection |
-| `codex` | Codex CLI | one-click MCP setup, process/profile detection, Codex TOML MCP inventory |
+| `codex` | Codex | one-click MCP setup (CLI + Desktop; `bearer_token_env_var`), process/profile detection, Codex TOML MCP inventory |
 | `cursor` | Cursor | one-click MCP setup (~/.cursor/mcp.json), process detection confirmed |
 
 Recognized/profiled, but needs broader field testing:

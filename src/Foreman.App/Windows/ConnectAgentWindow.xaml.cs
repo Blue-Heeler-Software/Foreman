@@ -18,15 +18,18 @@ public partial class ConnectAgentWindow : Window
     private readonly Func<string, string> _mint;   // mints a per-harness (scoped) token
     private readonly Func<IReadOnlyList<McpClientInfo>>? _getClients;
     private readonly Func<string>? _beginPairing;   // begins extension pairing, returns the on-screen code
+    private readonly Func<IReadOnlyCollection<string>>? _getRunningHarnessIds;   // harness ids Foreman sees running now
 
     public ConnectAgentWindow(int port, string token, Func<IReadOnlyList<McpClientInfo>>? getClients,
-                              Func<string, string>? mintToken = null, Func<string>? beginPairing = null)
+                              Func<string, string>? mintToken = null, Func<string>? beginPairing = null,
+                              Func<IReadOnlyCollection<string>>? getRunningHarnessIds = null)
     {
         _port = port;
         _token = token;
         _mint = mintToken ?? (_ => token);   // fall back to the install token if minting isn't wired
         _getClients = getClients;
         _beginPairing = beginPairing;
+        _getRunningHarnessIds = getRunningHarnessIds;
         InitializeComponent();
         Populate();
     }
@@ -99,7 +102,8 @@ public partial class ConnectAgentWindow : Window
                 "Foreman Agent Safety — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
             MessageBox.Show(
-                $"{r.Message}\n\nRestart Codex to connect and load the Foreman Agent Safety instructions." +
+                $"{r.Message}\n\nStart Codex in a NEW terminal to connect and load the Foreman Agent Safety " +
+                "instructions (Codex reads the bearer token from the environment variable at launch)." +
                 (r.BackupPath is { } b ? $"\n\nBackup saved: {b}" : ""),
                 "Foreman Agent Safety — Connect Codex", MessageBoxButton.OK, MessageBoxImage.Information);
         RefreshConnected();
@@ -252,38 +256,42 @@ public partial class ConnectAgentWindow : Window
             "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    // One-click repair: re-issue a fresh per-harness token to EVERY agent already configured here. Robust against
-    // a rotated install secret (which silently 401s every saved token) — each connector's Connect() overwrites
-    // its entry with the new token. Logged via the bus so it lands in the event log / OS event log next to the
-    // stale-token notice that prompted it.
-    private void ReconnectAllClick(object sender, RoutedEventArgs e)
+    // One-click "connect everything": writes (or refreshes) the Foreman MCP entry — with a fresh scoped token —
+    // for every agent Foreman sees running, that's already configured here, or that's installed on disk. This both
+    // connects not-yet-wired agents AND repairs stale tokens on the configured ones (robust against a rotated
+    // install secret, which silently 401s every saved token), in a single pass. Agents that are none of
+    // running/configured/installed are left untouched, so Foreman never litters config for tools you don't use.
+    // Logged via the bus so it lands in the event log / OS event log. Foreman writes the config; each agent opens
+    // the MCP session on its NEXT start/restart — there's no way to force a running client to dial in.
+    private void ConnectAllClick(object sender, RoutedEventArgs e)
     {
-        var results = HarnessConnectors.ReissueConfigured(_port, _mint);
+        var running = _getRunningHarnessIds?.Invoke();
+        var results = HarnessConnectors.ConnectDetectedAndInstalled(_port, _mint, running);
         if (results.Count == 0)
         {
             MessageBox.Show(
-                "No agents are currently configured to use Foreman Agent Safety, so there's nothing to reconnect. " +
-                "Connect one using a card below.",
-                "Foreman Agent Safety — Reconnect agents", MessageBoxButton.OK, MessageBoxImage.Information);
+                "No running, configured, or installed agents were found to connect. Connect one using a card below.",
+                "Foreman Agent Safety — Connect all agents", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        var ok = results.Where(r => r.Status != ConnectStatus.Failed).Select(r => r.DisplayName).ToArray();
+        var ok = results.Where(r => r.Status != ConnectStatus.Failed).ToArray();
         var failed = results.Where(r => r.Status == ConnectStatus.Failed).ToArray();
 
         EventBus.Instance.Publish(new InfoEvent(
             DateTimeOffset.UtcNow,
-            "Connect.Reissue",
-            $"Re-issued Foreman MCP tokens for {results.Count} configured agent(s): {string.Join(", ", results.Select(r => r.HarnessId))}."));
+            "Connect.All",
+            $"Connect-all wrote Foreman MCP config for {ok.Length}/{results.Count} agent(s): {string.Join(", ", results.Select(r => r.HarnessId))}."));
 
         var msg = (ok.Length > 0
-                ? $"Re-issued a fresh token for: {string.Join(", ", ok)}.\n\nRestart those agents (or refresh their MCP server) to apply."
+                ? $"Wrote Foreman config for: {string.Join(", ", ok.Select(r => r.DisplayName))}.\n\n" +
+                  "Restart those agents (or refresh their MCP server) to connect — Foreman can't open the session for them."
                 : "")
             + (failed.Length > 0
                 ? $"\n\nCouldn't update: {string.Join("; ", failed.Select(f => $"{f.DisplayName} ({f.Message})"))}"
                 : "");
         MessageBox.Show(msg.Trim(),
-            "Foreman Agent Safety — Reconnect agents",
+            "Foreman Agent Safety — Connect all agents",
             MessageBoxButton.OK,
             failed.Length > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
         RefreshConnected();

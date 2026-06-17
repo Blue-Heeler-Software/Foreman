@@ -18,6 +18,15 @@ public static class CodexMcpConnector
     private const string AgentsBeginMarker = "<!-- foreman-mcp:begin -->";
     private const string AgentsEndMarker = "<!-- foreman-mcp:end -->";
 
+    /// <summary>
+    /// Environment variable Codex reads the bearer token from. Codex's supported way to authenticate a
+    /// streamable-HTTP MCP server is <c>bearer_token_env_var</c> (it sends the variable's value as
+    /// <c>Authorization: Bearer …</c>). Codex 0.98 does NOT apply an inline <c>http_headers</c> Authorization
+    /// for auth — it lists such a server as "Auth: Unsupported" and connects without the header — so the token
+    /// is delivered via this variable instead.
+    /// </summary>
+    public const string BearerTokenEnvVar = "FOREMAN_MCP_TOKEN_CODEX";
+
     public static string DefaultConfigPath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -33,7 +42,10 @@ public static class CodexMcpConnector
     public static string Url(int port) => $"http://localhost:{port}/mcp";
 
     public static string BuildConfigSnippet(int port, string token) =>
-        BuildSection(port, token).TrimEnd();
+        BuildSection(port).TrimEnd() + "\n\n" +
+        "# Codex sends the bearer token from this environment variable. Set it, then start Codex in a NEW\n" +
+        "# terminal (so it inherits the value):\n" +
+        $"#   setx {BearerTokenEnvVar} \"{token}\"";
 
     public static string BuildAgentsInstructions() =>
         $"""
@@ -76,9 +88,11 @@ public static class CodexMcpConnector
         int port,
         string token,
         string? configPath = null,
-        string? agentsPath = null)
+        string? agentsPath = null,
+        Action<string, string>? setUserEnvVar = null)
     {
         var path = configPath ?? DefaultConfigPath;
+        setUserEnvVar ??= SetUserEnvVar;
         try
         {
             var bytes = File.Exists(path) ? File.ReadAllBytes(path) : [];
@@ -87,16 +101,17 @@ public static class CodexMcpConnector
                 ? ""
                 : new UTF8Encoding(false).GetString(hadBom ? bytes[3..] : bytes);
 
-            // Respect a user who already set up the more secure bearer_token_env_var form for this port.
-            // Do not silently overwrite it with a plaintext inline token (IsConfigured accepts both forms).
+            // Respect a user who wired their OWN bearer_token_env_var (a variable name other than Foreman's)
+            // for this port - don't clobber their setup or touch their variable.
             var existingSection = ExtractForemanSection(original);
             if (existingSection is not null &&
                 HasAssignment(existingSection, "url", Url(port)) &&
-                Regex.IsMatch(existingSection, @"(?im)^\s*bearer_token_env_var\s*=\s*""[^""]+""\s*(?:#.*)?$"))
+                TryGetBearerTokenEnvVarName(existingSection, out var existingVar) &&
+                !string.Equals(existingVar, BearerTokenEnvVar, StringComparison.Ordinal))
             {
                 var secureEntryMessage =
-                    "Codex already has a foreman entry using bearer_token_env_var for this port - left it " +
-                    "unchanged (the more secure form). Update that environment variable to rotate the token.";
+                    $"Codex already has a foreman entry using your own bearer_token_env_var ({existingVar}) for " +
+                    $"this port - left it unchanged. Set {existingVar} to Foreman's token to (re)connect.";
 
                 return new ConnectResult(
                     ConnectStatus.Updated,
@@ -107,7 +122,7 @@ public static class CodexMcpConnector
             // Preserve the file's own newline + BOM so a one-click connect only changes the foreman table,
             // not the whole file's encoding (avoids noisy LF/CRLF or BOM diffs under git).
             var newline = original.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-            var updated = UpsertForemanSection(original, port, token, newline, out var existed);
+            var updated = UpsertForemanSection(original, port, newline, out var existed);
 
             string? backup = null;
             if (bytes.Length > 0)
@@ -119,9 +134,22 @@ public static class CodexMcpConnector
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hadBom));
 
-            var message = existed
+            // Deliver the token the only way Codex consumes it for an HTTP server: the environment variable
+            // named by bearer_token_env_var. (Inline http_headers Authorization is ignored by Codex 0.98.)
+            string envNote;
+            try
+            {
+                setUserEnvVar(BearerTokenEnvVar, token);
+                envNote = $" Set {BearerTokenEnvVar} for your user account - start Codex in a NEW terminal so it picks up the token.";
+            }
+            catch (Exception ex)
+            {
+                envNote = $" Couldn't set {BearerTokenEnvVar} automatically ({ex.Message}) - set it yourself: setx {BearerTokenEnvVar} \"<token>\".";
+            }
+
+            var message = (existed
                 ? "Updated the existing foreman MCP entry in Codex's config."
-                : "Added a user-scope foreman MCP entry to Codex's config.";
+                : "Added a user-scope foreman MCP entry to Codex's config.") + envNote;
 
             return new ConnectResult(
                 existed ? ConnectStatus.Updated : ConnectStatus.Added,
@@ -134,14 +162,22 @@ public static class CodexMcpConnector
         }
     }
 
-    private static string UpsertForemanSection(string original, int port, string token, string newline, out bool existed)
+    private static void SetUserEnvVar(string name, string value)
+    {
+        if (OperatingSystem.IsWindows())
+            Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.User);
+        else
+            Environment.SetEnvironmentVariable(name, value);   // process-scope fallback off-Windows
+    }
+
+    private static string UpsertForemanSection(string original, int port, string newline, out bool existed)
     {
         var lines = NormalizeLines(original);
         if (lines.Count == 1 && lines[0].Length == 0)
             lines.Clear();
 
         var range = FindForemanSectionRange(lines);
-        var section = BuildSection(port, token).TrimEnd().Split('\n');
+        var section = BuildSection(port).TrimEnd().Split('\n');
 
         existed = range is not null;
         if (range is { } r)
@@ -159,10 +195,10 @@ public static class CodexMcpConnector
         return string.Join(newline, lines).TrimEnd() + newline;
     }
 
-    private static string BuildSection(int port, string token) =>
+    private static string BuildSection(int port) =>
         $"[{SectionName}]\n" +
         $"url = \"{TomlEscape(Url(port))}\"\n" +
-        $"http_headers = {{ Authorization = \"Bearer {TomlEscape(token)}\" }}\n" +
+        $"bearer_token_env_var = \"{BearerTokenEnvVar}\"\n" +
         "enabled = true\n";
 
     private static string AppendAgentsNote(string message, string agentsPath)
@@ -319,6 +355,13 @@ public static class CodexMcpConnector
         return Regex.IsMatch(
             section,
             $@"(?im)^\s*{Regex.Escape(key)}\s*=\s*""{escaped}""\s*(?:#.*)?$");
+    }
+
+    private static bool TryGetBearerTokenEnvVarName(string section, out string name)
+    {
+        var m = Regex.Match(section, @"(?im)^\s*bearer_token_env_var\s*=\s*""([^""]+)""\s*(?:#.*)?$");
+        name = m.Success ? m.Groups[1].Value : "";
+        return m.Success;
     }
 
     private static bool HasInlineAuthorizationHeader(string section) =>

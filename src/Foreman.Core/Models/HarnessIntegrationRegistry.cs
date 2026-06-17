@@ -33,15 +33,15 @@ public static class HarnessIntegrationRegistry
             """),
         new(
             "codex",
-            "Codex CLI",
+            "Codex",
             "codex-default",
             [],
             [],
-            "Add Foreman Agent Safety's HTTP MCP endpoint to ~/.codex/config.toml and the Foreman Agent Safety MCP Monitor section to ~/.codex/AGENTS.md, or use Foreman Agent Safety's Connect Agent window to write both automatically.",
+            "Add Foreman Agent Safety's HTTP MCP endpoint to ~/.codex/config.toml and the Foreman Agent Safety MCP Monitor section to ~/.codex/AGENTS.md, or use Foreman Agent Safety's Connect Agent window to write both automatically. Codex (CLI and Desktop) sends the bearer token from the FOREMAN_MCP_TOKEN_CODEX environment variable — set it to the token, then start Codex fresh (a new terminal, or relaunch the Desktop app). An inline http_headers Authorization is NOT applied by Codex.",
             """
             [mcp_servers.foreman]
             url = "http://localhost:{port}/mcp"
-            http_headers = { Authorization = "Bearer <token>" }
+            bearer_token_env_var = "FOREMAN_MCP_TOKEN_CODEX"
             enabled = true
             """),
         new(

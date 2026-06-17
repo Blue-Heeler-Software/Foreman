@@ -25,7 +25,29 @@ public sealed class SseSessionManager
 {
     private readonly ConcurrentDictionary<string, McpServerType> _sessions = new();
 
+    // Sticky activity, keyed by harness id (from the authenticated token). These clients use short-lived
+    // per-request MCP sessions, so the live _sessions set reads ~0 between calls — the dashboard would flicker
+    // "No MCP"/"restart to link" even for a connected, working agent. MarkSeen records each authenticated
+    // request so the UI can treat a harness that has talked to Foreman within a TTL as connected.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recent = new(StringComparer.OrdinalIgnoreCase);
+
     public int Count => _sessions.Count;
+
+    /// <summary>Record that an authenticated request from this harness just arrived (drives sticky "connected").</summary>
+    public void MarkSeen(string? harnessId)
+    {
+        if (!string.IsNullOrWhiteSpace(harnessId))
+            _recent[harnessId] = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Harness ids that made an authenticated MCP request within <paramref name="ttl"/>; prunes older entries.</summary>
+    public IReadOnlyCollection<string> RecentlyActiveHarnessIds(TimeSpan ttl)
+    {
+        var cutoff = DateTimeOffset.UtcNow - ttl;
+        foreach (var kv in _recent)
+            if (kv.Value < cutoff) _recent.TryRemove(kv.Key, out _);
+        return _recent.Keys.ToArray();
+    }
 
     /// <summary>Registers a connected session. Returns the session key for later unregistration.</summary>
     public string Register(McpServerType server)

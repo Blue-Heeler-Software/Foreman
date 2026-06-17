@@ -287,7 +287,7 @@ public sealed class LlmTriageSettings
         {
             AuditorId = "codex",
             AuditorType = "harness",
-            DisplayName = "Codex CLI",
+            DisplayName = "Codex",
             TargetHarnessIds = ["claude-code", "cursor", "opencode", "t3-code"],
             MinimumSeverities = ["High", "Critical"],
             Priority = 100,
