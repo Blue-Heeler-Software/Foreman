@@ -260,7 +260,10 @@ public partial class DashboardWindow : Window, IEventSink
                     wakeCount,
                     GetContextUsage?.Invoke(h.Id));
             })
-            .Where(c => c.McpConnected)   // overview shows only harnesses actually connected to Foreman's MCP
+            // Show every harness that's running, MCP-connected, OR has alerts (same set as the header chips), so
+            // your agents stay visible even when none currently holds a live MCP session. The card itself shows
+            // connection state ("MCP linked" vs "No MCP", Running vs Idle).
+            .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0)
             .OrderByDescending(c => c.IsRunning)
             .ThenByDescending(c => (int)c.EscalationLevel)
             .ThenBy(c => c.DisplayName)
@@ -1060,6 +1063,7 @@ public sealed class DashboardHarnessCardVm
     public string ToolTip { get; }
     public bool IsRunning { get; }
     public bool McpConnected { get; }
+    public int AlertCount { get; }
     public EscalationLevel EscalationLevel { get; }
     public IReadOnlyList<HarnessLightVm> Lights { get; }
 
@@ -1095,6 +1099,7 @@ public sealed class DashboardHarnessCardVm
         EscalationForeground = EscalationColors(EscalationLevel).fg;
 
         var alerts = profile?.TotalAlerts ?? 0;
+        AlertCount = alerts;
         var detail = mcpConnected
             ? $"MCP linked · {processCount} proc{(processCount == 1 ? "" : "s")} · {alerts} alert{(alerts == 1 ? "" : "s")}"
             : isRunning

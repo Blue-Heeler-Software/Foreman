@@ -414,7 +414,7 @@
                                Foreground="{StaticResource TextMutedBrush}" />
                 </Grid>
                 <TextBlock x:Name="NoConnectedHarnessText"
-                           Text="No agents connected to Foreman's MCP — use Connect agent."
+                           Text="No agents running or connected yet — use Connect agent to link one."
                            FontSize="11"
                            Foreground="{StaticResource TextMutedBrush}"
                            Visibility="Collapsed" />
