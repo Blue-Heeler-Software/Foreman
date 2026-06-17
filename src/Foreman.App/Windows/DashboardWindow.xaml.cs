@@ -64,6 +64,12 @@ public partial class DashboardWindow : Window, IEventSink
     /// <summary>An agent's self-reported context/token budget (via the report_usage MCP tool); null if never reported.</summary>
     public Func<string, HarnessContextUsage?>? GetContextUsage { get; set; }
 
+    /// <summary>Polite MCP "pack up cleanly" request for a harness (Idle Harness self-cleanup); wired by TrayController.</summary>
+    public Func<string, (bool Ok, string Message)>? RequestHarnessCleanup { get; set; }
+
+    /// <summary>Reset a harness's escalation/behavior metrics; wired by TrayController.</summary>
+    public Action<string>? ResetBehaviorMetrics { get; set; }
+
     /// <summary>Opens the "Connect agent" guide window.</summary>
     public Action? OpenConnectAgentRequested { get; set; }
 
@@ -446,6 +452,9 @@ public partial class DashboardWindow : Window, IEventSink
             GetNetRate = GetNetRate,
             OpenSettings = () => OpenHarnessSettings(harnessId),
             OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke(),
+            GetContextUsage = () => GetContextUsage?.Invoke(harnessId),
+            RequestCleanup = RequestHarnessCleanup is null ? null : () => RequestHarnessCleanup(harnessId),
+            ResetMetrics = ResetBehaviorMetrics is null ? null : () => ResetBehaviorMetrics(harnessId),
         };
 
         new HarnessDetailWindow(ctx) { Owner = this }.Show();

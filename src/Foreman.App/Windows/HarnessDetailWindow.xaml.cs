@@ -29,6 +29,8 @@ public partial class HarnessDetailWindow : Window
     private readonly DispatcherTimer _timer;
     private readonly ObservableCollection<UsageBarVm> _usage = [];
     private readonly long _physicalMemBytes = ReadPhysicalMemoryBytes();
+    private int _lastWakeLocks;          // cached; the powercfg probe runs off the UI thread (was the open lag)
+    private bool _wakeProbeInFlight;
 
     public HarnessDetailWindow(HarnessDetailContext ctx)
     {
@@ -122,6 +124,25 @@ public partial class HarnessDetailWindow : Window
 
         UpdatedText.Text = $"updated {DateTime.Now:HH:mm:ss}";
         ConnectButton.Visibility = mcpConnected ? Visibility.Collapsed : Visibility.Visible;
+
+        FetchWakeLocksAsync();   // powercfg shell-out — never block the UI thread (that was the open lag)
+    }
+
+    // The wake-lock count comes from `powercfg /requests` via the elevated sidecar — a blocking call that froze
+    // the window on open + every 2s tick. Fetch it off-thread, cache it, and re-render the behavior rows when it
+    // changes. One probe in flight at a time.
+    private void FetchWakeLocksAsync()
+    {
+        if (_wakeProbeInFlight) return;
+        _wakeProbeInFlight = true;
+        System.Threading.Tasks.Task.Run(() => { try { return _ctx.GetWakeLocks(); } catch { return 0; } })
+            .ContinueWith(t =>
+            {
+                _wakeProbeInFlight = false;
+                if (t.Status != System.Threading.Tasks.TaskStatus.RanToCompletion || t.Result == _lastWakeLocks) return;
+                _lastWakeLocks = t.Result;
+                BehaviorRows.ItemsSource = BuildBehaviorRows(_ctx.GetProfile());   // re-render with the fresh count
+            }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     private void UpdateUsage(IReadOnlyList<ProcessRecord> procs, bool running)
@@ -165,8 +186,7 @@ public partial class HarnessDetailWindow : Window
         {
             rows.Add(new("Alerts this session", "0 — no behavior recorded yet"));
             rows.Add(new("Pending Ask Harness", _ctx.GetPendingAsk().ToString(CultureInfo.InvariantCulture)));
-            var wakeNone = _ctx.GetWakeLocks();
-            if (wakeNone > 0) rows.Add(new("Wake locks", wakeNone.ToString(CultureInfo.InvariantCulture)));
+            if (_lastWakeLocks > 0) rows.Add(new("Wake locks", _lastWakeLocks.ToString(CultureInfo.InvariantCulture)));
             return rows;
         }
 
@@ -199,9 +219,8 @@ public partial class HarnessDetailWindow : Window
             ? "none"
             : $"{pending} awaiting reply"));
 
-        var wake = _ctx.GetWakeLocks();
-        if (wake > 0)
-            rows.Add(new("Wake locks", $"{wake} attributed"));
+        if (_lastWakeLocks > 0)
+            rows.Add(new("Wake locks", $"{_lastWakeLocks} attributed"));
 
         return rows;
     }
@@ -267,6 +286,66 @@ public partial class HarnessDetailWindow : Window
 
     private void ConnectAgentClick(object sender, RoutedEventArgs e) => _ctx.OpenConnectAgent();
 
+    // ── On-click operations ───────────────────────────────────────────────────
+
+    private void HealthCheckClick(object sender, RoutedEventArgs e)
+    {
+        HealthRows.ItemsSource = RunHealthCheck();
+        HealthRows.Visibility = Visibility.Visible;
+    }
+
+    // A Foreman-side integration self-test: is this harness wired up and healthy? Computed from data Foreman
+    // already has — no round-trip needed — so it's instant and works even when the agent is idle.
+    private List<HealthRowVm> RunHealthCheck()
+    {
+        var procs = _ctx.GetProcesses().ToList();
+        var clients = _ctx.GetClients();
+        var profile = _ctx.GetProfile();
+        var running = procs.Count > 0;
+        var mcp = clients.Any(c => SseSessionManager.MatchesHarness(c.Name, null, _ctx.HarnessId));
+        var hasProfile = !string.IsNullOrEmpty(HarnessIntegrationRegistry.GetDefaultProfileName(_ctx.HarnessId));
+        var usage = _ctx.GetContextUsage?.Invoke();
+        var pending = _ctx.GetPendingAsk();
+        var level = profile?.CurrentLevel ?? EscalationLevel.Watch;
+
+        return
+        [
+            new(running ? "ok" : "info", "Process detected",
+                running ? $"{procs.Count} process(es) tracked" : "not currently running"),
+            new(mcp ? "ok" : "warn", "MCP session live",
+                mcp ? "connected — Ask Harness + usage available" : "no live session — reconnect to enable Ask Harness / live detail / usage"),
+            new(hasProfile ? "ok" : "fail", "Permission profile",
+                hasProfile ? "profile applies — command/file enforcement active" : "no profile — running monitor-only"),
+            new(usage is not null ? "ok" : "info", "Context usage",
+                usage?.ShortLabel is { } s ? $"{s} (self-reported)" : "agent hasn't called report_usage"),
+            new(pending == 0 ? "ok" : "warn", "Ask Harness queue",
+                pending == 0 ? "no pending prompts" : $"{pending} awaiting reply"),
+            new(level <= EscalationLevel.Watch ? "ok" : "warn", "Escalation",
+                level <= EscalationLevel.Watch ? "calm (Watch)" : level.ToString().ToUpperInvariant()),
+        ];
+    }
+
+    private void RequestCleanupClick(object sender, RoutedEventArgs e)
+    {
+        if (_ctx.RequestCleanup is null) { ShowActionResult("Self-cleanup isn't available for this harness."); return; }
+        var (_, msg) = _ctx.RequestCleanup();
+        ShowActionResult(msg);
+    }
+
+    private void ResetMetricsClick(object sender, RoutedEventArgs e)
+    {
+        if (_ctx.ResetMetrics is null) { ShowActionResult("Reset isn't available."); return; }
+        _ctx.ResetMetrics();
+        ShowActionResult("Behavior / escalation metrics reset for this harness.");
+        Refresh();
+    }
+
+    private void ShowActionResult(string msg)
+    {
+        ActionResultText.Text = msg;
+        ActionResultText.Visibility = Visibility.Visible;
+    }
+
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
 
     protected override void OnClosed(EventArgs e)
@@ -290,6 +369,33 @@ public sealed class HarnessDetailContext
     public Func<int, double?>? GetNetRate { get; init; }
     public required Action OpenSettings { get; init; }
     public required Action OpenConnectAgent { get; init; }
+
+    // ── On-click operations (optional; null = button reports "not available") ──
+    public Func<HarnessContextUsage?>? GetContextUsage { get; init; }
+    public Func<(bool Ok, string Message)>? RequestCleanup { get; init; }
+    public Action? ResetMetrics { get; init; }
+}
+
+/// <summary>One row in the integration health check (✓/!/✕/•).</summary>
+public sealed class HealthRowVm
+{
+    public string Symbol { get; }
+    public Brush SymbolBrush { get; }
+    public string Label { get; }
+    public string Detail { get; }
+
+    public HealthRowVm(string status, string label, string detail)
+    {
+        Label = label;
+        Detail = detail;
+        (Symbol, SymbolBrush) = status switch
+        {
+            "ok"   => ("✓", new SolidColorBrush(Color.FromRgb(0x7E, 0xC8, 0x78))),
+            "warn" => ("!", new SolidColorBrush(Color.FromRgb(0xE8, 0xB2, 0x3C))),
+            "fail" => ("✕", new SolidColorBrush(Color.FromRgb(0xE0, 0x6C, 0x6C))),
+            _      => ("•", new SolidColorBrush(Color.FromRgb(0x7A, 0x80, 0x90))),
+        };
+    }
 }
 
 /// <summary>One live usage bar (CPU/RAM/GPU/Net/I/O).</summary>

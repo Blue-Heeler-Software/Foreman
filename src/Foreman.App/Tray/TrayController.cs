@@ -473,6 +473,8 @@ public sealed class TrayController : IEventSink, IDisposable
             w.GetNetRate = GetNetRate;
             w.GetWakeRequests = GetWakeRequests;
             w.GetContextUsage = id => GetContextUsage?.Invoke(id);
+            w.RequestHarnessCleanup = id => RequestHarnessCleanup?.Invoke(id) ?? (false, "Cleanup isn't available.");
+            w.ResetBehaviorMetrics = id => ResetBehaviorProfile?.Invoke(id);
             w.GetPendingAskCount = id => GetPendingAskCount?.Invoke(id) ?? 0;
             w.GetGameModeActive = () => GameModeActive;
             w.McpPort = _settings.McpPort;
