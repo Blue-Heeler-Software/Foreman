@@ -33,7 +33,7 @@ public sealed class SecretRedactorTests
     }
 
     [Theory]   // broadened vendor token shapes (deep-review E3) — an agent can't pick a format outside the set
-    [InlineData("stripe --key sk_live_REDACTED", "sk_live_REDACTED")]
+    [InlineData("stripe --key sk_live_" + "51AbcDefGhiJklMnoPqrStuv", "sk_live_" + "51AbcDefGhiJklMnoPqrStuv")]   // split literal: a FAKE key, kept off GitHub secret-scanning
     [InlineData("gh auth: github_pat_11ABCDEFG0aaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbb", "github_pat_11ABCDEFG0aaaaaaaaaaaa")]
     [InlineData("CI_TOKEN glpat-abcdefghij1234567890", "glpat-abcdefghij1234567890")]
     [InlineData("npm publish --//registry/:_authToken=npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm_abcdefghijklmnopqrstuvwxyz0123456789")]
