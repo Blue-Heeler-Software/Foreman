@@ -134,7 +134,7 @@ public partial class SettingsWindow : Window
         // Process thresholds
         HangBox.Text       = _settings.HangThresholdMinutes.ToString();
         HookBox.Text       = _settings.HookJamThresholdMinutes.ToString();
-        SuppressBox.Text   = _settings.AlertSuppressWindowMinutes.ToString();
+        SuppressBox.Text   = (_settings.CadenceGovernor.RepeatSuppressSeconds / 60).ToString();
         HangRealertBox.Text = _settings.HangRealertCooldownMinutes.ToString();
 
         // Notifications
@@ -208,8 +208,8 @@ public partial class SettingsWindow : Window
         if (!int.TryParse(HangRealertBox.Text, out var hangRealert) || hangRealert < 0)
         { MessageBox.Show("Hang re-alert cooldown must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
-        if (!int.TryParse(SuppressBox.Text, out var suppress) || suppress < 0)
-        { MessageBox.Show("Alert suppress window must be ≥ 0.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        if (!int.TryParse(SuppressBox.Text, out var suppressMin) || suppressMin < 0)
+        { MessageBox.Show("Coalesce-repeats window must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         if (!int.TryParse(IdleCleanupAfterBox.Text, out var idleAfter) || idleAfter < 5)
         { MessageBox.Show("Idle cleanup threshold must be ≥ 5 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
@@ -267,7 +267,7 @@ public partial class SettingsWindow : Window
         _settings.ScanMcpTools               = ScanMcpToolsCheck.IsChecked == true;
         _settings.HangThresholdMinutes       = hang;
         _settings.HookJamThresholdMinutes    = hook;
-        _settings.AlertSuppressWindowMinutes = suppress;
+        _settings.CadenceGovernor.RepeatSuppressSeconds = suppressMin * 60;
         _settings.HangRealertCooldownMinutes = hangRealert;
         _settings.NotifyOnHang               = NotifyHangCheck.IsChecked == true;
         _settings.NotifyOnOrphan             = NotifyOrphanCheck.IsChecked == true;

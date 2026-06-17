@@ -26,7 +26,6 @@ public sealed class ForemanSettings
     /// </summary>
     public List<Foreman.Core.Models.MuteEntry> Mutes { get; set; } = [];
     public int IoPollerIntervalSeconds { get; set; } = 30;
-    public int AlertSuppressWindowMinutes { get; set; } = 5;
     public bool NotifyOnHang { get; set; } = true;
     public bool NotifyOnOrphan { get; set; } = true;
     public bool NotifyOnCriticalCommand { get; set; } = true;

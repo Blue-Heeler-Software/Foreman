@@ -12,9 +12,19 @@ public sealed class CadenceGovernorSettings
     /// <summary>Sliding window (seconds) the per-class burst budget applies over, and the rollup cadence.</summary>
     public int WindowSeconds { get; set; } = 90;
 
+    /// <summary>
+    /// After a class shows a toast, coalesce (count, don't re-toast) further toasts of that SAME class for this
+    /// long — so a hang that re-alerts minutes apart (bursty child, or several children of one harness) collapses
+    /// into one toast plus a "×N" rollup instead of N separate popups. 0 = off (burst-window coalescing only).
+    /// </summary>
+    public int RepeatSuppressSeconds { get; set; } = 300;
+
     /// <summary>The single clamped window every consumer must use (governor slide, flush timer, rollup label),
     /// so they can never disagree. Floors at 5s (matches the flush-timer minimum) and caps at one hour.</summary>
     public int EffectiveWindowSeconds => Math.Clamp(WindowSeconds, 5, 3600);
+
+    /// <summary>Clamped repeat-suppress window (0 = off; otherwise 5s..1h).</summary>
+    public int EffectiveRepeatSuppressSeconds => RepeatSuppressSeconds <= 0 ? 0 : Math.Clamp(RepeatSuppressSeconds, 5, 3600);
 
     /// <summary>The clamped per-class burst budget (always allow at least the first toast through).</summary>
     public int EffectiveBurstThreshold => Math.Max(1, BurstThreshold);
@@ -43,6 +53,7 @@ public sealed class AlertCadenceGovernor
     private readonly object _lock = new();
     private readonly Dictionary<string, Queue<DateTimeOffset>> _recent = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _coalesced = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _lastShown = new(StringComparer.OrdinalIgnoreCase);
 
     public AlertCadenceGovernor(CadenceGovernorSettings settings, Func<DateTimeOffset>? now = null)
     {
@@ -60,14 +71,27 @@ public sealed class AlertCadenceGovernor
         if (!_settings.Enabled) return true;
         var budget = _settings.EffectiveBurstThreshold;
         var window = TimeSpan.FromSeconds(_settings.EffectiveWindowSeconds);
+        var repeatSuppress = _settings.EffectiveRepeatSuppressSeconds;
         lock (_lock)
         {
             var now = _now();
+
+            // Repeat-suppress: once a class has toasted, coalesce further toasts of it for RepeatSuppressSeconds —
+            // this is what collapses minute-spaced hang re-alerts (which escape the short burst window) into a count.
+            if (repeatSuppress > 0
+                && _lastShown.TryGetValue(classKey, out var shown)
+                && now - shown < TimeSpan.FromSeconds(repeatSuppress))
+            {
+                _coalesced[classKey] = _coalesced.GetValueOrDefault(classKey) + 1;
+                return false;
+            }
+
             if (!_recent.TryGetValue(classKey, out var q)) _recent[classKey] = q = new Queue<DateTimeOffset>();
             while (q.Count > 0 && now - q.Peek() > window) q.Dequeue();   // slide the window
             if (q.Count < budget)
             {
                 q.Enqueue(now);
+                _lastShown[classKey] = now;
                 return true;
             }
             _coalesced[classKey] = _coalesced.GetValueOrDefault(classKey) + 1;
@@ -94,6 +118,11 @@ public sealed class AlertCadenceGovernor
                 while (q.Count > 0 && now - q.Peek() > window) q.Dequeue();
                 if (q.Count == 0) _recent.Remove(key);
             }
+
+            // Drop stale repeat-suppress marks once they can no longer suppress (older than the suppress window).
+            var suppressAge = TimeSpan.FromSeconds(Math.Max(_settings.EffectiveRepeatSuppressSeconds, _settings.EffectiveWindowSeconds));
+            foreach (var key in _lastShown.Keys.ToList())
+                if (now - _lastShown[key] > suppressAge) _lastShown.Remove(key);
 
             var result = _coalesced.Where(kv => kv.Value > 0)
                 .Select(kv => (kv.Key, kv.Value))

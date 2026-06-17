@@ -12,11 +12,11 @@ public sealed class AlertCadenceGovernorTests
         public void Advance(TimeSpan d) => Now += d;
     }
 
-    private static (AlertCadenceGovernor gov, Clock clk) Make(int burst = 3, int window = 90, bool enabled = true)
+    private static (AlertCadenceGovernor gov, Clock clk) Make(int burst = 3, int window = 90, bool enabled = true, int repeatSuppress = 0)
     {
         var clk = new Clock();
         var gov = new AlertCadenceGovernor(
-            new CadenceGovernorSettings { Enabled = enabled, BurstThreshold = burst, WindowSeconds = window },
+            new CadenceGovernorSettings { Enabled = enabled, BurstThreshold = burst, WindowSeconds = window, RepeatSuppressSeconds = repeatSuppress },
             clk.Read);
         return (gov, clk);
     }
@@ -110,5 +110,48 @@ public sealed class AlertCadenceGovernorTests
         Assert.False(gov.ShouldNotify("transient-harness-3"));
         Assert.Equal(0, gov.RecentKeyCount("transient-harness-1"));
         Assert.Equal(0, gov.RecentKeyCount("transient-harness-2"));
+    }
+
+    // ── Repeat-suppress: collapse minute/hour-spaced re-alerts of the SAME class (the user's "x4" case) ──
+
+    [Fact]   // a re-alert past the burst window still coalesces while within the repeat-suppress window
+    public void RepeatSuppress_CoalescesReAlertsBeyondBurstWindow()
+    {
+        var (gov, clk) = Make(burst: 3, window: 90, repeatSuppress: 300);
+        Assert.True(gov.ShouldNotify("hang/codex"));    // first hang → shown
+        clk.Advance(TimeSpan.FromSeconds(120));         // past the 90s burst window (would re-toast under burst-only)...
+        Assert.False(gov.ShouldNotify("hang/codex"));   // ...but within 300s repeat-suppress → coalesced
+        clk.Advance(TimeSpan.FromSeconds(120));         // 240s total, still < 300s
+        Assert.False(gov.ShouldNotify("hang/codex"));   // coalesced again
+        Assert.Equal(("hang/codex", 2), gov.Flush().Single());
+    }
+
+    [Fact]   // after the repeat-suppress window lapses, the class toasts again (a periodic "still hung" reminder)
+    public void RepeatSuppress_AllowsAgainAfterWindow()
+    {
+        var (gov, clk) = Make(burst: 3, window: 90, repeatSuppress: 300);
+        Assert.True(gov.ShouldNotify("hang/codex"));    // shown
+        Assert.False(gov.ShouldNotify("hang/codex"));   // coalesced
+        clk.Advance(TimeSpan.FromSeconds(301));         // past the repeat-suppress window
+        Assert.True(gov.ShouldNotify("hang/codex"));    // shown again
+    }
+
+    [Fact]   // repeat-suppress is per class — codex's coalescing never silences claude-code's first hang
+    public void RepeatSuppress_IsPerClass()
+    {
+        var (gov, _) = Make(burst: 3, window: 90, repeatSuppress: 300);
+        Assert.True(gov.ShouldNotify("hang/codex"));
+        Assert.False(gov.ShouldNotify("hang/codex"));        // codex coalesced
+        Assert.True(gov.ShouldNotify("hang/claude-code"));   // a different class still shows its first
+    }
+
+    [Fact]   // repeat-suppress off (0) → pure burst behavior (back-compat for the original governor)
+    public void RepeatSuppress_Off_LeavesBurstBehaviorIntact()
+    {
+        var (gov, _) = Make(burst: 3, window: 90, repeatSuppress: 0);
+        Assert.True(gov.ShouldNotify("hang/codex"));    // 1
+        Assert.True(gov.ShouldNotify("hang/codex"));    // 2
+        Assert.True(gov.ShouldNotify("hang/codex"));    // 3 — burst budget
+        Assert.False(gov.ShouldNotify("hang/codex"));   // 4 → coalesced by burst, not repeat-suppress
     }
 }

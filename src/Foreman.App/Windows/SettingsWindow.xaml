@@ -100,8 +100,9 @@
                     <TextBox x:Name="HookBox" Width="80" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Alert suppress window (min):" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="SuppressBox" Width="80" />
+                    <Label Content="Coalesce repeat popups within (min):" VerticalAlignment="Center" Width="210" />
+                    <TextBox x:Name="SuppressBox" Width="80"
+                             ToolTip="After a hang/orphan popup for a harness, fold further popups of the same kind within this window into one rollup with a count (e.g. 'Codex process hang ×4'), instead of separate toasts. Every event still appears in the Event Log. 0 = off." />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal">
                     <Label Content="Hang re-alert cooldown (min):" VerticalAlignment="Center" Width="210" />

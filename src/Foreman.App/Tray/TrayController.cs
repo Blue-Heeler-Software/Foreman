@@ -315,6 +315,19 @@ public sealed class TrayController : IEventSink, IDisposable
         _                     => null,
     };
 
+    // Turn a cadence class key ("hang/codex", "orphan") into a human label for the rollup notice.
+    private static string ReadableCadenceClass(string classKey)
+    {
+        if (classKey.StartsWith("hang/", StringComparison.Ordinal))
+        {
+            var owner = classKey["hang/".Length..];
+            if (owner is "" or "unattributed") return "process hang (no I/O)";
+            var name = Foreman.Core.Models.KnownHarnesses.GetById(owner)?.DisplayName ?? owner;
+            return $"{name} process hang (no I/O)";
+        }
+        return classKey == "orphan" ? "orphaned process" : classKey;
+    }
+
     /// <summary>Once per window: fold the coalesced operational-toast counts into one logged notice + one gentle balloon.</summary>
     private void FlushCadenceRollup()
     {
@@ -325,9 +338,8 @@ public sealed class TrayController : IEventSink, IDisposable
 
             var total = rolled.Sum(r => r.Suppressed);
             var window = _settings.CadenceGovernor.EffectiveWindowSeconds;
-            var parts = string.Join(", ", rolled.Select(r => $"{r.ClassKey} ×{r.Suppressed}"));
-            var msg = $"Quieted {total} repetitive operational notice(s) in the last {window}s ({parts}). "
-                    + "Each is still in the log.";
+            var parts = string.Join(", ", rolled.Select(r => $"{ReadableCadenceClass(r.ClassKey)} ×{r.Suppressed}"));
+            var msg = $"Quieted {total} repeat notice(s) in the last {window}s: {parts}. Each is still in the Event Log.";
 
             // Logged record (InfoEvent → shows in the log, never toasts on its own — so this can't re-flood).
             _bus.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Cadence", msg));
