@@ -175,7 +175,7 @@
                 <TextBlock x:Name="StatusLabel"
                            FontFamily="Segoe UI, Arial" FontSize="11"
                            Foreground="{StaticResource TextMutedBrush}" />
-                <TextBlock Text="  ·  double-click to inspect"
+                <TextBlock Text="  ·  click a row to inspect"
                            FontFamily="Segoe UI, Arial" FontSize="11"
                            Foreground="{StaticResource TextMutedBrush}" />
             </StackPanel>

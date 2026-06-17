@@ -74,7 +74,7 @@
                            Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
                            Text="Auto-detects fullscreen games, apps, and presentation mode (via the same Windows signal that mutes toast notifications) and holds Foreman Agent Safety's on-screen popups and alarm windows so they don't barge in. It keeps detecting, logging, and escalating silently, and shows a digest of what it held when you exit the game." />
                 <CheckBox x:Name="GameModeBreakThroughCheck" Content="…but still let Critical alerts interrupt"
-                          Margin="40,4,0,0" />
+                          Margin="40,4,0,0" IsEnabled="{Binding IsChecked, ElementName=GameModeCheck}" />
             </StackPanel>
 
             <!-- ── MCP Server ────────────────────────────────────────────────── -->

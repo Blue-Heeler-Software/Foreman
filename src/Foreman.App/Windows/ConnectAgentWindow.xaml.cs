@@ -1,4 +1,6 @@
+using Foreman.Core.Events;
 using Foreman.Core.Integration;
+using Foreman.Core.Models;
 using Foreman.McpServer;
 using System.Windows;
 
@@ -248,6 +250,43 @@ public partial class ConnectAgentWindow : Window
             "this code within 2 minutes. The code never leaves your machine — the extension proves it holds the " +
             "code over a loopback challenge/response.",
             "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    // One-click repair: re-issue a fresh per-harness token to EVERY agent already configured here. Robust against
+    // a rotated install secret (which silently 401s every saved token) — each connector's Connect() overwrites
+    // its entry with the new token. Logged via the bus so it lands in the event log / OS event log next to the
+    // stale-token notice that prompted it.
+    private void ReconnectAllClick(object sender, RoutedEventArgs e)
+    {
+        var results = HarnessConnectors.ReissueConfigured(_port, _mint);
+        if (results.Count == 0)
+        {
+            MessageBox.Show(
+                "No agents are currently configured to use Foreman Agent Safety, so there's nothing to reconnect. " +
+                "Connect one using a card below.",
+                "Foreman Agent Safety — Reconnect agents", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var ok = results.Where(r => r.Status != ConnectStatus.Failed).Select(r => r.DisplayName).ToArray();
+        var failed = results.Where(r => r.Status == ConnectStatus.Failed).ToArray();
+
+        EventBus.Instance.Publish(new InfoEvent(
+            DateTimeOffset.UtcNow,
+            "Connect.Reissue",
+            $"Re-issued Foreman MCP tokens for {results.Count} configured agent(s): {string.Join(", ", results.Select(r => r.HarnessId))}."));
+
+        var msg = (ok.Length > 0
+                ? $"Re-issued a fresh token for: {string.Join(", ", ok)}.\n\nRestart those agents (or refresh their MCP server) to apply."
+                : "")
+            + (failed.Length > 0
+                ? $"\n\nCouldn't update: {string.Join("; ", failed.Select(f => $"{f.DisplayName} ({f.Message})"))}"
+                : "");
+        MessageBox.Show(msg.Trim(),
+            "Foreman Agent Safety — Reconnect agents",
+            MessageBoxButton.OK,
+            failed.Length > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        RefreshConnected();
     }
 
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
