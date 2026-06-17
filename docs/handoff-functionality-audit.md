@@ -12,6 +12,17 @@ timeout, populate `_items` from settings FIRST (independent of wake data), and o
 when/if it arrives; treat probe failure as "Wake n/a", never a block. Until then the main-tree build is
 unusable — a clean build is running from a `HEAD` worktree as a stopgap (`W:\TOOLS\Foreman-head`).
 
+## ⚠️ Committed dashboard is half-wired — overview cards/click need uncommitted TrayController callbacks
+`DashboardWindow` (committed, `3d9e7fd`) calls `GetSettings`, `GetProcessesByHarness`, `GetPendingAskCount`,
+`GetWakeRequests` — but HEAD's `TrayController.OpenDashboardWindow` only wires `GetConnectedClients` /
+`GetRunningAgentCount` / `OpenConnectAgentRequested`. The rest (incl. `w.GetSettings = () => _settings;`)
+exist ONLY in the uncommitted `TrayController.cs`. Effects on any HEAD-only build: clicking a harness card
+does nothing (`OpenHarnessDetail` early-returns on null `GetSettings`), and per-card data (procs/usage/
+pending/wake) is missing. **Fix:** commit the dashboard callback wiring in `TrayController` alongside the
+HarnessesWindow async fix, so the committed dashboard is fully wired. Also: the overview filters
+`.Where(c => c.McpConnected)` (DashboardWindow.xaml.cs:259) — it shows only harnesses with a LIVE MCP
+session. Consider showing configured-but-offline harnesses dimmed so the operator sees all their agents.
+
 ## ⚠️ HEAD does not build standalone — committed code references an untracked file
 `src/Foreman.McpServer/ForemanMcpTools.cs` (committed, `get_audit_route`) references
 `AuditRouteResolver`, but `src/Foreman.Core/Alerts/AuditRouteResolver.cs` is **untracked** — so a fresh
