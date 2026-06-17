@@ -250,6 +250,12 @@ public sealed class ForemanSettings
     public Alerts.IdleThresholdScalingSettings IdleThresholdScaling { get; set; } = new();
 
     /// <summary>
+    /// Dead-man's switch (#62): when the operator is absent past a window while agents run, raise an
+    /// "operating unattended" notice. Opt-in. See <see cref="Security.DeadMansSwitchPolicy"/>.
+    /// </summary>
+    public Security.DeadMansSwitchSettings DeadMansSwitch { get; set; } = new();
+
+    /// <summary>
     /// OS-event-log blackbox handoff: mirror lifecycle (start/stop/crash) + security-significant events to the
     /// host OS event log (Windows Event Log / Linux journald) so Foreman's own record survives the app being
     /// killed or its files tampered. See <see cref="Notifications.OsEventLogForwarder"/>.
