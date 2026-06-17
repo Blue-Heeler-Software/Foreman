@@ -38,6 +38,8 @@ public partial class App : Application
     // We stamp the head into the OS event log at start and at clean stop so the next launch can detect a rollback.
     private string? _eventLogPath;
     private LogAnchor? _launchAnchor;
+    // TPM head-seal key handle (circle-back Phase B); held for the app's lifetime, disposed at exit.
+    private IDisposable? _headSealKey;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -118,6 +120,7 @@ public partial class App : Application
         var priorShutdown = LifecycleForensics.ClassifyFrom(recentOsLog);
         var anchorVerdict = AnchorVerdict.NoPriorAnchor;
         LogAnchor? witnessedAnchor = null;
+        string? headSealNotice = null;   // Phase B: a head-seal key-change warning to publish once the bus/tray are live.
 
         // Mirror the security-significant event stream to the OS event log (blackbox handoff). Lifecycle events
         // are written directly (below); this forwarder handles escalations/detections/violations, redacted.
@@ -142,8 +145,12 @@ public partial class App : Application
         // session-scoped so reloading the log never resurrects old alerts as "active".
         if (settings.EventLogPersist)
         {
-            // P1: tamper-evident hash chain (no-op head signer until P3 adds the TPM seal).
-            var eventLog = new EventLogStore(integrity: settings.LogIntegrity, signer: new NullHeadSigner());
+            // Tamper-evident hash chain + the TPM-backed signed head (Phase B). Falls back to unsigned on a box
+            // with no usable Platform Crypto Provider; TOFU-pins the key's public half on first run.
+            var headSeal = HeadSealFactory.Build(settings, SettingsStore.Save);
+            _headSealKey = headSeal.Owns;
+            headSealNotice = headSeal.Notice;
+            var eventLog = new EventLogStore(integrity: settings.LogIntegrity, signer: headSeal.Signer);
             // Verify the PRIOR-session chain before we append anything this session; surface tamper as a
             // High notice rather than throwing into startup (a pre-chain "legacy" log verifies clean).
             var integrity = eventLog.Verify();
@@ -457,6 +464,12 @@ public partial class App : Application
                 "signature of a forced kill. " + (restartedByOs ? "Windows auto-restarted Foreman. " : "") +
                 "Monitoring has resumed; review what a monitored agent was doing when Foreman stopped."));
 
+        // Phase B: the TPM head-seal key no longer matches the pinned public key (TPM reset / profile move / key
+        // substitution). High — new seals won't verify until the key is re-pinned.
+        if (headSealNotice is { } sealNotice)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.LogIntegrity", sealNotice));
+
         // first-run dialog deferred to idle so it doesn't block server startup
         var port = settings.McpPort;
         var mcpToken = _mcpHost.McpToken;
@@ -603,6 +616,7 @@ public partial class App : Application
         _cts?.Cancel();
         _alertResolver?.Dispose();
         _toolScan?.Dispose();
+        _headSealKey?.Dispose();
         _sidecar?.Dispose();
         _mcpHost?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
         _monitor?.Dispose();
