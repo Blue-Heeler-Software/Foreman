@@ -17,6 +17,7 @@ import { callMcpTool, openMcpSession } from './mcp-client.js';
 let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '' };
 let connected = false;
 let lastStatus = null;          // last foreman_status payload (or null)
+let lastAsks = [];              // pending Ask-Harness requests scoped to this extension
 let lastMcpError = null;
 let sidePanelPort = null;
 let pollTimer = null;
@@ -79,22 +80,38 @@ async function ensureMcpSession() {
     return mcpSession;
 }
 
-async function mcpStatus() {
+// Single place that opens (or reuses) the MCP session and calls a tool. On any failure it drops the cached
+// session so the next call reopens — Foreman uses short-lived per-request sessions, so a stale id is expected.
+async function mcpCall(name, args = {}) {
     if (!cfg.token) return null;
     try {
         const session = await ensureMcpSession();
-        return await callMcpTool(session, 'foreman_status');
+        return await callMcpTool(session, name, args);
     } catch (e) {
-        mcpSession = null;   // stale session — reopen on next poll
+        mcpSession = null;
         lastMcpError = String(e?.message || e);
         return null;
     }
 }
 
+// Reply to one Ask-Harness prompt. Surfaced to the side panel; returns {ok} so the UI can confirm.
+async function replyAsk(requestId, response) {
+    if (!requestId || !response?.trim()) return { ok: false, error: 'Empty reply.' };
+    const r = await mcpCall('reply_to_ask_harness_request', { requestId, response: response.trim() });
+    const ok = r && r.accepted !== false && !r.error;
+    // NB: caller posts the ask-reply-result FIRST, then refreshes — so the panel's "✓ Reply sent"
+    // confirmation lands before the status rebuild removes the (now answered) card.
+    return ok ? { ok: true } : { ok: false, error: (r && (r.reason || r.error)) || lastMcpError || 'Reply was not accepted.' };
+}
+
 async function refresh() {
     connected = await checkHealth();
     lastMcpError = null;
-    lastStatus = connected ? await mcpStatus() : null;
+    lastStatus = connected ? await mcpCall('foreman_status') : null;
+    // The inbox is scoped to THIS extension's harness ("browser-extension") by the token — it only ever shows
+    // prompts Foreman routed to us, never a sibling's. Empty until orchestration routes work to the browser.
+    const asks = connected && cfg.token ? await mcpCall('list_ask_harness_requests', { includeAnswered: false, limit: 10 }) : null;
+    lastAsks = Array.isArray(asks?.requests) ? asks.requests : [];
     broadcast();
 }
 
@@ -109,7 +126,8 @@ function startPolling() {
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== 'foreman-sidepanel') return;
     sidePanelPort = port;
-    broadcast();
+    broadcast();                 // show last-known state immediately…
+    refresh();                   // …then pull fresh status + inbox (the SW may have been suspended)
     port.onMessage.addListener(async (msg) => {
         if (msg?.kind === 'pair') {
             const r = await pair(msg.code);
@@ -117,6 +135,10 @@ chrome.runtime.onConnect.addListener((port) => {
         } else if (msg?.kind === 'refresh') {
             mcpSession = null;
             await refresh();
+        } else if (msg?.kind === 'ask-reply') {
+            const r = await replyAsk(msg.requestId, msg.response);
+            safePost({ kind: 'ask-reply-result', requestId: msg.requestId, ...r });   // confirm first…
+            if (r.ok) await refresh();                                                // …then drop the answered card
         }
     });
     port.onDisconnect.addListener(() => { if (sidePanelPort === port) sidePanelPort = null; });
@@ -130,6 +152,7 @@ function broadcast() {
         verified: !!cfg.token && connected && !!lastStatus,
         base: base(),
         status: lastStatus,
+        asks: lastAsks,
         mcpError: lastMcpError,
     });
 }

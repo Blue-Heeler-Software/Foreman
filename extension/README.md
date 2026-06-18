@@ -4,15 +4,23 @@ A Manifest V3 extension that links your browser to the **local** Foreman desktop
 closed-loop, on-device design in [`../docs/closed-loop-spec.md`](../docs/closed-loop-spec.md). Nothing it does
 ever touches the network: it talks only to `http://127.0.0.1:54321`.
 
-> **Status: pairing + MCP status working.** Pairing, `/health` liveness, and `foreman_status` over streamable
-> HTTP are implemented in `mcp-client.js`. Reload the unpacked extension after pulling changes.
+> **Status: pairing + status + inbox + on-device Nano working** (alpha). Pairing, `/health` liveness,
+> `foreman_status`, the Ask-Harness inbox, and on-device Gemini Nano are implemented. Attestation (signed-release
+> hash verification at pairing) and icons are the remaining items. Reload the unpacked extension after pulling.
 
 ## What it does
 
 - **Pairing** (one-time): proves it holds Foreman's on-screen code via a challenge/response (HMAC; the code
   never crosses the wire), then stores the scoped bearer token Foreman issues and gets its origin allow-listed.
-- **Connected**: polls `/health`, calls `foreman_status` over MCP, shows a **`🔒 On-device · verified`** badge
-  and a structured status grid in the side panel.
+  The token is scoped to the `browser-extension` harness — the extension only ever sees/acts as itself, never a
+  sibling harness's data.
+- **Status**: polls `/health`, calls `foreman_status` over MCP, shows a **`🔒 On-device · verified`** badge
+  (the loopback handshake is verified; code-signing attestation is a later step) and a structured status grid.
+- **Ask-Harness inbox**: lists prompts Foreman routed to the browser (`list_ask_harness_requests`, scoped) and
+  lets you reply (`reply_to_ask_harness_request`). Empty until orchestration routes work to the browser.
+- **On-device AI (Gemini Nano)**: optional, never required. When Chrome's built-in model is present it can draft
+  a reply or summarise the status entirely on-device (nothing leaves the machine). Absent/sub-spec browsers show
+  `unavailable` and everything else still works (Pillar 1: Nano is the fast lane, not the gate).
 
 ## Load it
 
@@ -37,12 +45,14 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 |---|---|
 | `manifest.json` | MV3 manifest (loopback host_permissions, side panel, options) |
 | `mcp-client.js` | streamable-HTTP MCP client (`initialize` → `notifications/initialized` → `tools/call`) |
-| `background.js` | service worker: pairing, health poll, MCP session, side-panel port |
+| `background.js` | service worker: pairing, health poll, MCP session, inbox fetch/reply, side-panel port |
+| `nano.js` | on-device Gemini Nano adapter (availability detection + a constrained `prompt` turn) |
 | `settings.js` | `chrome.storage.local` helpers |
 | `options.html` / `options.js` | enter the pairing code |
-| `sidepanel.html` / `sidepanel.js` | status grid + the verified badge |
+| `sidepanel.html` / `sidepanel.js` | status grid, verified badge, Ask-Harness inbox, on-device summary |
 
 ## TODO (next iterations)
 
-- Add the on-device Gemini Nano tiered-inference path (modalities) + the publicly-attested release verification.
-- Icons.
+- **Attestation** (closed-loop spec step 4): SignPath-sign the extension, publish `version → hash → signature`,
+  and have `Foreman.exe` verify the running extension's hash at pairing. Needs SignPath live (#41).
+- Icons (toolbar + store).

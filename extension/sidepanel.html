@@ -7,6 +7,7 @@
     #badge { font-size: 15px; font-weight: 700; padding: 8px 10px; border-radius: 8px; text-align: center; }
     .ok { background: #10391f; color: #4ade80; }
     .warn { background: #3a2a10; color: #fbbf24; }
+    #badge.bad { background: #3a1010; color: #f87171; }
     #hint { color: #6b7280; font-size: 11px; text-align: center; margin: 6px 0 12px; }
     pre { background: #15181d; border: 1px solid #2a2f37; border-radius: 6px; padding: 10px; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto; }
     #status { min-height: 120px; }
@@ -20,7 +21,19 @@
     .err { color: #fca5a5; border-color: #4a2020; }
     .warn-text { color: #fbbf24 !important; }
     button { width: 100%; background: #15181d; color: #e6e8ec; border: 1px solid #2a2f37; border-radius: 6px; padding: 8px; cursor: pointer; margin-bottom: 10px; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.primary { background: #10391f; color: #4ade80; border-color: #1c5631; }
     a { color: #4ade80; cursor: pointer; }
+    .section { margin-top: 16px; }
+    .section > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; }
+    .nano-state { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; text-transform: none; letter-spacing: 0; }
+    .ask { background: #15181d; border: 1px solid #2a2f37; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+    .ask .prompt { font-size: 12px; color: #cbd2da; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px; }
+    .ask .meta { font-size: 10px; color: #6b7280; margin-bottom: 6px; }
+    textarea { width: 100%; box-sizing: border-box; background: #0d0f12; color: #e6e8ec; border: 1px solid #2a2f37; border-radius: 6px; padding: 7px; font-size: 12px; font-family: inherit; resize: vertical; min-height: 48px; }
+    .ask .row { display: flex; gap: 8px; margin-top: 6px; }
+    .ask .row button { margin-bottom: 0; }
+    #nanoOut { font-size: 12px; color: #cbd2da; white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -28,6 +41,18 @@
   <div id="hint"></div>
   <button id="refresh">Refresh</button>
   <div id="status"></div>
-  <script src="sidepanel.js"></script>
+
+  <div class="section" id="inboxSection" hidden>
+    <h2>Ask Harness inbox</h2>
+    <div id="inbox"></div>
+  </div>
+
+  <div class="section" id="nanoSection" hidden>
+    <h2>On-device AI <span id="nanoState" class="nano-state warn">checking…</span></h2>
+    <button id="nanoExplain">Explain my status (on-device)</button>
+    <div id="nanoOut" class="muted" hidden></div>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
 </body>
 </html>
