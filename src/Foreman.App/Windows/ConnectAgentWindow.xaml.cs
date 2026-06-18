@@ -249,10 +249,17 @@ public partial class ConnectAgentWindow : Window
             return;
         }
         var code = _beginPairing();
+        var copied = false;
+        try { Clipboard.SetText(code); copied = true; } catch { /* clipboard busy — code is still shown below */ }
+        StatusText.Text = copied
+            ? $"Pairing code {code} copied — paste it into the extension's Options page within 2 minutes."
+            : $"Pairing code: {code} — enter it in the extension's Options page within 2 minutes.";
         MessageBox.Show(
-            $"Pairing code:\n\n        {code}\n\nIn the Foreman browser extension, open its Options page and enter " +
-            "this code within 2 minutes. The code never leaves your machine — the extension proves it holds the " +
-            "code over a loopback challenge/response.",
+            $"Pairing code:\n\n        {code}\n\n" +
+            (copied ? "(Copied to your clipboard.) " : "") +
+            "In the Foreman browser extension, open its Options page and paste this code within 2 minutes. " +
+            "The code never leaves your machine — the extension proves it holds the code over a loopback " +
+            "challenge/response.",
             "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
