@@ -94,4 +94,37 @@ public sealed class PairingManagerTests
         Assert.True(mgr.Complete(Ext, ChallengeResponse.Respond(code, ch)).Ok);
         Assert.False(mgr.Complete(Ext, ChallengeResponse.Respond(code, ch)).Ok);
     }
+
+    // ── AutoComplete: code-free pairing during an armed window (opt-in auto-connect) ──────────────
+    [Fact]
+    public void AutoComplete_DuringArmedWindow_ExtensionOrigin_Pairs()
+    {
+        var (mgr, _) = New();
+        mgr.Begin();                       // operator armed the window (no code needed for auto)
+        var result = mgr.AutoComplete(Ext);
+        Assert.True(result.Ok);
+        Assert.Equal(Ext, result.Origin);
+        Assert.False(mgr.IsPending);       // single-use: consumes the window
+    }
+
+    [Fact]
+    public void AutoComplete_NoArmedWindow_Fails()
+        => Assert.False(New().mgr.AutoComplete(Ext).Ok);   // can't auto-pair unless the operator armed a window
+
+    [Fact]
+    public void AutoComplete_NonExtensionOrigin_Fails()
+    {
+        var (mgr, _) = New();
+        mgr.Begin();
+        Assert.False(mgr.AutoComplete("https://evil.com").Ok);
+    }
+
+    [Fact]
+    public void AutoComplete_AfterExpiry_Fails()
+    {
+        var (mgr, clock) = New(TimeSpan.FromMinutes(2));
+        mgr.Begin();
+        clock.Now += TimeSpan.FromMinutes(3);
+        Assert.False(mgr.AutoComplete(Ext).Ok);
+    }
 }

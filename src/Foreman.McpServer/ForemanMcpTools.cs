@@ -665,6 +665,32 @@ public static class ForemanMcpTools
         [Description("Harness ID, e.g. 'claude-code' or 'codex'")] string harnessId)
     {
         var state = _state ?? new ForemanState();
+
+        // LiveWeave is a paired BROWSER EXTENSION, not a config-file harness — it has no MCP config to write.
+        // Surface how it connects (pairing) AND how any already-connected agent drives it (the broker tools),
+        // so the render/edit-a-page capability is discoverable from the standard instructions tool.
+        if (string.Equals(harnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
+        {
+            var lw = state.LiveWeave.IsConnected;
+            return new
+            {
+                harnessId = "liveweave",
+                displayName = "LiveWeave",
+                description = "Render & edit web pages via on-device Nano, controllable by your agents through Foreman.",
+                connectionType = "browser-extension-pairing",
+                connected = lw,
+                howToConnect = "LiveWeave connects by PAIRING, not a config file. In Foreman, open Connect agent → Pair LiveWeave extension to get a short code, then in Chrome open LiveWeave's Options, enable \"Allow Foreman MCP\", and enter the code within 2 minutes. The code never crosses the wire (loopback challenge/response).",
+                howAgentsDriveIt = new
+                {
+                    note = "Once LiveWeave is paired, ANY agent already connected to Foreman's MCP (codex, claude-code, cursor, …) can render/edit pages through it — no extra setup per agent.",
+                    checkStatus = "Call liveweave_status to confirm the extension is linked before issuing commands.",
+                    sendCommand = "Call liveweave_command(action, parametersJson) to enqueue a builder action; it returns a commandId.",
+                    getResult = "Call liveweave_command_result(commandId) to fetch the outcome.",
+                },
+                note = "Pairing tokens are minted for the 'liveweave' harness; only the LiveWeave extension may poll/complete its command queue.",
+            };
+        }
+
         var integration = HarnessIntegrationRegistry.Get(harnessId);
         if (integration is null)
             return new { error = $"No integration metadata for harness '{harnessId}'." };
@@ -948,6 +974,163 @@ public static class ForemanMcpTools
             summary,
             findings = scoped.Select(f => new { f.Server, f.Tool, f.Signal, f.Excerpt }).ToArray(),
         };
+    }
+
+    // ── LiveWeave builder broker ─────────────────────────────────────────────
+
+    [McpServerTool, Description(
+        "Returns LiveWeave webpage builder connection status. The LiveWeave Chrome extension polls Foreman " +
+        "when paired; agents use liveweave_command to enqueue builder actions.")]
+    public static object LiveweaveStatus()
+    {
+        var state = _state ?? new ForemanState();
+        return state.LiveWeave.DescribeStatus();
+    }
+
+    [McpServerTool, Description(
+        "Enqueue a LiveWeave builder command for the paired Chrome extension. Actions: " +
+        "new_canvas, tab_info, scan, apply_page (html,css,title), apply_section (html,css,placement), " +
+        "apply_inner (path,html,css), undo, start_builder, stop_builder, generate (mode,instruction — needs Nano). " +
+        "Returns commandId; call liveweave_command_result to fetch the outcome.")]
+    public static object LiveweaveCommand(
+        [Description("Builder action name")] string action,
+        [Description("Optional JSON object of parameters, e.g. {\"html\":\"<main>...</main>\",\"instruction\":\"...\"}")] string? parametersJson = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate)
+            return new { accepted = false, reason = "Refused: token/process identity mismatch." };
+
+        if (string.IsNullOrWhiteSpace(action))
+            return new { accepted = false, reason = "action is required." };
+
+        // Driver gate: LiveWeave only executes commands from the harness its operator chose (or any, if unset).
+        // The operator (install token) may always drive. Enforced here so a non-chosen harness gets told why.
+        var who = caller.IsOperator ? "operator" : caller.HarnessId;
+        if (!state.LiveWeave.CanDrive(who, caller.IsOperator))
+            return new { accepted = false,
+                reason = $"LiveWeave is currently accepting commands only from '{state.LiveWeave.Driver}'. " +
+                         "Ask the operator to select your harness as LiveWeave's driver." };
+
+        IReadOnlyDictionary<string, object?> parameters;
+        try
+        {
+            parameters = ParseLiveWeaveParameters(parametersJson);
+        }
+        catch (Exception ex)
+        {
+            return new { accepted = false, reason = $"Invalid parametersJson: {ex.Message}" };
+        }
+
+        var commandId = state.LiveWeave.Enqueue(action, parameters, who);
+        return new
+        {
+            accepted = true,
+            commandId,
+            action = action.Trim().ToLowerInvariant(),
+            hint = "Poll liveweave_command_result(commandId). LiveWeave extension must be open and paired.",
+        };
+    }
+
+    [McpServerTool, Description("Returns the result of a LiveWeave command enqueued via liveweave_command.")]
+    public static object LiveweaveCommandResult(
+        [Description("commandId from liveweave_command")] string commandId)
+    {
+        var state = _state ?? new ForemanState();
+        if (string.IsNullOrWhiteSpace(commandId))
+            return new { found = false, reason = "commandId is required." };
+
+        var cmd = state.LiveWeave.GetCommand(commandId.Trim());
+        if (cmd is null)
+            return new { found = false, reason = "Unknown commandId." };
+
+        return new
+        {
+            found = true,
+            commandId = cmd.CommandId,
+            action = cmd.Action,
+            status = cmd.Status.ToString().ToLowerInvariant(),
+            result = cmd.Result,
+            error = cmd.Error,
+            createdAt = cmd.CreatedAt,
+            completedAt = cmd.CompletedAt,
+        };
+    }
+
+    [McpServerTool, Description("LiveWeave extension only: poll pending builder commands.")]
+    public static object LiveweavePollCommands(
+        [Description("Max commands to return")] int limit = 5,
+        [Description("Optional JSON tab info snapshot from the extension")] string? tabInfoJson = null,
+        [Description("Nano availability: available|downloadable|downloading|unavailable")] string? nanoStatus = null,
+        [Description("The one harness id LiveWeave accepts commands from (its operator's choice); empty/'any' = accept all")] string? driverHarness = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator && !string.Equals(caller.HarnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
+            return new { commands = Array.Empty<object>(), reason = "Only the liveweave harness may poll commands." };
+
+        // The extension (the thing being driven) declares which harness it accepts commands from. "any" / empty
+        // clears the restriction. Stored on the broker so liveweave_command can reject a non-chosen harness up front.
+        state.LiveWeave.SetDriver(string.Equals(driverHarness, "any", StringComparison.OrdinalIgnoreCase) ? null : driverHarness);
+
+        object? tabInfo = null;
+        if (!string.IsNullOrWhiteSpace(tabInfoJson))
+        {
+            try { tabInfo = JsonSerializer.Deserialize<object>(tabInfoJson); }
+            catch { /* ignore malformed heartbeat */ }
+        }
+        state.LiveWeave.UpdatePresence(tabInfo, nanoStatus);
+
+        var batch = state.LiveWeave.Poll(limit);
+        return new
+        {
+            commands = batch.Select(c => new
+            {
+                commandId = c.CommandId,
+                action = c.Action,
+                parameters = c.Parameters,
+            }).ToArray(),
+        };
+    }
+
+    [McpServerTool, Description("LiveWeave extension only: report command completion.")]
+    public static object LiveweaveCompleteCommand(
+        [Description("commandId being completed")] string commandId,
+        [Description("Whether the command succeeded")] bool ok,
+        [Description("Optional JSON result payload")] string? resultJson = null,
+        [Description("Error message when ok=false")] string? error = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate)
+            return new { accepted = false, reason = "Refused: token/process identity mismatch." };
+        if (!caller.IsOperator && !string.Equals(caller.HarnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
+            return new { accepted = false, reason = "Only the liveweave harness may complete commands." };
+
+        object? result = null;
+        if (!string.IsNullOrWhiteSpace(resultJson))
+        {
+            try { result = JsonSerializer.Deserialize<object>(resultJson); }
+            catch (Exception ex) { return new { accepted = false, reason = $"Invalid resultJson: {ex.Message}" }; }
+        }
+
+        var done = state.LiveWeave.Complete(commandId.Trim(), ok, result, error);
+        return new { accepted = done.Ok, reason = done.Reason };
+    }
+
+    private static IReadOnlyDictionary<string, object?> ParseLiveWeaveParameters(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new Dictionary<string, object?>();
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("parametersJson must be a JSON object.");
+        var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in doc.RootElement.EnumerateObject())
+            dict[prop.Name] = JsonSerializer.Deserialize<object>(prop.Value.GetRawText());
+        return dict;
     }
 
     private static object AskRequestShape(AskHarnessRequest request) => new

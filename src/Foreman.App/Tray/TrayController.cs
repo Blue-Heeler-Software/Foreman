@@ -78,6 +78,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — begins browser-extension pairing; returns the short on-screen code to show.</summary>
     public Func<string>?                                      BeginPairing          { get; set; }
 
+    /// <summary>Injected from App — true when the LiveWeave extension has checked in recently (broker presence).</summary>
+    public Func<bool>?                                        IsLiveWeaveConnected  { get; set; }
+
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
 
@@ -652,7 +655,8 @@ public sealed class TrayController : IEventSink, IDisposable
                     .Where(p => !string.IsNullOrEmpty(p.HarnessType))
                     .Select(p => p.HarnessType!)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray());
+                    .ToArray(),
+                IsLiveWeaveConnected);
             w.Closed += (_, _) => _connectWindow = null;
             _connectWindow = w;
             w.Show();

@@ -82,6 +82,24 @@ public sealed class PairingManager
         }
     }
 
+    /// <summary>
+    /// Auto-pair WITHOUT the on-screen code: succeeds if a pairing window is currently armed and the origin is a
+    /// browser extension. The operator's act of arming the window (clicking "Pair") is the consent — no code is
+    /// verified, so this is strictly weaker than <see cref="Complete"/> and the caller should only use it under an
+    /// explicit opt-in. Single-use: consumes the armed window like a successful Complete.
+    /// </summary>
+    public PairingResult AutoComplete(string? origin)
+    {
+        lock (_gate)
+        {
+            if (_code is null || _now() >= _expires) { Clear(); return PairingResult.Fail("No active pairing window."); }
+            if (!IsExtensionOrigin(origin)) return PairingResult.Fail("Origin is not a browser extension.");
+            var paired = origin!.TrimEnd('/');
+            Clear();
+            return PairingResult.Success(paired);
+        }
+    }
+
     public void Cancel() { lock (_gate) { Clear(); } }
 
     private void Clear() { _code = null; _challenge = null; _expires = default; }

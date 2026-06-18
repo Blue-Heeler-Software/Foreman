@@ -204,13 +204,14 @@ public sealed class McpServerHost : IAsyncDisposable
             if (!LoopbackRequestPolicy.IsLoopbackHost(c.Request.Host.Value))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
 
-            string? response = null, originBody = null;
+            string? response = null, originBody = null, harnessIdBody = null;
             try
             {
                 using var reader = new System.IO.StreamReader(c.Request.Body);
                 using var doc = System.Text.Json.JsonDocument.Parse(await reader.ReadToEndAsync().ConfigureAwait(false));
                 if (doc.RootElement.TryGetProperty("response", out var r)) response = r.GetString();
                 if (doc.RootElement.TryGetProperty("origin", out var o)) originBody = o.GetString();
+                if (doc.RootElement.TryGetProperty("harnessId", out var h)) harnessIdBody = h.GetString();
             }
             catch { /* malformed body — Complete fails below */ }
 
@@ -228,9 +229,63 @@ public sealed class McpServerHost : IAsyncDisposable
                 try { SettingsStore.Save(_settings); } catch { /* in-memory allow-list still applies this session */ }
             }
             // Pairing both allow-lists the origin AND issues a scoped token — /mcp still requires a bearer, and
-            // the extension has none until now. Scoped to "browser-extension" so it only sees/acts as itself.
-            var token = _authToken.MintHarnessToken("browser-extension");
-            return Results.Json(new { ok = true, origin = result.Origin, token });
+            // the extension has none until now. Default harness is browser-extension; LiveWeave sends harnessId=liveweave.
+            var harnessId = string.IsNullOrWhiteSpace(harnessIdBody) ? "browser-extension" : harnessIdBody.Trim();
+            if (!string.Equals(harnessId, "browser-extension", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(harnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Json(new { ok = false, reason = "Unsupported harnessId for extension pairing." },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+            var token = _authToken.MintHarnessToken(harnessId);
+            return Results.Json(new { ok = true, origin = result.Origin, token, harnessId });
+        });
+
+        // Auto-pair (opt-in, default on): a first-party extension links itself DURING an operator-armed window
+        // without the on-screen code. The operator's "Pair" click is the consent; the token is scoped. Strictly
+        // weaker than the code path (any loopback extension origin can grab a scoped token in that short window),
+        // so every auto-pair is announced (Medium) for visibility. Disable via settings.AllowAutoExtensionPairing.
+        _app.MapPost("/pair/auto", async (HttpContext c) =>
+        {
+            if (!LoopbackRequestPolicy.IsLoopbackHost(c.Request.Host.Value))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (!_settings.AllowAutoExtensionPairing)
+                return Results.Json(new { ok = false, reason = "Auto-pairing is disabled — use the on-screen code." },
+                    statusCode: StatusCodes.Status403Forbidden);
+
+            string? originBody = null, harnessIdBody = null;
+            try
+            {
+                using var reader = new System.IO.StreamReader(c.Request.Body);
+                using var doc = System.Text.Json.JsonDocument.Parse(await reader.ReadToEndAsync().ConfigureAwait(false));
+                if (doc.RootElement.TryGetProperty("origin", out var o)) originBody = o.GetString();
+                if (doc.RootElement.TryGetProperty("harnessId", out var h)) harnessIdBody = h.GetString();
+            }
+            catch { /* malformed → AutoComplete fails below */ }
+
+            var origin = c.Request.Headers.Origin.ToString();
+            if (string.IsNullOrEmpty(origin)) origin = originBody ?? "";
+
+            var result = _pairing.AutoComplete(origin);   // armed window + extension origin; no code; single-use
+            if (!result.Ok)
+                return Results.Json(new { ok = false, reason = result.Reason }, statusCode: StatusCodes.Status403Forbidden);
+
+            var harnessId = string.IsNullOrWhiteSpace(harnessIdBody) ? "browser-extension" : harnessIdBody.Trim();
+            if (!string.Equals(harnessId, "browser-extension", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(harnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
+                return Results.Json(new { ok = false, reason = "Unsupported harnessId for extension pairing." },
+                    statusCode: StatusCodes.Status403Forbidden);
+
+            if (!_settings.PairedExtensionOrigins.Contains(result.Origin!, StringComparer.OrdinalIgnoreCase))
+            {
+                _settings.PairedExtensionOrigins.Add(result.Origin!);
+                try { SettingsStore.Save(_settings); } catch { /* in-memory allow-list still applies this session */ }
+            }
+            var token = _authToken.MintHarnessToken(harnessId);
+            _bus.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Pairing",
+                $"Browser extension auto-paired as '{harnessId}' ({result.Origin}) during the pairing window. " +
+                "If you didn't initiate this, remove it from paired origins and disable auto-pairing in settings."));
+            return Results.Json(new { ok = true, origin = result.Origin, token, harnessId });
         });
 
         await _app.StartAsync(ct).ConfigureAwait(false);

@@ -63,6 +63,15 @@ public sealed class ForemanSettings
     /// </summary>
     public List<string> PairedExtensionOrigins { get; set; } = [];
 
+    /// <summary>
+    /// When true, a first-party browser extension may auto-pair over loopback DURING an operator-armed pairing
+    /// window without the on-screen code — the operator's act of clicking "Pair browser extension" is the consent,
+    /// and the extension receives only a SCOPED token. Strictly weaker than the code path (any loopback extension
+    /// origin can grab a scoped token within that short window), so each auto-pair is announced as a Medium notice.
+    /// Set false to require the on-screen code for every extension. Defaults on for one-click extension linking.
+    /// </summary>
+    public bool AllowAutoExtensionPairing { get; set; } = true;
+
     // ── Idle Harness self-cleanup ────────────────────────────────────────────
 
     /// <summary>

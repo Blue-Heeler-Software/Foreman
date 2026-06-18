@@ -19,10 +19,12 @@ public partial class ConnectAgentWindow : Window
     private readonly Func<IReadOnlyList<McpClientInfo>>? _getClients;
     private readonly Func<string>? _beginPairing;   // begins extension pairing, returns the on-screen code
     private readonly Func<IReadOnlyCollection<string>>? _getRunningHarnessIds;   // harness ids Foreman sees running now
+    private readonly Func<bool>? _isLiveWeaveConnected;   // true when the LiveWeave extension has checked in recently
 
     public ConnectAgentWindow(int port, string token, Func<IReadOnlyList<McpClientInfo>>? getClients,
                               Func<string, string>? mintToken = null, Func<string>? beginPairing = null,
-                              Func<IReadOnlyCollection<string>>? getRunningHarnessIds = null)
+                              Func<IReadOnlyCollection<string>>? getRunningHarnessIds = null,
+                              Func<bool>? isLiveWeaveConnected = null)
     {
         _port = port;
         _token = token;
@@ -30,6 +32,7 @@ public partial class ConnectAgentWindow : Window
         _getClients = getClients;
         _beginPairing = beginPairing;
         _getRunningHarnessIds = getRunningHarnessIds;
+        _isLiveWeaveConnected = isLiveWeaveConnected;
         InitializeComponent();
         Populate();
     }
@@ -74,6 +77,17 @@ public partial class ConnectAgentWindow : Window
             : "Connected now:\n" + string.Join("\n", clients.Select(c =>
                 $"  • {c.Name}{(string.IsNullOrWhiteSpace(c.Version) ? "" : $" v{c.Version}")} — " +
                 $"sampling: {(c.Sampling ? "yes" : "no")}"));
+
+        RefreshLiveWeaveStatus();
+    }
+
+    private void RefreshLiveWeaveStatus()
+    {
+        if (LiveWeaveStatusText is null) return;
+        var connected = _isLiveWeaveConnected?.Invoke() ?? false;
+        LiveWeaveStatusText.Text = connected
+            ? "● Connected — the LiveWeave builder is linked. Any agent on Foreman's MCP can drive it with liveweave_command."
+            : "○ Not connected — pair below, then open LiveWeave in Chrome with “Allow Foreman MCP” enabled.";
     }
 
     private void ConnectClaudeClick(object sender, RoutedEventArgs e)
@@ -239,28 +253,51 @@ public partial class ConnectAgentWindow : Window
         catch (Exception ex) { StatusText.Text = "Couldn't copy to the clipboard: " + ex.Message; }
     }
 
-    private void PairExtensionClick(object sender, RoutedEventArgs e)
+    private void PairExtensionClick(object sender, RoutedEventArgs e) =>
+        BeginPairingFlow(
+            title: "Foreman Agent Safety — Pair browser extension",
+            extraInstructions:
+                "In the Foreman browser extension, open its Options page and paste this code within 2 minutes. " +
+                "The code never leaves your machine — the extension proves it holds the code over a loopback " +
+                "challenge/response.\n\n" +
+                "The same code works for both the Foreman safety extension and LiveWeave — each declares which " +
+                "harness it is when it pairs.");
+
+    private void PairLiveWeaveClick(object sender, RoutedEventArgs e) =>
+        BeginPairingFlow(
+            title: "Foreman Agent Safety — Pair LiveWeave extension",
+            extraInstructions:
+                "Open LiveWeave in Chrome, go to its Options page, enable “Allow Foreman MCP”, and enter this code " +
+                "within 2 minutes. The code never leaves your machine — LiveWeave proves it holds the code over a " +
+                "loopback challenge/response.\n\n" +
+                "Once linked, any agent already connected to Foreman's MCP (Codex, Claude Code, Cursor, …) can " +
+                "render and edit pages by calling liveweave_status and liveweave_command — no extra per-agent setup.",
+            onPaired: RefreshLiveWeaveStatus);
+
+    // Shared pairing entry point: mint an on-screen code, copy it, and explain where to type it. The pairing code
+    // is harness-agnostic — the extension (safety or LiveWeave) declares its harnessId during /pair/complete — so
+    // both "Pair…" buttons funnel through here with only the on-screen copy differing.
+    private void BeginPairingFlow(string title, string extraInstructions, Action? onPaired = null)
     {
         if (_beginPairing is null)
         {
             MessageBox.Show(
                 "Pairing isn't available yet — the MCP server is still starting. Try again in a moment.",
-                "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Warning);
+                title, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         var code = _beginPairing();
         var copied = false;
         try { Clipboard.SetText(code); copied = true; } catch { /* clipboard busy — code is still shown below */ }
         StatusText.Text = copied
-            ? $"Pairing code {code} copied — paste it into the extension's Options page within 2 minutes."
+            ? $"Pairing code {code} copied — enter it in the extension's Options page within 2 minutes."
             : $"Pairing code: {code} — enter it in the extension's Options page within 2 minutes.";
         MessageBox.Show(
             $"Pairing code:\n\n        {code}\n\n" +
             (copied ? "(Copied to your clipboard.) " : "") +
-            "In the Foreman browser extension, open its Options page and paste this code within 2 minutes. " +
-            "The code never leaves your machine — the extension proves it holds the code over a loopback " +
-            "challenge/response.",
-            "Foreman Agent Safety — Pair browser extension", MessageBoxButton.OK, MessageBoxImage.Information);
+            extraInstructions,
+            title, MessageBoxButton.OK, MessageBoxImage.Information);
+        onPaired?.Invoke();
     }
 
     // One-click "connect everything": writes (or refreshes) the Foreman MCP entry — with a fresh scoped token —

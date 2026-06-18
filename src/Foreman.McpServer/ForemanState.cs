@@ -62,6 +62,9 @@ public sealed class ForemanState : IEventSink
     public int McpSessionCount => GetMcpSessionCount?.Invoke() ?? 0;
     public int PendingAskHarnessCount => _askRequests.Values.Count(static r => r.Status == AskHarnessStatus.Pending);
 
+    /// <summary>LiveWeave webpage builder command queue (agent → extension).</summary>
+    public LiveWeaveBroker LiveWeave { get; } = new();
+
     void IEventSink.OnEvent(ForemanEvent evt)
     {
         if (evt.Severity > ForemanSeverity.Info)

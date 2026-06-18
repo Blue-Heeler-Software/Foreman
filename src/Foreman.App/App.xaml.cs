@@ -221,6 +221,7 @@ public partial class App : Application
         _tray.GetMcpInventory               = () => _monitor.McpInventory.Current;
         _tray.GetPendingAskCount            = id => _mcpHost.State.CountAskHarnessRequests(id);
         _tray.BeginPairing                  = () => _mcpHost.BeginExtensionPairing();
+        _tray.IsLiveWeaveConnected          = () => _mcpHost.State.LiveWeave.IsConnected;
 
         // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a
         // forgotten one is a compile error). The ORIGINATING PROCESS section, escalation/profile display,

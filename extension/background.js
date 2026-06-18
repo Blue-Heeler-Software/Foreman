@@ -49,7 +49,7 @@ async function pair(code) {
         const done = await fetch(`${base()}/pair/complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response, origin: selfOrigin() }),
+            body: JSON.stringify({ response, origin: selfOrigin(), harnessId: 'browser-extension' }),
         });
         const body = await done.json().catch(() => ({}));
         if (!done.ok || !body.ok) return { ok: false, error: body.reason || `Pairing failed (${done.status}).` };

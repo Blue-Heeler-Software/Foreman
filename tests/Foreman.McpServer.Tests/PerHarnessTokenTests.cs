@@ -163,6 +163,7 @@ public sealed class CallerScopeToolTests : IDisposable
     private static readonly IHttpContextAccessor AsCodex  = Caller("codex", false);
     private static readonly IHttpContextAccessor AsClaude = Caller("claude-code", false);
     private static readonly IHttpContextAccessor AsOperator = Caller(null, true);
+    private static readonly IHttpContextAccessor AsLiveweave = Caller("liveweave", false);
     // A per-harness token presented by a different process than it claims (token theft) — may read its own, but
     // must never drive a mutation/kill.
     private static readonly IHttpContextAccessor AsCodexStolen =
@@ -392,5 +393,54 @@ public sealed class CallerScopeToolTests : IDisposable
         using var doc = J(ForemanMcpTools.RequestProcessKill(123456, http: AsCodex));
         Assert.Equal("not_found", doc.RootElement.GetProperty("status").GetString());
         Assert.Empty(_killed);
+    }
+
+    // ── LiveWeave driver gate: only the operator-chosen harness may drive the builder ────────────
+    [Fact]
+    public void LiveweaveCommand_NoDriverSet_AcceptsAnyHarness()
+    {
+        using var doc = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsCodex));
+        Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public void LiveweaveCommand_DriverSet_AcceptsChosen_RejectsOthers()
+    {
+        // The LiveWeave extension declares codex as its driver (via poll).
+        ForemanMcpTools.LiveweavePollCommands(driverHarness: "codex", http: AsLiveweave);
+
+        using var codex = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsCodex));
+        Assert.True(codex.RootElement.GetProperty("accepted").GetBoolean());
+
+        using var claude = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsClaude));
+        Assert.False(claude.RootElement.GetProperty("accepted").GetBoolean());
+
+        using var op = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsOperator));
+        Assert.True(op.RootElement.GetProperty("accepted").GetBoolean());   // operator always may
+    }
+
+    [Fact]
+    public void LiveweavePoll_OnlyLiveweaveHarnessMayPoll()
+    {
+        using var doc = J(ForemanMcpTools.LiveweavePollCommands(http: AsCodex));
+        Assert.True(doc.RootElement.TryGetProperty("reason", out _));
+    }
+
+    [Fact]
+    public void LiveweavePoll_DriverChangedAfterEnqueue_DropsStaleCommand()
+    {
+        ForemanMcpTools.LiveweavePollCommands(driverHarness: "claude-code", http: AsLiveweave);
+        using var enq = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsClaude));
+        Assert.True(enq.RootElement.GetProperty("accepted").GetBoolean());
+        var cmdId = enq.RootElement.GetProperty("commandId").GetString();
+
+        // Operator switches the driver to codex — the already-queued claude command must not be delivered…
+        ForemanMcpTools.LiveweavePollCommands(driverHarness: "codex", http: AsLiveweave);
+        using var poll = J(ForemanMcpTools.LiveweavePollCommands(driverHarness: "codex", http: AsLiveweave));
+        Assert.Empty(poll.RootElement.GetProperty("commands").EnumerateArray());
+
+        // …and is marked failed, so it doesn't sit pending forever.
+        using var res = J(ForemanMcpTools.LiveweaveCommandResult(cmdId!));
+        Assert.Equal("failed", res.RootElement.GetProperty("status").GetString());
     }
 }

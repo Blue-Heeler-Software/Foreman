@@ -280,7 +280,8 @@ public partial class DashboardWindow : Window, IEventSink
             settings, connectedClients, connectedCount, computerHarnesses, browserHarnesses, pendingTotal,
             // The browser extension authenticates as the "browser-extension" harness, so the same sticky
             // last-activity window that drives the agent cards tells us whether it's currently linked.
-            Connected("browser-extension"));
+            Connected("browser-extension"),
+            Connected("liveweave"));
 
         var runningIds = snapshot
             .Where(p => !string.IsNullOrEmpty(p.HarnessType))
@@ -595,7 +596,8 @@ public partial class DashboardWindow : Window, IEventSink
         IReadOnlyList<string> computerHarnesses,
         IReadOnlyList<string> browserHarnesses,
         int pendingAsk,
-        bool extConnected)
+        bool extConnected,
+        bool liveweaveConnected)
     {
         var sidecarOn = GetNetCaptureConnected?.Invoke() == true;
         var gameOn = GetGameModeActive?.Invoke() == true && settings.GameMode.Enabled;
@@ -627,6 +629,15 @@ public partial class DashboardWindow : Window, IEventSink
                     : extPaired
                         ? $"Browser extension paired ({settings.PairedExtensionOrigins.Count} origin(s)) but idle — open its side panel in Chrome to connect."
                         : "Browser extension not paired — use Connect agent → Pair browser extension."),
+            new DashboardMetaLightVm(
+                "LiveWeave",
+                liveweaveConnected ? MetaLightState.Ok
+                    : extPaired ? MetaLightState.Warn : MetaLightState.Off,
+                liveweaveConnected
+                    ? "LiveWeave builder linked — agents can use liveweave_command."
+                    : extPaired
+                        ? "LiveWeave paired origin exists but extension is idle — open LiveWeave in Chrome."
+                        : "LiveWeave not paired — pair LiveWeave extension via Connect agent → Pair browser extension."),
             new DashboardMetaLightVm(
                 "Sidecar",
                 sidecarOn ? MetaLightState.Ok
