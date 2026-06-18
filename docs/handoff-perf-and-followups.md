@@ -115,14 +115,29 @@ transient read failure at startup — e.g. AV churning the data-dir ACLs, a mome
 EVERY saved harness token AND the operator token, with no log line. Auth then can't even fall back to the disk
 secret if the lock persists into request time.
 
-Immediate recovery (no code change): a clean **Foreman restart** while `mcp.token` is readable — the new
-instance loads the correct secret and all harnesses authenticate on their next tool call. (NOT a harness
-restart, NOT a PC reboot.)
+UPDATE 2026-06-19 (CORRECTION — restarts do NOT fix it): two further `Foreman restart`s (PID 48508 -> 28472,
+both normal explorer launches, same user, NOT containerized — verified) reproduced the 401 identically. Foreman's
+own token middleware returns the 401 (body `{"error":"A valid Foreman MCP token is required..."}`, the
+McpServerHost.cs:141 Deny), so it is genuinely the token check failing on the correct on-disk secret. The live
+process is ALSO not writing its data dir (`events.log`/`mcp-setup.txt` stale, older than the process) though it
+logs fine to the Windows Event Log. So the Foreman PROCESS cannot read or write `%LocalAppData%\Foreman` while a
+trusted process (PowerShell, explorer) can — it boots on a throwaway secret AND the disk-fallback read also fails.
+The event log shows ROLLBACK + hash-chain-break alerts: the operator's Bitdefender quarantine-restore reverted
+Foreman's data files to an earlier state. STRONGLY INDICATED cause: Bitdefender folder/ransomware protection is
+blocking the unsigned dev `Foreman.exe` from its own AppData (BD blocks are NOT surfaced to the Windows Event
+Log, which is why no AV-block event appears). Not 100% confirmed without the BD console.
 
-Real fix (App/McpServer rebuild, AV-pin-blocked): make `LoadOrCreate` fail loud instead of silently minting a
-throwaway when the file EXISTS but is unreadable — retry with backoff, and if it still can't read an existing
-token file, log a High event and refuse to serve `/mcp` (return a clear 503 "token unreadable") rather than
-booting on a secret that guarantees every client 401s. Never mint-fresh over an existing-but-locked file.
+Recovery (NOT another Foreman restart — proven futile): (1) try-before-reboot — add `Foreman.exe` AND
+`%LocalAppData%\Foreman` to Bitdefender's exclusions / trusted apps / ransomware-protection allow-list, then one
+Foreman restart, then curl-verify the operator token returns non-401. (2) Definitive — PC reboot (clears the AV
+pin + AV file-access state + stale handles, gives a clean auto-start), then rebuild current source, then relaunch.
+Re-seal the event log after (item C) since the rollback poisoned the chain baseline.
+
+Real fix (App/McpServer rebuild): make `LoadOrCreate` fail loud instead of silently minting a throwaway when the
+file EXISTS but is unreadable — retry with backoff, and if it still can't read an existing token file, log a High
+event and refuse to serve `/mcp` (return a clear 503 "token unreadable") rather than booting on a secret that
+guarantees every client 401s. Never mint-fresh over an existing-but-locked file. Consider a fixed/explicit data
+dir off the redirected/AV-sensitive path.
 
 ## G. Deferred: Codex cross-review handoff (operator chose "wait for reboot", 2026-06-19)
 
