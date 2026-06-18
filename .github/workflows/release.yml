@@ -67,9 +67,27 @@ jobs:
           -p:DebugType=none -p:DebugSymbols=false
           -o publish/sidecar
 
+      # Same story for the OPT-IN hardened guardian (separate process, installed on demand): its CopyGuardian
+      # target only stages it for *builds* (bin\), and the single-file app can't share its bundled runtime — so
+      # publish it separately, self-contained, into the guardian\ subfolder the app launches from
+      # (<app>\guardian\Foreman.Guardian.exe). Without this step the "Enable hardened guardian" action is
+      # unreachable in released builds (the install path returns "Reinstall Foreman Agent Safety").
+      # NOTE: when signing is enabled, add guardian/Foreman.Guardian.exe to the SignPath "app" artifact
+      # configuration so the guardian is signed alongside Foreman.exe (this payload is what gets signed below).
+      - name: Publish hardened guardian (self-contained)
+        run: >
+          dotnet publish src/Foreman.Guardian/Foreman.Guardian.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none -p:DebugSymbols=false
+          -o publish/guardian
+
       - name: Tidy publish payload
         shell: pwsh
-        run: Remove-Item publish/Foreman.EtwSidecar.* -ErrorAction SilentlyContinue   # stray P2P leftovers at root
+        run: |   # stray P2P leftovers at root
+          Remove-Item publish/Foreman.EtwSidecar.* -ErrorAction SilentlyContinue
+          Remove-Item publish/Foreman.Guardian.*  -ErrorAction SilentlyContinue
 
       # --- Sign the app payload (Foreman.exe + sidecar/Foreman.EtwSidecar.exe) BEFORE building the
       #     installer, so the installer embeds already-signed binaries. SignPath signs only the files
