@@ -321,4 +321,23 @@ public sealed class CallerScopeToolTests : IDisposable
         using var doc = J(ForemanMcpTools.ReportUsage(tokensUsed: 75, tokensBudget: 100, http: AsCodex));
         Assert.Equal(25, doc.RootElement.GetProperty("remainingPercent").GetDouble());   // (100-75)/100
     }
+
+    // ── ReportSuspiciousCommand: a scoped caller pre-checks against ITS OWN profile only ──────────
+    // It must not probe a sibling's enforcement posture (echoed profileName) nor frame a sibling via a
+    // sibling-attributed PermissionViolationEvent — the token identity wins over the params.
+    [Fact]
+    public void ReportSuspiciousCommand_CodexCaller_PinsToOwnHarness_IgnoresSiblingParams()
+    {
+        using var doc = J(ForemanMcpTools.ReportSuspiciousCommand(
+            "echo hello world", harnessId: "claude-code", profileName: "claude-code-default", http: AsCodex));
+        Assert.Equal("codex", doc.RootElement.GetProperty("harnessId").GetString());
+    }
+
+    [Fact]
+    public void ReportSuspiciousCommand_Operator_MayTargetNamedHarness()
+    {
+        using var doc = J(ForemanMcpTools.ReportSuspiciousCommand(
+            "echo hello world", harnessId: "claude-code", http: AsOperator));
+        Assert.Equal("claude-code", doc.RootElement.GetProperty("harnessId").GetString());
+    }
 }

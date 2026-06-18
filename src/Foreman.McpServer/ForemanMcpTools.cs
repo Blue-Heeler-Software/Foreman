@@ -81,7 +81,7 @@ public static class ForemanMcpTools
         var clients = state.GetMcpClients?.Invoke() ?? [];
         // A per-harness token sees only its OWN connection — not a roster of every sibling client.
         if (!caller.IsOperator)
-            clients = clients.Where(c => SseSessionManager.MatchesHarness(c.Name, null, caller.HarnessId)).ToList();
+            clients = clients.Where(c => SseSessionManager.MatchesHarness(c.Name, null, caller.HarnessId ?? string.Empty)).ToList();
         return new
         {
             count = clients.Count,
@@ -209,9 +209,16 @@ public static class ForemanMcpTools
         [Description("What the harness is trying to accomplish")] string context = "",
         [Description("Optional harness ID, e.g. 'claude-code' or 'codex'")] string? harnessId = null,
         [Description("Optional caller process ID for live profile attribution")] int? processId = null,
-        [Description("Optional explicit profile name, e.g. 'codex-default'")] string? profileName = null)
+        [Description("Optional explicit profile name, e.g. 'codex-default'")] string? profileName = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        // A per-harness token pre-checks against ITS OWN profile only. Pin harness/profile to the caller's
+        // token identity (mirroring GetMyPermissions) so it can't (a) probe a sibling's enforcement posture
+        // through the echoed profileName/profileBlocked/reason, nor (b) publish a sibling-attributed
+        // PermissionViolationEvent into the sealed log. Operator (install token) may target any harness.
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) { harnessId = caller.HarnessId; processId = null; profileName = null; }
         var profile = state.ResolveProfile(profileName, harnessId, processId);
         var resolvedHarness = state.ResolveHarnessId(harnessId, processId);
         var match = Core.Heuristics.CommandAnalyzer.Instance.Analyze(commandLine, profile: profile);
@@ -263,7 +270,10 @@ public static class ForemanMcpTools
             0
         ));
 
-        if (profileBlocked)
+        // The block decision above is always returned to the caller. But minting a durable, hash-chained,
+        // operator-visible PermissionViolationEvent is a mutation of the security record — gate it on
+        // CanMutate so a stolen (PeerMismatch) token can't forge violation noise to muddy the log.
+        if (profileBlocked && caller.CanMutate)
         {
             EventBus.Instance.Publish(new PermissionViolationEvent(
                 DateTimeOffset.UtcNow,
