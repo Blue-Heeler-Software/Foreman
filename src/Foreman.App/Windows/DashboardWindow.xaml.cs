@@ -823,12 +823,12 @@ public partial class DashboardWindow : Window, IEventSink
         {
             case MessageBoxResult.Yes:
                 if (!await _harnessView.SaveChanges())                  // denied → reverted; snap back to Harnesses tab
-                    Dispatcher.BeginInvoke(() => Tabs.SelectedItem = leftTab);
+                    _ = Dispatcher.BeginInvoke(() => Tabs.SelectedItem = leftTab);   // fire-and-forget UI re-select
                 break;
             case MessageBoxResult.No:     _harnessView.Revert();      break;
             case MessageBoxResult.Cancel:
                 // Re-select the Harnesses tab once this event settles.
-                Dispatcher.BeginInvoke(() => Tabs.SelectedItem = leftTab);
+                _ = Dispatcher.BeginInvoke(() => Tabs.SelectedItem = leftTab);   // fire-and-forget UI re-select
                 break;
         }
     }

@@ -56,7 +56,7 @@ public partial class AlertDetailWindow : Window
     private void AcknowledgeClick(object sender, RoutedEventArgs e)
     {
         _event.Acknowledged = true;
-        Services.OnOperatorAck?.Invoke(_event);   // adaptive-alert advisor learns from this human dismissal
+        Services?.OnOperatorAck?.Invoke(_event);   // adaptive-alert advisor learns from this human dismissal
         EventBus.Instance.Publish(new InfoEvent(
             DateTimeOffset.UtcNow,
             "Foreman",
