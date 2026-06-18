@@ -71,6 +71,15 @@ request is logged (watchdog-targeting = notable, usually benign).
   on the single-instance mutex then exits (interacts with watchdog-of-watchdog — do carefully).
 - **Reuse for the deferred cross-tree kill approval** (request_process_kill currently returns
   "operator_approval_required" + a Medium notice with no execute path — this channel is that execute path).
+- **Restart-harness (restart-harness:<id>)**: KILL already exists (`ProcessTreeTracker.KillHarness`, operator,
+  KillGuard-protected). RESTART = kill + relaunch from the captured ExecutablePath + CommandLine + cwd. HONEST
+  CAVEAT: relaunch is lossy for INTERACTIVE agents — re-spawning gives a fresh detached process, NOT the original
+  terminal/IDE session (conversation/workspace state is gone, won't reattach to the user's terminal). So surface
+  it as "Restart (fresh session)" with that warning, enabled only when a usable launch recipe exists; good for
+  daemon/launch-by-command agents (LM Studio, headless runners), leaky for terminal/GUI sessions. Operator can
+  hit it directly on a harness card; a harness can request it for a SIBLING via this channel (operator-gated —
+  sibling restart is a sabotage vector). NB: does NOT fix "restart to link" (B) — agent still links on first tool
+  call; this is for clearing stuck/hung agents + changes that truly need a relaunch.
 - NB: this is a primitive, not a fix for "Foreman got into a bad state" — the real drivers (A. process-tree
   leak, B. misleading "restart to link") are the actual reasons restarts feel necessary.
 
