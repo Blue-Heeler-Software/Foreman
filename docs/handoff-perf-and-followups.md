@@ -99,6 +99,31 @@ registry tweak (the exe currently only exists on `W:`).
 **Done already (not blocked):** `request_harness_review` outbound handoff tool (operator-only, Ask-Harness;
 commit on main). The integrity + restart diagnoses above are read-only findings.
 
+## H. BUG: MCP auth secret desyncs on restart -> ALL tokens 401 (observed 2026-06-19)
+
+Symptom: after a Foreman restart, every harness card shows "restart to link" at once and all MCP calls 401 —
+including the raw operator token. Verified root cause: the running server's auth secret did not match the
+on-disk `mcp.token`. Proof: the configured `fmh1.claude-code` token's MAC matches `HMAC(current mcp.token,
+"claude-code")`, and the file is readable (owner FullControl, clean 43 chars), yet both it and the raw
+operator token return 401 (a 401 is `Authenticate()` failing — LoopbackPolicy/peer-binding return 403). So the
+live process is on a different secret than the file.
+
+Mechanism: `McpAuthToken.LoadOrCreate` (McpAuthToken.cs:46) silently mints a throwaway random in-memory secret
+when it cannot read `mcp.token` (the read is wrapped in `catch { }`), and `WriteSetupFile`/persist are
+best-effort `catch {}` too (corroborated here: `mcp-setup.txt` was NOT refreshed on the 3:29 start). A
+transient read failure at startup — e.g. AV churning the data-dir ACLs, a momentary lock — therefore orphans
+EVERY saved harness token AND the operator token, with no log line. Auth then can't even fall back to the disk
+secret if the lock persists into request time.
+
+Immediate recovery (no code change): a clean **Foreman restart** while `mcp.token` is readable — the new
+instance loads the correct secret and all harnesses authenticate on their next tool call. (NOT a harness
+restart, NOT a PC reboot.)
+
+Real fix (App/McpServer rebuild, AV-pin-blocked): make `LoadOrCreate` fail loud instead of silently minting a
+throwaway when the file EXISTS but is unreadable — retry with backoff, and if it still can't read an existing
+token file, log a High event and refuse to serve `/mcp` (return a clear 503 "token unreadable") rather than
+booting on a secret that guarantees every client 401s. Never mint-fresh over an existing-but-locked file.
+
 ## G. Deferred: Codex cross-review handoff (operator chose "wait for reboot", 2026-06-19)
 
 The plan was to have Codex review how its own audit suggestions were implemented. It never landed and
