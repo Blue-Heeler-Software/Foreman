@@ -271,7 +271,16 @@
                                         Background="Transparent" Cursor="Hand"
                                         MouseLeftButtonUp="MetaLightClick">
                                 <Ellipse Width="8" Height="8" Fill="{Binding DotBrush}"
+                                         Visibility="{Binding DotVisibility}"
                                          VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <!-- Capability entries (computer/browser use) render the SAME amber C/B pill as
+                                     the per-harness cards, so the key is a real legend for those badges. -->
+                                <Border Visibility="{Binding GlyphVisibility}" Opacity="{Binding GlyphOpacity}"
+                                        CornerRadius="3" Padding="5,1" Background="#332608"
+                                        VerticalAlignment="Center" Margin="0,0,6,0">
+                                    <TextBlock Text="{Binding Glyph}" FontSize="10" FontWeight="Bold"
+                                               Foreground="#E8B23C" />
+                                </Border>
                                 <TextBlock Text="{Binding Label}" FontSize="10"
                                            Foreground="{StaticResource TextMutedBrush}"
                                            VerticalAlignment="Center" />

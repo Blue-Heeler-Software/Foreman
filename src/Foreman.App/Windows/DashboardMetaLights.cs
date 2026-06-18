@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Media;
 
 namespace Foreman.App.Windows;
@@ -12,11 +13,19 @@ public sealed class DashboardMetaLightVm
     public string ToolTip { get; }
     public Brush DotBrush { get; }
 
-    public DashboardMetaLightVm(string label, MetaLightState state, string toolTip)
+    /// <summary>Optional one-letter badge ("C"/"B") shown INSTEAD of the status dot, so this key entry uses the
+    /// SAME glyph as the per-harness card badge it explains. Null = plain status dot. Dimmed when State is Off.</summary>
+    public string? Glyph { get; }
+    public Visibility GlyphVisibility => Glyph is null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility DotVisibility   => Glyph is null ? Visibility.Visible   : Visibility.Collapsed;
+    public double GlyphOpacity        => State == MetaLightState.Off ? 0.4 : 1.0;
+
+    public DashboardMetaLightVm(string label, MetaLightState state, string toolTip, string? glyph = null)
     {
         Label = label;
         State = state;
         ToolTip = toolTip;
+        Glyph = glyph;
         DotBrush = state switch
         {
             MetaLightState.Ok    => new SolidColorBrush(Color.FromRgb(0x3F, 0xB9, 0x50)),

@@ -671,14 +671,16 @@ public partial class DashboardWindow : Window, IEventSink
                 computerHarnesses.Count > 0
                     ? $"Computer use (desktop control) available to: {string.Join(", ", computerHarnesses)}. " +
                       "These agents can move the mouse/keyboard and read the screen."
-                    : "No monitored agent has a computer-use (desktop-control) MCP server configured."),
+                    : "No monitored agent has a computer-use (desktop-control) MCP server configured.",
+                glyph: "C"),
             new DashboardMetaLightVm(
                 "Browser use",
                 browserHarnesses.Count > 0 ? MetaLightState.Warn : MetaLightState.Off,
                 browserHarnesses.Count > 0
                     ? $"Browser automation available to: {string.Join(", ", browserHarnesses)}. " +
                       "These agents can drive a real browser."
-                    : "No monitored agent has a browser-automation MCP server configured."),
+                    : "No monitored agent has a browser-automation MCP server configured.",
+                glyph: "B"),
             new DashboardMetaLightVm(
                 "MCP clients",
                 connectedCount > 0 ? MetaLightState.Ok : MetaLightState.Off,
