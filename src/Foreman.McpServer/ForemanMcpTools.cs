@@ -988,10 +988,12 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
-        "Enqueue a LiveWeave builder command for the paired Chrome extension. Actions: " +
-        "new_canvas, tab_info, scan, apply_page (html,css,title), apply_section (html,css,placement), " +
-        "apply_inner (path,html,css), undo, start_builder, stop_builder, generate (mode,instruction — needs Nano). " +
-        "Returns commandId; call liveweave_command_result to fetch the outcome.")]
+        "Drive the LiveWeave page builder — YOU are the generator: produce the HTML/CSS yourself and the extension " +
+        "applies it. Read structure with scan, then build/edit via apply_page (html,css,title), apply_section " +
+        "(html,css,placement), apply_inner (path,html,css), set_style (path,styles), set_background, outline, " +
+        "template, undo, new_canvas, start_builder/stop_builder. NOTE: 'generate' runs the browser's on-device " +
+        "model (a weak LOCAL fallback for when no agent is driving) — prefer supplying your own markup with apply_*. " +
+        "Returns commandId; poll liveweave_command_result for the outcome.")]
     public static object LiveweaveCommand(
         [Description("Builder action name")] string action,
         [Description("Optional JSON object of parameters, e.g. {\"html\":\"<main>...</main>\",\"instruction\":\"...\"}")] string? parametersJson = null,
@@ -1075,13 +1077,10 @@ public static class ForemanMcpTools
         // clears the restriction. Stored on the broker so liveweave_command can reject a non-chosen harness up front.
         state.LiveWeave.SetDriver(string.Equals(driverHarness, "any", StringComparison.OrdinalIgnoreCase) ? null : driverHarness);
 
-        object? tabInfo = null;
-        if (!string.IsNullOrWhiteSpace(tabInfoJson))
-        {
-            try { tabInfo = JsonSerializer.Deserialize<object>(tabInfoJson); }
-            catch { /* ignore malformed heartbeat */ }
-        }
-        state.LiveWeave.UpdatePresence(tabInfo, nanoStatus);
+        // Tab info is UNTRUSTED extension input that surfaces to the operator UI and the driving harness via
+        // liveweave_status — keep ONLY the known fields, capped and secret-redacted (a URL can carry a token),
+        // never the raw blob. nanoStatus is clamped to the known enum.
+        state.LiveWeave.UpdatePresence(SanitizeTabInfo(tabInfoJson), SanitizeNanoStatus(nanoStatus));
 
         var batch = state.LiveWeave.Poll(limit);
         return new
@@ -1110,16 +1109,52 @@ public static class ForemanMcpTools
         if (!caller.IsOperator && !string.Equals(caller.HarnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
             return new { accepted = false, reason = "Only the liveweave harness may complete commands." };
 
+        // The result flows back to the DRIVING harness (liveweave_command_result) and the operator UI — treat it
+        // as untrusted extension output: cap the size and secret-redact before it's stored/relayed.
         object? result = null;
         if (!string.IsNullOrWhiteSpace(resultJson))
         {
-            try { result = JsonSerializer.Deserialize<object>(resultJson); }
+            if (resultJson.Length > LiveWeaveMaxResultChars)
+                return new { accepted = false, reason = $"resultJson too large (cap {LiveWeaveMaxResultChars} chars)." };
+            try { result = JsonSerializer.Deserialize<object>(Core.Security.SecretRedactor.Redact(resultJson)); }
             catch (Exception ex) { return new { accepted = false, reason = $"Invalid resultJson: {ex.Message}" }; }
         }
 
-        var done = state.LiveWeave.Complete(commandId.Trim(), ok, result, error);
+        var done = state.LiveWeave.Complete(commandId.Trim(), ok, result, Core.Security.SecretRedactor.Redact(Truncate(error ?? string.Empty, 500)) is { Length: > 0 } e ? e : null);
         return new { accepted = done.Ok, reason = done.Reason };
     }
+
+    private const int LiveWeaveMaxResultChars = 64 * 1024;
+    private const int LiveWeaveMaxTabInfoChars = 4096;
+
+    // Untrusted tab info → keep ONLY the known fields, capped + secret-redacted (a URL can carry a token in its
+    // query/userinfo); drop everything else. Null on missing / oversized / malformed.
+    private static object? SanitizeTabInfo(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Length > LiveWeaveMaxTabInfoChars) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            string? Str(string k, int max) =>
+                doc.RootElement.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String
+                    ? Core.Security.SecretRedactor.Redact(Truncate(v.GetString() ?? string.Empty, max))
+                    : null;
+            bool? Flag(string k) =>
+                doc.RootElement.TryGetProperty(k, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? v.GetBoolean() : null;
+            return new { url = Str("url", 512), title = Str("title", 256), kind = Str("kind", 32), editable = Flag("editable") };
+        }
+        catch { return null; }
+    }
+
+    // Clamp the self-reported Nano availability to the known set so a compromised extension can't inject text here.
+    private static string? SanitizeNanoStatus(string? s) => s switch
+    {
+        "available" or "downloadable" or "downloading" or "unavailable" => s,
+        null or "" => null,
+        _ => "unknown",
+    };
 
     private static IReadOnlyDictionary<string, object?> ParseLiveWeaveParameters(string? json)
     {

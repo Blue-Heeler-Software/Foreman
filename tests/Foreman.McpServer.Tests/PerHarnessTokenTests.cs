@@ -443,4 +443,48 @@ public sealed class CallerScopeToolTests : IDisposable
         using var res = J(ForemanMcpTools.LiveweaveCommandResult(cmdId!));
         Assert.Equal("failed", res.RootElement.GetProperty("status").GetString());
     }
+
+    // ── Extension ingress is untrusted: sanitise/scope/cap everything the extension sends ─────────
+    [Fact]
+    public void LiveweavePoll_TabInfo_RedactsSecrets_KeepsOnlyKnownFields()
+    {
+        const string ghp = "ghp_0123456789abcdefghij0123456789abcdef";
+        ForemanMcpTools.LiveweavePollCommands(
+            tabInfoJson: $"{{\"url\":\"https://x.com/?token={ghp}\",\"title\":\"hi\",\"evil\":\"DROPME\"}}",
+            http: AsLiveweave);
+        using var status = J(ForemanMcpTools.LiveweaveStatus());
+        var raw = status.RootElement.GetRawText();
+        Assert.DoesNotContain(ghp, raw);       // secret-shaped text in the URL is redacted
+        Assert.DoesNotContain("DROPME", raw);  // unknown fields are dropped, not stored
+    }
+
+    [Fact]
+    public void LiveweavePoll_OversizedTabInfo_Dropped()
+    {
+        var big = "{\"url\":\"" + new string('a', 5000) + "\"}";
+        ForemanMcpTools.LiveweavePollCommands(tabInfoJson: big, http: AsLiveweave);
+        using var status = J(ForemanMcpTools.LiveweaveStatus());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, status.RootElement.GetProperty("tab").ValueKind);
+    }
+
+    [Fact]
+    public void LiveweaveComplete_OversizedResult_Rejected()
+    {
+        using var enq = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsOperator));
+        var id = enq.RootElement.GetProperty("commandId").GetString();
+        var big = "{\"x\":\"" + new string('a', 70000) + "\"}";
+        using var done = J(ForemanMcpTools.LiveweaveCompleteCommand(id!, ok: true, resultJson: big, http: AsLiveweave));
+        Assert.False(done.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public void LiveweaveComplete_RedactsSecretInResult()
+    {
+        const string ghp = "ghp_0123456789abcdefghij0123456789abcdef";
+        using var enq = J(ForemanMcpTools.LiveweaveCommand("scan", http: AsOperator));
+        var id = enq.RootElement.GetProperty("commandId").GetString();
+        ForemanMcpTools.LiveweaveCompleteCommand(id!, ok: true, resultJson: $"{{\"leaked\":\"{ghp}\"}}", http: AsLiveweave);
+        using var res = J(ForemanMcpTools.LiveweaveCommandResult(id!));
+        Assert.DoesNotContain(ghp, res.RootElement.GetRawText());   // result is redacted before it reaches the driver
+    }
 }
