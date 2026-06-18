@@ -57,6 +57,23 @@ Handled/non-fatal but noisy. **Fix candidates:** a cheap pre-flight reachability
 MCP client (skip 401/auth-required endpoints), or attribute+downgrade probe-originated unobserved exceptions.
 Needs a live run to verify (the scan monitor runs in the App) → do post-pin.
 
+## F. Operator-approval channel ("%harness% wants to X — Yes/No")
+
+Generalised "harness proposes a privileged action → operator approves → Foreman executes" channel. A harness
+must NEVER restart the watchdog (or kill a sibling) directly — it REQUESTS, the operator decides, and the
+request is logged (watchdog-targeting = notable, usually benign).
+
+- MCP (buildable): `request_operator_action(action, reason)`, `action ∈ {restart-foreman, restart-harness:<id>,
+  reconnect-extension, …}`. CanMutate-gated; reason redacted+capped; rate-limited/coalesced (spam = signal +
+  annoyance); logs a Medium MonitoringNoticeEvent.
+- App (post-reboot): a non-modal Yes/No toast "%harness% wants to %action% — <reason>" that MUST respect
+  game-mode (no focus steal). Only the operator's Yes executes. Self-restart = spawn a fresh instance that waits
+  on the single-instance mutex then exits (interacts with watchdog-of-watchdog — do carefully).
+- **Reuse for the deferred cross-tree kill approval** (request_process_kill currently returns
+  "operator_approval_required" + a Medium notice with no execute path — this channel is that execute path).
+- NB: this is a primitive, not a fix for "Foreman got into a bad state" — the real drivers (A. process-tree
+  leak, B. misleading "restart to link") are the actual reasons restarts feel necessary.
+
 ## E. Auto-start points at `W:` (MEDIUM alert)
 
 Foreman's HKCU Run entry targets the dev build on the non-system `W:` drive; if `W:` mounts late at sign-in,
