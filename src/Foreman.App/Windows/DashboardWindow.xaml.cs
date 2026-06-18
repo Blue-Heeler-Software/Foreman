@@ -672,7 +672,10 @@ public partial class DashboardWindow : Window, IEventSink
 
     private static Dictionary<string, int> BuildWakeMap(IReadOnlyList<ProcessRecord> snapshot, WakeRequestSnapshot wake)
     {
-        var byPid = snapshot.ToDictionary(p => p.Pid);
+        // PID reuse (and stale not-yet-pruned tree entries) means the snapshot can hold two records with the
+        // same Pid — plain ToDictionary throws "same key already added" and crashes the whole refresh. Keep the
+        // newest by start time.
+        var byPid = snapshot.GroupBy(p => p.Pid).ToDictionary(g => g.Key, g => g.OrderByDescending(p => p.StartTime).First());
         var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var request in wake.Requests.Where(r => string.Equals(r.RequesterType, "PROCESS", StringComparison.OrdinalIgnoreCase)))
         {

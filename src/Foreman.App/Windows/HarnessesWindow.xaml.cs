@@ -113,7 +113,9 @@ public partial class HarnessesWindow : UserControl
         if (wake is null || !wake.Available)
             return new WakeByHarness(false, new(StringComparer.OrdinalIgnoreCase), wake?.Error);
 
-        var byPid = snapshot.ToDictionary(p => p.Pid);
+        // PID reuse / stale tree entries can yield two records with the same Pid; plain ToDictionary throws and
+        // crashes the refresh. Keep the newest by start time.
+        var byPid = snapshot.GroupBy(p => p.Pid).ToDictionary(g => g.Key, g => g.OrderByDescending(p => p.StartTime).First());
         var byHarness = new Dictionary<string, List<WakeRequestEntry>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var request in wake.Requests.Where(r => IsProcessRequester(r.RequesterType)))
