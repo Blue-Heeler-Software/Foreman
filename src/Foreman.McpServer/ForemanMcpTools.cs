@@ -203,6 +203,71 @@ public static class ForemanMcpTools
         return new { events };
     }
 
+    [McpServerTool, Description(
+        "Asks Foreman to terminate a process on your behalf — the safe, attributed alternative to running " +
+        "taskkill/kill yourself. You may reap ONLY processes inside your OWN harness tree; Foreman executes the " +
+        "kill (you never hold the primitive) and records it as authorised, so it does NOT raise the alarm a raw " +
+        "kill would. Targeting a sibling harness or an unattributed PID is refused and escalated to the operator.")]
+    public static object RequestProcessKill(
+        [Description("PID of the process to terminate")] int pid,
+        [Description("Why you want it gone — recorded in the audit log and shown to the operator on cross-tree requests")] string reason = "",
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        var why = Core.Security.SecretRedactor.Redact(Truncate(reason ?? string.Empty, 200));
+
+        // A stolen / peer-mismatched per-harness token must never drive a kill, even of its own tree.
+        if (!caller.CanMutate)
+            return new { executed = false, status = "refused",
+                reason = "This per-harness token was presented by a different process than the harness it claims (possible token theft) — process control is refused." };
+
+        var target = state.GetProcess(pid);
+        if (target is null)
+            return new { executed = false, status = "not_found", reason = $"No tracked process with PID {pid}." };
+
+        // Attribute the target to its owning harness: the nearest harness ancestor (identity-pinned, OS-host-safe).
+        var owner = target.HarnessType is not null ? target : state.FindHarnessAncestorByPid?.Invoke(pid);
+        var ownerHarness = owner?.HarnessType;
+        var ownTree = ownerHarness is not null && caller.CanAccess(ownerHarness);
+
+        // Operator may target anything (still subject to the kill path's KillGuard); a scoped harness only its own tree.
+        if (caller.IsOperator || ownTree)
+        {
+            if (state.KillProcessByPid is null)
+                return new { executed = false, status = "unavailable", reason = "Process control is not wired in this Foreman build." };
+
+            // Record BEFORE issuing the kill so the detection layer finds the entry the instant the termination
+            // events fire — this is what keeps an authorised kill quiet.
+            state.ExpectedTerminations.Record(pid, target.StartTime, caller.HarnessId ?? "operator", why);
+            var killed = state.KillProcessByPid(pid, target.StartTime);
+
+            EventBus.Instance.Publish(new InfoEvent(
+                DateTimeOffset.UtcNow, "MCP.RequestProcessKill",
+                $"{(caller.IsOperator ? "operator" : caller.HarnessId)} {(killed ? "terminated" : "could not terminate")} '{target.Name}' (pid {pid}) via broker" +
+                $"{(ownTree && !caller.IsOperator ? " (own tree)" : "")}{(string.IsNullOrEmpty(why) ? "" : $" — {why}")}."));
+
+            return killed
+                ? new { executed = true, status = "killed", pid, name = target.Name, harnessId = ownerHarness }
+                : new { executed = false, status = "kill_failed", pid,
+                    reason = "The hardened kill path refused (protected process), or it had already exited / the PID was recycled." };
+        }
+
+        // Cross-tree or unattributed: do NOT execute. Surface it to the operator (Medium — visible, not alarming)
+        // and refuse. The approve-and-execute path is operator-driven (a later slice); a harness can't cross the
+        // boundary on its own, and repeated attempts are themselves a signal.
+        EventBus.Instance.Publish(new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow, ForemanSeverity.Medium, "MCP.RequestProcessKill",
+            $"'{caller.HarnessId ?? "an unknown harness"}' asked Foreman to kill '{target.Name}' (pid {pid})" +
+            $"{(ownerHarness is not null ? $" owned by '{ownerHarness}'" : " (unattributed)")} — OUTSIDE its own tree. Refused; approve in the Foreman UI if this is legitimate." +
+            $"{(string.IsNullOrEmpty(why) ? "" : $" Reason: {why}.")}"));
+
+        return new { executed = false, status = "operator_approval_required",
+            reason = ownerHarness is not null
+                ? $"'{target.Name}' (pid {pid}) belongs to harness '{ownerHarness}', not you. Foreman won't let one harness kill another's process — flagged for operator approval."
+                : $"'{target.Name}' (pid {pid}) isn't attributable to your tree. Cross-process kills need operator approval — flagged for the operator." };
+    }
+
     [McpServerTool, Description("Pre-flight check a command line. Foreman heuristically evaluates it and returns allow / allow_once / escalate / block.")]
     public static object ReportSuspiciousCommand(
         [Description("The command line to evaluate")] string commandLine,

@@ -43,6 +43,19 @@ public sealed class ForemanState : IEventSink
     /// <summary>Resets behavioral metrics for a specific harness ID. Returns false if not found.</summary>
     public Action<string>? ResetBehaviorProfile { get; set; }
 
+    /// <summary>
+    /// Terminates a process via Foreman's hardened kill path (KillGuard never-kill set + start-time identity pin).
+    /// Wired by the App to ProcessTreeTracker.KillProcess; null in tests / headless, where the broker reports the
+    /// capability as unavailable rather than pretending to kill. (pid, expectedStartTime) -> true if terminated.
+    /// </summary>
+    public Func<int, DateTimeOffset?, bool>? KillProcessByPid { get; set; }
+
+    /// <summary>
+    /// Terminations Foreman BROKERED for a harness (request_process_kill). Shared with the Monitor detection path
+    /// (via the App) so an authorised kill reads as expected/quiet while a raw, un-attributed kill stays loud.
+    /// </summary>
+    public Foreman.Core.Termination.ExpectedTerminationLedger ExpectedTerminations { get; } = new();
+
     public int ActiveAlerts => _alertById.Values.Count(AlertActivity.IsActive);
     public bool HasCritical => _alertById.Values.Any(e => AlertActivity.IsActive(e) && e.Severity >= ForemanSeverity.High);
     public int ProcessCount => GetProcessSnapshot?.Invoke().Count() ?? 0;

@@ -115,6 +115,7 @@ public sealed class CallerScopeToolTests : IDisposable
     private readonly ForemanState _state;
     private readonly ProcessRecord _codex, _codexChild, _claude;
     private string? _lastReset;
+    private readonly List<int> _killed = new();
 
     public CallerScopeToolTests()
     {
@@ -132,6 +133,7 @@ public sealed class CallerScopeToolTests : IDisposable
             FindHarnessAncestorByPid = pid => pid == _codexChild.Pid ? _codex : null,
             GetBehaviorProfiles = () => [new BehaviorProfile("codex"), new BehaviorProfile("claude-code")],
             ResetBehaviorProfile = id => _lastReset = id,
+            KillProcessByPid = (pid, _) => { _killed.Add(pid); return true; },
         };
         ForemanMcpTools.SetState(_state);
     }
@@ -161,6 +163,11 @@ public sealed class CallerScopeToolTests : IDisposable
     private static readonly IHttpContextAccessor AsCodex  = Caller("codex", false);
     private static readonly IHttpContextAccessor AsClaude = Caller("claude-code", false);
     private static readonly IHttpContextAccessor AsOperator = Caller(null, true);
+    // A per-harness token presented by a different process than it claims (token theft) — may read its own, but
+    // must never drive a mutation/kill.
+    private static readonly IHttpContextAccessor AsCodexStolen =
+        new FixedHttpContextAccessor { HttpContext = Ctx(new CallerScope("codex", IsOperator: false, PeerMismatch: true)) };
+    private static DefaultHttpContext Ctx(CallerScope s) { var c = new DefaultHttpContext(); c.Items[CallerScope.HttpItemKey] = s; return c; }
 
     private static JsonDocument J(object o) => JsonDocument.Parse(JsonSerializer.Serialize(o));
 
@@ -339,5 +346,51 @@ public sealed class CallerScopeToolTests : IDisposable
         using var doc = J(ForemanMcpTools.ReportSuspiciousCommand(
             "echo hello world", harnessId: "claude-code", http: AsOperator));
         Assert.Equal("claude-code", doc.RootElement.GetProperty("harnessId").GetString());
+    }
+
+    // ── Process broker: own-tree reaping is executed + recorded; cross-tree is refused; theft is refused ──────
+    [Fact]
+    public void RequestProcessKill_CodexCaller_ReapsOwnChild_AndRecordsExpected()
+    {
+        using var doc = J(ForemanMcpTools.RequestProcessKill(_codexChild.Pid, "runaway hook", http: AsCodex));
+        Assert.True(doc.RootElement.GetProperty("executed").GetBoolean());
+        Assert.Equal("killed", doc.RootElement.GetProperty("status").GetString());
+        Assert.Contains(_codexChild.Pid, _killed);
+        Assert.True(_state.ExpectedTerminations.WasExpected(_codexChild.Pid));   // authorised → reads as quiet
+    }
+
+    [Fact]
+    public void RequestProcessKill_CodexCaller_CannotKillSibling_EscalatesNotExecutes()
+    {
+        using var doc = J(ForemanMcpTools.RequestProcessKill(_claude.Pid, "stop the other agent", http: AsCodex));
+        Assert.False(doc.RootElement.GetProperty("executed").GetBoolean());
+        Assert.Equal("operator_approval_required", doc.RootElement.GetProperty("status").GetString());
+        Assert.DoesNotContain(_claude.Pid, _killed);
+        Assert.False(_state.ExpectedTerminations.WasExpected(_claude.Pid));   // not authorised → stays loud
+    }
+
+    [Fact]
+    public void RequestProcessKill_StolenToken_Refused_EvenOnOwnTree()
+    {
+        using var doc = J(ForemanMcpTools.RequestProcessKill(_codexChild.Pid, "x", http: AsCodexStolen));
+        Assert.False(doc.RootElement.GetProperty("executed").GetBoolean());
+        Assert.Equal("refused", doc.RootElement.GetProperty("status").GetString());
+        Assert.Empty(_killed);
+    }
+
+    [Fact]
+    public void RequestProcessKill_Operator_MayKillAnyTrackedPid()
+    {
+        using var doc = J(ForemanMcpTools.RequestProcessKill(_claude.Pid, "operator cleanup", http: AsOperator));
+        Assert.True(doc.RootElement.GetProperty("executed").GetBoolean());
+        Assert.Contains(_claude.Pid, _killed);
+    }
+
+    [Fact]
+    public void RequestProcessKill_UnknownPid_NotFound()
+    {
+        using var doc = J(ForemanMcpTools.RequestProcessKill(123456, http: AsCodex));
+        Assert.Equal("not_found", doc.RootElement.GetProperty("status").GetString());
+        Assert.Empty(_killed);
     }
 }
