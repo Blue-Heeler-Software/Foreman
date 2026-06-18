@@ -475,6 +475,56 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
+        "Operator orchestration: hand a review or task to ANOTHER harness — the OUTBOUND side of Ask Harness. " +
+        "Creates an Ask-Harness request for targetHarnessId and attempts live delivery to its MCP session " +
+        "(sampling/notification); if it holds no session, the target receives it on its next " +
+        "list_ask_harness_requests poll. Operator token ONLY — a per-harness token can't hand work to a sibling.")]
+    public static async Task<object> RequestHarnessReview(
+        [Description("Harness to review/act, e.g. 'claude-code'")] string targetHarnessId,
+        [Description("System prompt / role for the reviewing harness")] string systemPrompt,
+        [Description("The request or question to put to the reviewer")] string prompt,
+        [Description("Severity context for the review, e.g. Medium|High|Critical")] string severity = "High",
+        [Description("Why you're handing off — recorded in the audit log")] string reason = "",
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        // Cross-harness handoff is orchestration — operator only. A scoped harness can't drive a sibling (that's
+        // the scoping boundary); it stays in its own lane via report_* / reply_to_ask_harness_request.
+        if (!caller.IsOperator)
+            return new { ok = false, reason = "request_harness_review is operator-only — a per-harness token can't hand work to a sibling harness." };
+
+        var target = (targetHarnessId ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(target)) return new { ok = false, reason = "targetHarnessId is required." };
+        if (string.IsNullOrWhiteSpace(prompt)) return new { ok = false, reason = "prompt is required." };
+
+        // Redact at egress: operator-supplied text persists in the log and relays to the target harness.
+        var sys = Core.Security.SecretRedactor.Redact(systemPrompt ?? string.Empty);
+        var usr = Core.Security.SecretRedactor.Redact(prompt);
+        var why = Core.Security.SecretRedactor.Redact(Truncate(reason ?? string.Empty, 200));
+
+        var req = state.CreateAskHarnessRequest(target, sys, usr, alertId: "", processId: null, processName: null);
+        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "MCP.RequestHarnessReview",
+            $"Operator handed off a {severity} review to '{target}' (request {req.RequestId}){(string.IsNullOrEmpty(why) ? "" : $" — {why}")}."));
+
+        var delivered = "queued";
+        if (state.DeliverHarnessAsk is { } deliver)
+        {
+            try { delivered = await deliver(target, sys, usr, req.RequestId).ConfigureAwait(false); }
+            catch { delivered = "queued"; }
+        }
+        return new
+        {
+            ok = true,
+            requestId = req.RequestId,
+            targetHarnessId = target,
+            severity,
+            delivered,   // sampled | notified | no_session | queued
+            note = "Target receives this on its next list_ask_harness_requests poll; 'sampled'/'notified' = pushed to a live session.",
+        };
+    }
+
+    [McpServerTool, Description(
         "Lists pending Foreman 'Ask Harness' prompts for a harness. Call this when Foreman flags you, " +
         "when foreman_status or report_task_start reports pendingAskHarnessRequests, or at task boundaries. " +
         "Then answer each prompt with reply_to_ask_harness_request.")]

@@ -254,6 +254,19 @@ public partial class App : Application
                 _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId, ct),
         };
 
+        // Outbound handoff (request_harness_review): push the Ask to the target's live MCP session if it has one,
+        // else it's already queued for the target's next poll. Mirrors the auto-audit / idle-cleanup delivery.
+        _mcpHost.State.DeliverHarnessAsk = async (harnessId, sys, usr, requestId) =>
+        {
+            var res = await _mcpHost.Sessions.AskOffenderAsync(harnessId, sys, usr, requestId).ConfigureAwait(false);
+            return res.Outcome switch
+            {
+                AskOutcome.Sampled => "sampled",
+                AskOutcome.Notified => "notified",
+                _ => "no_session",
+            };
+        };
+
         // Idle Harness self-cleanup: detector (Monitor) ↔ Ask-Harness mailbox + live push (McpServer).
         // The cleanup request rides the same mailbox agents already poll (ListAskHarnessRequests).
         _monitor.IdleCleanup.CreateCleanupRequest = (harnessId, alertId, sys, usr, pid, name) =>

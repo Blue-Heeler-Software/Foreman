@@ -487,4 +487,40 @@ public sealed class CallerScopeToolTests : IDisposable
         using var res = J(ForemanMcpTools.LiveweaveCommandResult(id!));
         Assert.DoesNotContain(ghp, res.RootElement.GetRawText());   // result is redacted before it reaches the driver
     }
+
+    // ── request_harness_review: operator-only outbound handoff ────────────────────────────────────
+    [Fact]
+    public async System.Threading.Tasks.Task RequestHarnessReview_Operator_CreatesAndDelivers()
+    {
+        _state.DeliverHarnessAsk = (h, s, p, r) => System.Threading.Tasks.Task.FromResult("notified");
+        using var doc = J(await ForemanMcpTools.RequestHarnessReview("claude-code", "review this", "is X safe?", "High", "codex flagged it", http: AsOperator));
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("claude-code", doc.RootElement.GetProperty("targetHarnessId").GetString());
+        Assert.Equal("notified", doc.RootElement.GetProperty("delivered").GetString());
+        var rid = doc.RootElement.GetProperty("requestId").GetString();
+        Assert.NotNull(_state.GetAskHarnessRequest(rid!));   // queued for the target's mailbox too
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task RequestHarnessReview_ScopedCaller_Refused()
+    {
+        using var doc = J(await ForemanMcpTools.RequestHarnessReview("claude-code", "x", "y", http: AsCodex));
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());   // a harness can't hand work to a sibling
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task RequestHarnessReview_NoDeliveryHook_Queued()
+    {
+        _state.DeliverHarnessAsk = null;
+        using var doc = J(await ForemanMcpTools.RequestHarnessReview("claude-code", "x", "review", http: AsOperator));
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("queued", doc.RootElement.GetProperty("delivered").GetString());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task RequestHarnessReview_EmptyTarget_Rejected()
+    {
+        using var doc = J(await ForemanMcpTools.RequestHarnessReview("", "x", "y", http: AsOperator));
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+    }
 }

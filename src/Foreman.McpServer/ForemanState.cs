@@ -51,6 +51,14 @@ public sealed class ForemanState : IEventSink
     public Func<int, DateTimeOffset?, bool>? KillProcessByPid { get; set; }
 
     /// <summary>
+    /// Pushes an Ask-Harness request to a target's LIVE MCP session (sampling/notification) and returns a short
+    /// delivery status ("sampled" | "notified" | "no_session"). Wired by the App to SseSessionManager.AskOffenderAsync;
+    /// null in tests / headless, where request_harness_review just queues the request for the target's next poll.
+    /// (targetHarnessId, systemPrompt, prompt, requestId) -> status.
+    /// </summary>
+    public Func<string, string, string, string, Task<string>>? DeliverHarnessAsk { get; set; }
+
+    /// <summary>
     /// Terminations Foreman BROKERED for a harness (request_process_kill). Shared with the Monitor detection path
     /// (via the App) so an authorised kill reads as expected/quiet while a raw, un-attributed kill stays loud.
     /// </summary>
