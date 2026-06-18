@@ -13,6 +13,12 @@ public enum SettingsSealVerdict
     Tampered,
     /// <summary>No seal yet (first run / freshly upgraded) — adopt + seal, don't treat as tamper.</summary>
     Unsealed,
+    /// <summary>
+    /// A guardian-scheme seal was present but the guardian (the SYSTEM authority that holds the key) was
+    /// unreachable, so the seal could be neither confirmed nor refuted. NOT a clean Sealed — the security
+    /// posture is unverified this launch. The app surfaces this as a notice rather than blocking load.
+    /// </summary>
+    Unverified,
 }
 
 /// <summary>

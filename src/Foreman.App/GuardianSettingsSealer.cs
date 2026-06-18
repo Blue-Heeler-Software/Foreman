@@ -8,8 +8,9 @@ namespace Foreman.App;
 /// Settings sealer that keeps the secret behind the SYSTEM boundary via the guardian (circle-back Phase A,
 /// step 7). Compute + verify of a guardian-scheme ("g1:") seal go through the pipe; a pre-opt-in LOCAL seal is
 /// verified locally for one migration cycle (the next save re-seals it as guardian-scheme). Availability-safe: if
-/// the guardian is unreachable for a guardian-scheme seal, it returns Sealed (don't cry false tamper on a
-/// transient outage of an auto-start service) rather than blocking — the app logs that it was unverified.
+/// the guardian is unreachable for a guardian-scheme seal, it returns Unverified — not Sealed (which would be a
+/// lie: nothing was checked) and not Tampered (don't cry false tamper on a transient outage of an auto-start
+/// service). The seal is neither confirmed nor refuted; the app surfaces a notice rather than blocking load.
 /// </summary>
 internal sealed class GuardianSettingsSealer : ISettingsSealer
 {
@@ -71,12 +72,12 @@ internal sealed class GuardianSettingsSealer : ISettingsSealer
                 using var cts = new CancellationTokenSource(_timeoutMs);
                 var res = _client.VerifySettingsAsync(
                     SettingsSeal.SecurityProjection(settings), storedSeal, cts.Token).GetAwaiter().GetResult();
-                if (res is null) return SettingsSealVerdict.Sealed;   // guardian unreachable → trust-and-note, not tamper
+                if (res is null) return SettingsSealVerdict.Unverified;   // guardian unreachable → can't confirm OR refute
                 return Enum.TryParse<SettingsSealVerdict>(res.Verdict, out var v) ? v : SettingsSealVerdict.Unsealed;
             }
             catch
             {
-                return SettingsSealVerdict.Sealed;   // transient outage of the SYSTEM service → don't false-alarm
+                return SettingsSealVerdict.Unverified;   // transient outage of the SYSTEM service → unverified, not a clean pass
             }
         }
 

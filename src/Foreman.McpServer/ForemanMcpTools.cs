@@ -73,10 +73,15 @@ public static class ForemanMcpTools
         "Lists MCP clients currently connected to Foreman, including their self-announced identity " +
         "and whether they support sampling. Use this to debug Ask Harness delivery. The identity is " +
         "self-declared by the client and is not an authorization boundary.")]
-    public static object ListConnectedMcpClients()
+    public static object ListConnectedMcpClients(
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
         var clients = state.GetMcpClients?.Invoke() ?? [];
+        // A per-harness token sees only its OWN connection — not a roster of every sibling client.
+        if (!caller.IsOperator)
+            clients = clients.Where(c => SseSessionManager.MatchesHarness(c.Name, null, caller.HarnessId)).ToList();
         return new
         {
             count = clients.Count,
@@ -371,17 +376,22 @@ public static class ForemanMcpTools
             harnessId = caller.HarnessId;
         }
 
-        if (resetMetrics && harnessId is not null)
-        {
-            ResetAndAnnounce(state, harnessId, "MCP.TaskStart");
-        }
+        // The metric reset is a STATE MUTATION — gate it behind CanMutate exactly like reset_behavior_metrics,
+        // so a peer-mismatched (stolen) token can't self-exonerate by wiping its escalation through this path
+        // even when peer-binding enforcement is off. (S-1)
+        var didReset = resetMetrics && harnessId is not null && caller.CanMutate;
+        if (didReset)
+            ResetAndAnnounce(state, harnessId!, "MCP.TaskStart");
 
         return new
         {
             acknowledged = true,
             taskDescription,
-            metricsReset = resetMetrics && harnessId is not null,
+            metricsReset = didReset,
             harnessId,
+            metricsResetRefused = resetMetrics && harnessId is not null && !caller.CanMutate
+                ? "Metric reset refused: this token was presented by a different process than the harness it claims (possible token theft)."
+                : null,
             pendingAskHarnessRequests = harnessId is null
                 ? state.CountAskHarnessRequests()
                 : state.CountAskHarnessRequests(harnessId),
@@ -612,9 +622,14 @@ public static class ForemanMcpTools
 
     [McpServerTool, Description("Checks whether Foreman Agent Safety can see a harness, its profile, and any MCP sessions.")]
     public static object ValidateHarnessIntegration(
-        [Description("Harness ID, e.g. 'claude-code' or 'codex'")] string harnessId)
+        [Description("Harness ID, e.g. 'claude-code' or 'codex'")] string harnessId,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        // A per-harness token may only validate its OWN integration — not probe a sibling's profile/sessions.
+        if (!caller.CanAccess(harnessId))
+            return new { harnessId, error = "You can only validate your own harness integration." };
         var integration = HarnessIntegrationRegistry.Get(harnessId);
         var profileName = integration?.DefaultProfileName;
         var profile = profileName is not null ? state.GetProfileByName?.Invoke(profileName) : null;
@@ -630,14 +645,18 @@ public static class ForemanMcpTools
             runningProcessCount = processes.Length,
             runningHarnessCount = processes.Count(p => string.Equals(p.HarnessType, harnessId, StringComparison.OrdinalIgnoreCase)),
             mcpSessions = state.McpSessionCount,
-            connectedClients = state.GetMcpClients?.Invoke().Select(c => new
-            {
-                c.Name,
-                c.Version,
-                c.Sampling,
-                c.Elicitation,
-                matchesHarness = SseSessionManager.MatchesHarness(c.Name, null, harnessId),
-            }).ToArray() ?? [],
+            connectedClients = (state.GetMcpClients?.Invoke() ?? [])
+                .Select(c => new
+                {
+                    c.Name,
+                    c.Version,
+                    c.Sampling,
+                    c.Elicitation,
+                    matchesHarness = SseSessionManager.MatchesHarness(c.Name, null, harnessId),
+                })
+                // A scoped caller sees only its own connection, not the names of sibling clients.
+                .Where(c => caller.IsOperator || c.matchesHarness)
+                .ToArray(),
             pendingAskHarnessRequests = state.CountAskHarnessRequests(harnessId),
             status = integration is not null && profile is not null
                 ? "configured"
@@ -646,16 +665,24 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description("Lists configured LLM auditor preferences for cross-harness triage.")]
-    public static object ListAuditPreferences()
+    public static object ListAuditPreferences(
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
         var settings = state.LlmTriage;
+        var prefs = settings.AuditorPreferences.AsEnumerable();
+        // A per-harness token sees only the preferences that route to IT (who reviews this harness) —
+        // not the full cross-harness routing table or other harnesses' auditor endpoints.
+        if (!caller.IsOperator)
+            prefs = prefs.Where(p => p.TargetHarnessIds.Length == 0
+                || p.TargetHarnessIds.Any(t => t == "*" || string.Equals(t, caller.HarnessId, StringComparison.OrdinalIgnoreCase)));
         return new
         {
             enabled = settings.Enabled,
             preventSelfAudit = settings.PreventSelfAudit,
             maxEventsPerReview = settings.MaxEventsPerReview,
-            preferences = settings.AuditorPreferences
+            preferences = prefs
                 .OrderByDescending(p => p.Priority)
                 .Select(p => new
                 {
@@ -679,9 +706,14 @@ public static class ForemanMcpTools
     public static object GetAuditRoute(
         [Description("Harness being audited, e.g. 'claude-code' or 'codex'")] string targetHarnessId,
         [Description("Severity to route, e.g. Medium, High, Critical")] string severity = "High",
-        [Description("Only return currently available auditors")] bool requireAvailable = false)
+        [Description("Only return currently available auditors")] bool requireAvailable = false,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
+        // A per-harness token may only resolve the audit route FOR ITSELF — not discover who audits a sibling.
+        if (!caller.CanAccess(targetHarnessId))
+            return new { targetHarnessId, error = "You can only resolve the audit route for your own harness." };
         var settings = state.LlmTriage;
         if (!Enum.TryParse<ForemanSeverity>(severity, ignoreCase: true, out var parsedSeverity))
             parsedSeverity = ForemanSeverity.High;
@@ -790,16 +822,23 @@ public static class ForemanMcpTools
     [McpServerTool, Description(
         "Lists the MCP servers Foreman discovered configured across your AI harnesses " +
         "(name, transport, target, scope). Useful for spotting an unexpected or newly-added MCP server.")]
-    public static object ListMcpServers()
+    public static object ListMcpServers(
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        var caller = CallerScope.From(http);
         var servers = state.GetMcpInventory?.Invoke() ?? [];
+        // A per-harness token sees only the MCP servers configured under ITS harness, not the whole machine's.
+        if (!caller.IsOperator)
+            servers = servers.Where(s => string.Equals(s.Harness, caller.HarnessId, StringComparison.OrdinalIgnoreCase)).ToList();
         return new
         {
             servers = servers
                 .OrderBy(s => s.Harness, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(s => new { s.Harness, s.Name, s.Transport, s.Target, s.Scope })
+                // Target is a url or a stdio command+args; the latter can embed a token (e.g. an
+                // Authorization header passed as an arg). Mask secret-shaped text at egress.
+                .Select(s => new { s.Harness, s.Name, s.Transport, Target = Core.Security.SecretRedactor.Redact(s.Target), s.Scope })
                 .ToArray(),
         };
     }
@@ -807,18 +846,32 @@ public static class ForemanMcpTools
     [McpServerTool, Description(
         "Reports the latest MCP tool-description injection scan (server, tool, matched signal, excerpt). " +
         "Opt-in via Foreman Settings → Scan MCP tools; returns the cached result of the last scan — no live network call.")]
-    public static object ListMcpToolFindings()
+    public static object ListMcpToolFindings(
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
         if (state.GetMcpToolScan is null)
             return new { enabled = false, message = "MCP tool scanning is off. Enable it in Foreman Settings → Scan MCP tools." };
 
+        var caller = CallerScope.From(http);
         var (findings, summary) = state.GetMcpToolScan();
+        var scoped = findings.AsEnumerable();
+        // A per-harness token sees only findings for MCP servers configured under ITS harness — it can't
+        // enumerate what (possibly suspicious) servers a sibling harness has wired up.
+        if (!caller.IsOperator)
+        {
+            var mine = new HashSet<string>(
+                (state.GetMcpInventory?.Invoke() ?? [])
+                    .Where(s => string.Equals(s.Harness, caller.HarnessId, StringComparison.OrdinalIgnoreCase))
+                    .Select(s => s.Name),
+                StringComparer.OrdinalIgnoreCase);
+            scoped = scoped.Where(f => mine.Contains(f.Server));
+        }
         return new
         {
             enabled  = true,
             summary,
-            findings = findings.Select(f => new { f.Server, f.Tool, f.Signal, f.Excerpt }).ToArray(),
+            findings = scoped.Select(f => new { f.Server, f.Tool, f.Signal, f.Excerpt }).ToArray(),
         };
     }
 
@@ -831,8 +884,12 @@ public static class ForemanMcpTools
         request.ProcessId,
         request.ProcessName,
         request.Status,
-        request.SystemPrompt,
-        request.Prompt,
+        // Redact at egress: the prompt is built from the alert's Message/command, which can carry a secret
+        // fragment, and a peer auditor harness receives this via list_ask_harness_requests. Mask here too,
+        // mirroring the event-stream egress in ForemanState — so the leak is closed regardless of how the
+        // prompt was stored. (S-4)
+        SystemPrompt = Core.Security.SecretRedactor.Redact(request.SystemPrompt),
+        Prompt = Core.Security.SecretRedactor.Redact(request.Prompt),
         request.RepliedAt,
         request.ReplyText,
         request.ActionTaken,

@@ -380,7 +380,7 @@ public partial class AlertDetailWindow : Window
         sb.AppendLine($"- Type: {vm?.EventTypeLabel ?? _event.GetType().Name}");
         sb.AppendLine($"- Severity: {_event.Severity}");
         sb.AppendLine($"- When: {_event.Timestamp:O}");
-        sb.AppendLine($"- What Foreman Agent Safety saw: {_event.Message}");
+        sb.AppendLine($"- What Foreman Agent Safety saw: {SecretRedactor.Redact(_event.Message)}");   // Message can carry a cmd fragment (S-4)
         sb.AppendLine();
         sb.AppendLine("You");
         sb.AppendLine($"- Harness: {Blank(harnessId, "unknown")}");
@@ -507,7 +507,7 @@ public partial class AlertDetailWindow : Window
         sb.AppendLine($"- Severity: {_event.Severity}");
         sb.AppendLine($"- Source: {_event.Source}");
         sb.AppendLine($"- Timestamp: {_event.Timestamp:O}");
-        sb.AppendLine($"- Message: {_event.Message}");
+        sb.AppendLine($"- Message: {SecretRedactor.Redact(_event.Message)}");   // Message can carry a cmd fragment (S-4)
         sb.AppendLine();
         sb.AppendLine("Target");
         sb.AppendLine($"- Harness being audited: {Blank(targetHarnessId, "unknown")}");

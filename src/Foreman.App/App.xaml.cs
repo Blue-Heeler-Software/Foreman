@@ -386,18 +386,26 @@ public partial class App : Application
                     return;
                 }
                 var severity = esc.NewLevel >= EscalationLevel.Emergency ? ForemanSeverity.Critical : ForemanSeverity.High;
-                var auditor = settings.LlmTriage.SelectAuditor(esc.HarnessId, severity);
+                // Use the full route resolver (not SelectAuditor, which only consults configured preferences and
+                // returns null when none target this offender). Resolve falls back to any other running/connected
+                // harness, so an un-preconfigured escalation still gets a second pair of eyes instead of silently
+                // dropping to "no eligible auditor."
+                var snapshot = _monitor!.Tree.GetAll().ToList();
+                var connected = BuildConnectedHarnessIds(_mcpHost!.Sessions.DescribeSessions());
+                var selection = AuditRouteResolver.Resolve(settings.LlmTriage, esc.HarnessId, severity, snapshot, connected);
+                var auditor = selection.Selected;
                 if (auditor is null)
                 {
                     EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
-                        $"Auto-audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: no eligible auditor configured (Settings → LLM triage)."));
+                        $"Auto-audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: {selection.Reason}"));
                     return;
                 }
                 var (sys, usr) = BuildEscalationAuditPrompt(esc, auditor.AuditorId);
                 var req = _mcpHost!.State.CreateAskHarnessRequest(auditor.AuditorId, sys, usr, esc.Id, null, null);
                 _ = SafeAsk(auditor.AuditorId, sys, usr, req.RequestId);
                 EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
-                    $"Auto-response [{esc.NewLevel}]: routed '{esc.HarnessId}' to auditor '{auditor.AuditorId}' for review (request {req.RequestId})."));
+                    $"Auto-response [{esc.NewLevel}]: routed '{esc.HarnessId}' to auditor '{auditor.AuditorId}'" +
+                    $"{(selection.UsedFallback ? " (fallback — no configured preference)" : "")} for review (request {req.RequestId})."));
             },
             RequestSelfCleanup = esc =>
             {
@@ -460,6 +468,17 @@ public partial class App : Application
                 "settings.json was modified outside Foreman — its security posture (presence lock, log persistence, " +
                 "decoy auditing, disabled harnesses, mutes, Trust) may have been weakened. Review Settings and re-apply " +
                 "from the UI to re-seal; investigate if you didn't make this change."));
+
+        // Guardian-scheme seal present but the guardian (the SYSTEM key-holder) was unreachable, so the seal could
+        // be neither confirmed nor refuted. Don't block load and don't cry tamper — but don't silently pass it off
+        // as Sealed either: surface that the posture is UNVERIFIED this launch (Medium). Usually a transient outage
+        // of the auto-start service; persistent means the guardian was disabled (itself worth a look).
+        if (SettingsStore.LastSealVerdict == SettingsSealVerdict.Unverified)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Settings",
+                "settings.json carries a guardian-backed seal but the guardian service was unreachable at launch, so " +
+                "its security posture could not be verified this session. If this persists, check that the Foreman " +
+                "guardian service is running — a disabled guardian can't catch out-of-band edits to your settings."));
 
         // Anti-rollback canary (B8): the chain head Foreman last witnessed in the OS event log is gone from the
         // on-disk log — it was reverted to an earlier state while Foreman was down. The in-file hash chain can't
