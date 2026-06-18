@@ -176,7 +176,7 @@ public sealed class ProcessTreeTracker
     {
         foreach (var rec in GetTreeByHarnessType(harnessType).ToList())
         {
-            if (!IsSafeTarget(rec.Pid)) continue;
+            if (KillGuard.IsProtected(rec.Pid, rec.Name)) continue;   // never the OS, the shell, AV, or Foreman's own
             try
             {
                 using var proc = Process.GetProcessById(rec.Pid);
@@ -200,11 +200,12 @@ public sealed class ProcessTreeTracker
     /// </summary>
     public bool KillProcess(int pid, DateTimeOffset? expectedStartTime)
     {
-        if (!IsSafeTarget(pid)) return false;
+        if (KillGuard.IsProtectedPid(pid)) return false;
         if (expectedStartTime is not { } expected) return false;   // no identity pin → never kill a bare PID
 
         var rec = GetByPid(pid);
         if (rec is null) return false;                             // not tracked (exited or never seen)
+        if (KillGuard.IsProtected(pid, rec.Name)) return false;    // protected by name (Foreman/guardian/sidecar/OS/AV)
         if (Math.Abs((rec.StartTime - expected).TotalSeconds) > 1) return false;  // PID reused since the alert
 
         try
@@ -219,7 +220,4 @@ public sealed class ProcessTreeTracker
             return false;
         }
     }
-
-    // We never terminate Foreman itself or the low system PIDs (0 = Idle, 4 = System).
-    private static bool IsSafeTarget(int pid) => pid > 4 && pid != Environment.ProcessId;
 }
