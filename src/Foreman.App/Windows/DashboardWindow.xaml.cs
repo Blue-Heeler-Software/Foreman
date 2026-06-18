@@ -12,6 +12,7 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -35,6 +36,13 @@ public partial class DashboardWindow : Window, IEventSink
     private readonly ResourceSampler _usageSampler = new();
     private Dictionary<int, ResourceSampler.Metrics> _liveMetrics = [];
     private readonly List<IDisposable> _hostedViews = [];
+
+    // "Is this harness configured for Foreman?" reads each agent's config file (and ~/.claude.json can be many
+    // MB to parse) — far too heavy for the 5s UI refresh. Recompute off-thread at most every 30s and cache it;
+    // the refresh reads the cache. Configured status only changes when you run Connect, so a 30s-stale view is fine.
+    private volatile Dictionary<string, bool> _configuredCache = new(StringComparer.OrdinalIgnoreCase);
+    private DateTimeOffset _configuredCacheAt = DateTimeOffset.MinValue;
+    private bool _configuredRefreshing;
     private HarnessesWindow? _harnessView;
     private LogWindow? _logView;   // for tile deep-links that pre-set the severity filter
 
@@ -258,10 +266,11 @@ public partial class DashboardWindow : Window, IEventSink
             capByHarness.TryGetValue(id, out var c) ? c : (Array.Empty<string>(), Array.Empty<string>());
         static string HarnessName(string id) => KnownHarnesses.GetById(id)?.DisplayName ?? id;
 
-        // Whether each harness is wired to Foreman (memoised — one config read per harness per refresh). Used to
-        // keep your configured agents visible even when idle, so their cards + capability chips don't vanish.
-        var cfgCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        bool Cfg(string id) => cfgCache.TryGetValue(id, out var v) ? v : (cfgCache[id] = IsHarnessConfigured(id));
+        // Whether each harness is wired to Foreman — read from a background-refreshed cache (config-file reads,
+        // esp. a multi-MB ~/.claude.json, must not run on the UI thread). Keeps configured agents visible when idle.
+        EnsureConfiguredCacheFresh();
+        var cfgSnapshot = _configuredCache;   // snapshot the reference; the bg task swaps the whole dict atomically
+        bool Cfg(string id) => cfgSnapshot.TryGetValue(id, out var v) && v;
 
         var connectedCount = KnownHarnesses.All.Count(h => Connected(h.Id));
         var computerHarnesses = capByHarness.Where(kv => kv.Value.Computer.Length > 0).Select(kv => HarnessName(kv.Key)).ToArray();
@@ -509,7 +518,7 @@ public partial class DashboardWindow : Window, IEventSink
             GetNetRate = GetNetRate,
             OpenSettings = () => OpenHarnessSettings(harnessId),
             OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke(),
-            IsConfigured = () => IsHarnessConfigured(harnessId),
+            IsConfigured = () => _configuredCache.TryGetValue(harnessId, out var v) && v,
             GetContextUsage = () => GetContextUsage?.Invoke(harnessId),
             RequestCleanup = RequestHarnessCleanup is null ? null : () => RequestHarnessCleanup(harnessId),
             ResetMetrics = ResetBehaviorMetrics is null ? null : () => ResetBehaviorMetrics(harnessId),
@@ -713,6 +722,31 @@ public partial class DashboardWindow : Window, IEventSink
                 ?.IsConfigured(McpPort) ?? false;
         }
         catch { return false; }
+    }
+
+    // Recompute the "configured for Foreman" set off the UI thread, at most every 30s, and publish it to
+    // _configuredCache. Each connector's IsConfigured reads (and parses) its agent's config file, and
+    // ~/.claude.json can be many MB — doing that 16x on every 5s tick was the dashboard lag.
+    private void EnsureConfiguredCacheFresh()
+    {
+        if (_configuredRefreshing) return;
+        if (_configuredCache.Count > 0 && DateTimeOffset.UtcNow - _configuredCacheAt < TimeSpan.FromSeconds(30)) return;
+        _configuredRefreshing = true;
+        var ids = KnownHarnesses.All.Select(h => h.Id).ToArray();
+        Task.Run(() =>
+        {
+            var map = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in ids) map[id] = IsHarnessConfigured(id);   // reads config files; McpPort read is thread-safe
+            return map;
+        }).ContinueWith(t =>
+        {
+            if (t.Status == TaskStatus.RanToCompletion)
+            {
+                _configuredCache = t.Result;
+                _configuredCacheAt = DateTimeOffset.UtcNow;
+            }
+            _configuredRefreshing = false;
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     private static T? FindDataContext<T>(object? source) where T : class
