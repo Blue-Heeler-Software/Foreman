@@ -258,6 +258,11 @@ public partial class DashboardWindow : Window, IEventSink
             capByHarness.TryGetValue(id, out var c) ? c : (Array.Empty<string>(), Array.Empty<string>());
         static string HarnessName(string id) => KnownHarnesses.GetById(id)?.DisplayName ?? id;
 
+        // Whether each harness is wired to Foreman (memoised — one config read per harness per refresh). Used to
+        // keep your configured agents visible even when idle, so their cards + capability chips don't vanish.
+        var cfgCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        bool Cfg(string id) => cfgCache.TryGetValue(id, out var v) ? v : (cfgCache[id] = IsHarnessConfigured(id));
+
         var connectedCount = KnownHarnesses.All.Count(h => Connected(h.Id));
         var computerHarnesses = capByHarness.Where(kv => kv.Value.Computer.Length > 0).Select(kv => HarnessName(kv.Key)).ToArray();
         var browserHarnesses  = capByHarness.Where(kv => kv.Value.Browser.Length  > 0).Select(kv => HarnessName(kv.Key)).ToArray();
@@ -281,10 +286,9 @@ public partial class DashboardWindow : Window, IEventSink
                 var running = runningIds.Contains(h.Id);
                 var connected = Connected(h.Id);
                 var trust = settings.HarnessTrust.TryGetValue(h.Id, out var t) ? Math.Clamp(t, 1, 5) : 3;
-                return new HarnessChipVm(h, profileById.GetValueOrDefault(h.Id), running, connected, trust,
-                    running && !connected && IsHarnessConfigured(h.Id));
+                return new HarnessChipVm(h, profileById.GetValueOrDefault(h.Id), running, connected, trust, Cfg(h.Id));
             })
-            .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0)
+            .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0 || c.Configured)
             .OrderByDescending(c => (int)c.EscalationLevel)
             .ThenByDescending(c => c.AlertCount)
             .ThenBy(c => c.DisplayName)
@@ -315,14 +319,14 @@ public partial class DashboardWindow : Window, IEventSink
                     pending,
                     wakeCount,
                     GetContextUsage?.Invoke(h.Id),
-                    running && !connected && IsHarnessConfigured(h.Id),
+                    Cfg(h.Id),
                     computerSrvs,
                     browserSrvs);
             })
-            // Show every harness that's running, MCP-connected, OR has alerts (same set as the header chips), so
-            // your agents stay visible even when none currently holds a live MCP session. The card itself shows
-            // connection state ("MCP linked" vs "No MCP", Running vs Idle).
-            .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0)
+            // Show every harness that's running, MCP-connected, has alerts, is CONFIGURED for Foreman, or carries a
+            // computer-use/browser capability — so your set-up agents (and their C/B chips) stay visible even when
+            // idle. The card itself shows the live state ("MCP linked" / "restart to link" / "Configured · idle").
+            .Where(c => c.IsRunning || c.McpConnected || c.AlertCount > 0 || c.Configured || c.ComputerUse || c.BrowserUse)
             .OrderByDescending(c => c.IsRunning)
             .ThenByDescending(c => (int)c.EscalationLevel)
             .ThenBy(c => c.DisplayName)
@@ -1099,11 +1103,13 @@ public sealed class HarnessChipVm
     public string ToolTip { get; }
     public bool IsRunning { get; }
     public bool McpConnected { get; }
+    public bool Configured { get; }
     public int AlertCount { get; }
     public EscalationLevel EscalationLevel { get; }
 
     public HarnessChipVm(KnownHarness harness, BehaviorProfile? profile, bool isRunning, bool mcpConnected, int trust, bool configured = false)
     {
+        Configured = configured;
         HarnessId = harness.Id;
         DisplayName = harness.DisplayName;
         IsRunning = isRunning;
@@ -1112,7 +1118,7 @@ public sealed class HarnessChipVm
         EscalationLevel = profile?.CurrentLevel ?? EscalationLevel.Watch;
         LevelLabel = EscalationLevel.ToString().ToUpperInvariant();
         TrustLabel = $"  ·  T{trust}";
-        McpLabel = mcpConnected ? "  ·  MCP" : configured ? "  ·  restart to link" : string.Empty;
+        McpLabel = mcpConnected ? "  ·  MCP" : (isRunning && configured) ? "  ·  restart to link" : string.Empty;
         (LevelBg, LevelFg) = EscalationColors(EscalationLevel);
         ToolTip = BuildToolTip(harness.DisplayName, isRunning, mcpConnected, configured, trust, AlertCount, EscalationLevel);
     }
@@ -1137,7 +1143,8 @@ public sealed class HarnessChipVm
         $"{name}\n{(running ? "Running" : "Not running")} · Trust {trust} · {level}\n" +
         $"{alerts} alert{(alerts == 1 ? "" : "s")}" +
         (mcp ? " · MCP connected"
-             : configured ? " · MCP configured — restart this agent to link"
+             : (running && configured) ? " · MCP configured — restart this agent to link"
+             : configured ? " · MCP configured (idle — start it to connect)"
              : " · MCP not connected") +
         "\nClick for live detail.";
 }
@@ -1167,6 +1174,8 @@ public sealed class DashboardHarnessCardVm
     public EscalationLevel EscalationLevel { get; }
     public IReadOnlyList<HarnessLightVm> Lights { get; }
 
+    public bool Configured { get; }
+
     // Capability flags — does this agent have a computer-use / browser-automation MCP server configured?
     public bool ComputerUse { get; }
     public bool BrowserUse { get; }
@@ -1190,6 +1199,7 @@ public sealed class DashboardHarnessCardVm
         string[]? computerUseServers = null,
         string[]? browserUseServers = null)
     {
+        Configured = configured;
         var cuse = computerUseServers ?? [];
         var buse = browserUseServers ?? [];
         ComputerUse = cuse.Length > 0;
@@ -1244,6 +1254,11 @@ public sealed class DashboardHarnessCardVm
         else if (alerts > 0)
         {
             detail = $"{alerts} alert{(alerts == 1 ? "" : "s")} · not running";
+        }
+        else if (configured)
+        {
+            // Wired to Foreman but idle — shown so you can see it's set up; it links when you next start it.
+            detail = "Configured · idle — start it to connect";
         }
         else
         {
