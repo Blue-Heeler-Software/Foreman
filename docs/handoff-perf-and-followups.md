@@ -40,6 +40,11 @@ tool use), so a configured harness shows "restart to link" forever until it actu
 **restarting doesn't help.** Fix (App): reword to e.g. *"configured — links on first Foreman tool call"*, and/or
 count the MCP `initialize` handshake as "seen". App-side.
 
+**Messaging rule (applies to ALL Foreman restart/reboot copy):** never say a bare "restart" or "reboot" — name
+the scope: **harness restart** (the agent), **Foreman restart** (the watchdog exe), or **PC reboot** (machine).
+Operator instruction. This covers this hint, toasts, and the `request_operator_action` actions
+(`restart-foreman` / `restart-harness:<id>`). The three are routinely conflated and that has wasted real effort.
+
 ## C. Event-log integrity HIGH (BrokenLink line 434) — benign
 
 Line 434 is a 2026-06-11 info event in a 1,578-line log that survived weeks + many dev rebuilds; the break is old
