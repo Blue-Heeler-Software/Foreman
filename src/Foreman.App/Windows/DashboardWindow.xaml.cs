@@ -277,7 +277,10 @@ public partial class DashboardWindow : Window, IEventSink
         var browserHarnesses  = capByHarness.Where(kv => kv.Value.Browser.Length  > 0).Select(kv => HarnessName(kv.Key)).ToArray();
 
         MetaLightsPanel.ItemsSource = BuildMetaLights(
-            settings, connectedClients, connectedCount, computerHarnesses, browserHarnesses, pendingTotal);
+            settings, connectedClients, connectedCount, computerHarnesses, browserHarnesses, pendingTotal,
+            // The browser extension authenticates as the "browser-extension" harness, so the same sticky
+            // last-activity window that drives the agent cards tells us whether it's currently linked.
+            Connected("browser-extension"));
 
         var runningIds = snapshot
             .Where(p => !string.IsNullOrEmpty(p.HarnessType))
@@ -591,7 +594,8 @@ public partial class DashboardWindow : Window, IEventSink
         int connectedCount,
         IReadOnlyList<string> computerHarnesses,
         IReadOnlyList<string> browserHarnesses,
-        int pendingAsk)
+        int pendingAsk,
+        bool extConnected)
     {
         var sidecarOn = GetNetCaptureConnected?.Invoke() == true;
         var gameOn = GetGameModeActive?.Invoke() == true && settings.GameMode.Enabled;
@@ -611,12 +615,18 @@ public partial class DashboardWindow : Window, IEventSink
                 gameOn
                     ? "Fullscreen detected — on-screen popups paused."
                     : settings.GameMode.Enabled ? "Game mode enabled, no fullscreen app detected." : "Game mode off."),
+            // Three states: actively linked (the extension polled within the sticky window) > paired-but-idle
+            // (allow-listed, but its side panel is closed so it isn't talking) > not paired. Mirrors the Sidecar
+            // light's connected/configured-but-down/off pattern.
             new DashboardMetaLightVm(
                 "Extension",
-                extPaired ? MetaLightState.Ok : MetaLightState.Off,
-                extPaired
-                    ? $"{settings.PairedExtensionOrigins.Count} browser extension origin(s) paired."
-                    : "Browser extension not paired — use Connect agent."),
+                extConnected ? MetaLightState.Ok
+                    : extPaired ? MetaLightState.Warn : MetaLightState.Off,
+                extConnected
+                    ? "Browser LLM extension connected — linked and active."
+                    : extPaired
+                        ? $"Browser extension paired ({settings.PairedExtensionOrigins.Count} origin(s)) but idle — open its side panel in Chrome to connect."
+                        : "Browser extension not paired — use Connect agent → Pair browser extension."),
             new DashboardMetaLightVm(
                 "Sidecar",
                 sidecarOn ? MetaLightState.Ok
