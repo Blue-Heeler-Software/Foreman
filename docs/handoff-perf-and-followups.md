@@ -93,3 +93,26 @@ registry tweak (the exe currently only exists on `W:`).
 
 **Done already (not blocked):** `request_harness_review` outbound handoff tool (operator-only, Ask-Harness;
 commit on main). The integrity + restart diagnoses above are read-only findings.
+
+## G. Deferred: Codex cross-review handoff (operator chose "wait for reboot", 2026-06-19)
+
+The plan was to have Codex review how its own audit suggestions were implemented. It never landed and
+could not have: the running Foreman is a stale pre-pin build that does NOT expose `request_harness_review`
+(or any broker/LiveWeave tool), AND Codex has no live MCP session (`list_connected_mcp_clients` shows only
+Claude Code). Operator chose to defer rather than relay the prompt manually.
+
+**Fire only when BOTH preconditions hold:** (1) Foreman has been rebuilt+relaunched so
+`request_harness_review` is in the live tool list, and (2) Codex has a live MCP session to Foreman
+(confirm via `list_connected_mcp_clients`) — otherwise the ask just queues unseen. Codex is currently on
+DJC, so it must be reconnected to Foreman first.
+
+**Review target + ready prompt** (operator-only `request_harness_review`, targetHarness `codex`):
+
+> Codex: you previously ran a Foreman audit and produced a numbered list of suggestions. Two were
+> implemented and I want you to verify them:
+> - Suggestion #1 -> commit `d713713` "fix(release): publish the hardened guardian into the installer payload"
+> - Suggestion #4 -> commit `f300be9` "fix(app): clear real build warnings (nullable deref + unawaited dispatch)"
+>
+> Review each commit against your original suggestion. For each report: (a) does the change fully and
+> correctly address what you raised, (b) is anything missed or only partially done, (c) any regression or
+> new risk introduced. Be specific and cite file:line. Reply via `reply_to_ask_harness_request`.
