@@ -97,6 +97,15 @@ Foreman's HKCU Run entry targets the dev build on the non-system `W:` drive; if 
 auto-start fails. Real fix = install a Release build to `C:` and repoint auto-start there (packaging task), not a
 registry tweak (the exe currently only exists on `W:`).
 
+DECIDED 2026-06-19 (operator): fold this into the signed-Release packaging (alongside the pending SignPath work),
+NOT a dev-build workaround. Two dev-build workarounds were considered and rejected for now: (a) a per-user
+scheduled task that retries until `W:` mounts (fixes late-mount only, changes the auto-start mechanism), and (b)
+staging a copy to `C:\…\Programs` + auto-refresh (most robust but drops a SECOND copy of the AV-flagged
+`Foreman.Monitor.dll` on `C:`, expanding the Bitdefender surface we just fought). The clean fix is: release.yml
+publishes a single-file signed build → an installer drops it under `C:` (e.g. `%LocalAppData%\Programs\ForemanAgentSafety`)
+→ `StartupManager.SetEnabled` registers that stable path. `StartupManager.GetDriveWarning` already surfaces the
+risk in the meantime.
+
 ---
 
 **Done already (not blocked):** `request_harness_review` outbound handoff tool (operator-only, Ask-Harness;
