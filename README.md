@@ -230,6 +230,7 @@ from the C# method name), so call them exactly as shown:
 | `list_recent_events` | Recent event log entries |
 | `list_ask_harness_requests` | Receive pending Ask Harness prompts, including queued audit prompts, for a harness |
 | `reply_to_ask_harness_request` | Send Foreman Agent Safety a reply to a pending Ask Harness or queued audit prompt |
+| `request_harness_review` | Send Foreman-mediated mail or a handoff packet to another harness; operator calls may set reviewer context, harness calls are wrapped as attributed untrusted mail |
 | `acknowledge_alert` | Acknowledge low/medium alerts; high/critical require the UI |
 | `get_behavior_metrics` | Per-harness escalation state |
 | `reset_behavior_metrics` | Reset a harness's escalation metrics for a fresh task |

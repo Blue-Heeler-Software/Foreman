@@ -16,7 +16,9 @@ public sealed record AskHarnessRequest(
     string Status,
     DateTimeOffset? RepliedAt = null,
     string? ReplyText = null,
-    string? ActionTaken = null);
+    string? ActionTaken = null,
+    string? SenderHarnessId = null,
+    string RequestKind = "ask_harness");
 
 /// <summary>
 /// The lifecycle states of <see cref="AskHarnessRequest.Status"/>. A request is born <see cref="Pending"/>;

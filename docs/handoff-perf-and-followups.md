@@ -108,8 +108,9 @@ risk in the meantime.
 
 ---
 
-**Done already (not blocked):** `request_harness_review` outbound handoff tool (operator-only, Ask-Harness;
-commit on main). The integrity + restart diagnoses above are read-only findings.
+**Done already (not blocked):** `request_harness_review` outbound handoff tool (Ask-Harness mailbox;
+operator calls can set reviewer context, harness calls are wrapped as attributed untrusted mail). The
+integrity + restart diagnoses above are read-only findings.
 
 ## H. BUG: MCP auth secret desyncs on restart -> ALL tokens 401 (observed 2026-06-19)
 
@@ -172,7 +173,7 @@ Claude Code). Operator chose to defer rather than relay the prompt manually.
 (confirm via `list_connected_mcp_clients`) — otherwise the ask just queues unseen. Codex is currently on
 DJC, so it must be reconnected to Foreman first.
 
-**Review target + ready prompt** (operator-only `request_harness_review`, targetHarness `codex`):
+**Review target + ready prompt** (`request_harness_review`, targetHarness `codex`):
 
 > Codex: you previously ran a Foreman audit and produced a numbered list of suggestions. Two were
 > implemented and I want you to verify them:

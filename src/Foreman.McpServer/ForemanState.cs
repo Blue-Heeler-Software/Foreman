@@ -253,7 +253,9 @@ public sealed class ForemanState : IEventSink
         string prompt,
         string alertId,
         int? processId,
-        string? processName)
+        string? processName,
+        string? senderHarnessId = null,
+        string requestKind = "ask_harness")
     {
         var request = new AskHarnessRequest(
             Guid.NewGuid().ToString("N")[..12],
@@ -264,7 +266,9 @@ public sealed class ForemanState : IEventSink
             processName,
             systemPrompt,
             prompt,
-            AskHarnessStatus.Pending);
+            AskHarnessStatus.Pending,
+            SenderHarnessId: string.IsNullOrWhiteSpace(senderHarnessId) ? null : senderHarnessId.Trim().ToLowerInvariant(),
+            RequestKind: string.IsNullOrWhiteSpace(requestKind) ? "ask_harness" : requestKind.Trim().ToLowerInvariant());
 
         _askRequests[request.RequestId] = request;
         PruneAskHarnessRequests();
