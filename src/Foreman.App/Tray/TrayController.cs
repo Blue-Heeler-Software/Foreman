@@ -226,18 +226,41 @@ public sealed class TrayController : IEventSink, IDisposable
 
     void IEventSink.OnEvent(ForemanEvent evt)
     {
+        // Coalesce the alert-set-scanning refresh: a burst of events collapses to ONE RefreshAlertState per UI
+        // drain instead of one per event, which was saturating the dispatcher and wedging the watchdog under load.
+        QueueRefresh();
+
+        // Info / already-acked events never pop on screen — skip the per-event marshal entirely.
+        if (evt is InfoEvent || evt.Acknowledged)
+            return;
+
+        // Per-event on-screen handling still marshals individually, but it is already burst-protected (the cadence
+        // governor coalesces operational toasts; emergency windows are rare + de-duped per harness).
         Application.Current.Dispatcher.BeginInvoke(() =>
         {
-            RefreshAlertState();
+            try
+            {
+                ShowBalloonIfNeeded(evt);
+                if (evt is EscalationEvent esc)
+                    HandleEscalation(esc);
+            }
+            catch (Exception ex) { CrashLog.Note("tray OnEvent (balloon/escalation)", ex); }
+        });
+    }
 
-            if (evt is InfoEvent || evt.Acknowledged)
-                return;
-
-            ShowBalloonIfNeeded(evt);
-
-            // escalation-specific handling
-            if (evt is EscalationEvent esc)
-                HandleEscalation(esc);
+    // Single-flight refresh: at most one RefreshAlertState is queued on the UI thread at a time, so a burst of
+    // events collapses into one recompute (the recompute scans all active alerts; doing it per-event under a burst
+    // saturated the dispatcher and the watchdog went unresponsive). The flag clears at the START of the callback,
+    // so an event arriving mid-refresh queues a fresh one and no update is lost.
+    private int _refreshQueued;
+    private void QueueRefresh()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _refreshQueued, 1) != 0) return;
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            System.Threading.Interlocked.Exchange(ref _refreshQueued, 0);
+            try { RefreshAlertState(); }
+            catch (Exception ex) { CrashLog.Note("tray refresh", ex); }
         });
     }
 
