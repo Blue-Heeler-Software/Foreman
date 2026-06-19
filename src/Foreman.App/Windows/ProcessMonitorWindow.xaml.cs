@@ -28,11 +28,14 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
         _requestCleanup = requestCleanup;
         InitializeComponent();
 
-        Loaded += (_, _) => Refresh();
-
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _timer.Tick += (_, _) => Refresh();
-        _timer.Start();
+        // Only refresh while this tab is actually shown. A non-selected dashboard tab is UNLOADED by the
+        // TabControl, but a DispatcherTimer keeps firing regardless — so a hidden Processes tab was rebuilding
+        // the whole live process list (sort + full ItemsSource replace) every 2s for nothing. Start on load,
+        // stop on unload (mirrors HarnessesWindow); refresh on show so the tab is never stale.
+        Loaded   += (_, _) => { Refresh(); _timer.Start(); };
+        Unloaded += (_, _) => _timer.Stop();
     }
 
     private void Refresh()

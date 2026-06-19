@@ -33,7 +33,6 @@ public partial class BehaviorMetricsWindow : UserControl, IDisposable
         _killHarness   = killHarness;
 
         InitializeComponent();
-        Loaded += (_, _) => Refresh();
 
         ThresholdSummary.Text =
             $"Alert ≥{settings.AlertLevelMediumCount} med  ·  " +
@@ -42,7 +41,10 @@ public partial class BehaviorMetricsWindow : UserControl, IDisposable
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _timer.Tick += (_, _) => Refresh();
-        _timer.Start();
+        // Only refresh while this tab is actually shown (mirrors HarnessesWindow). A hidden, TabControl-unloaded
+        // tab kept rebuilding its metrics every 2s on the dispatcher for nothing; start on load, stop on unload.
+        Loaded   += (_, _) => { Refresh(); _timer.Start(); };
+        Unloaded += (_, _) => _timer.Stop();
     }
 
     private void Refresh()
