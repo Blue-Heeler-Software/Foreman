@@ -61,6 +61,53 @@ public sealed class ProcessTreeTracker
         return orphans;
     }
 
+    /// <summary>
+    /// Reconciliation pass: evicts tracked records whose process is no longer live, so the tree can't
+    /// accumulate stale entries when a WMI termination event is dropped under load (the classic
+    /// "thousands of monitored processes vs hundreds real" drift). A record is removed ONLY when its PID
+    /// is absent from <paramref name="livePids"/> — a PID missing from the full OS process list is
+    /// definitively gone — so a live process is never evicted on uncertainty. Records younger than
+    /// <paramref name="minAge"/> are kept, since they may simply post-date a snapshot taken a moment
+    /// before they were created. Returns the evicted records so the caller can log the reconciliation.
+    ///
+    /// Pure and deterministic for testing; <see cref="PruneDeadProcesses"/> supplies the live set.
+    /// NOTE: a reused PID keeps BOTH its records alive here (the live PID protects them); that rarer case
+    /// is handled by <see cref="OnProcessCreated"/> re-pointing the index, not by this janitor.
+    /// </summary>
+    public IReadOnlyList<ProcessRecord> Prune(IReadOnlySet<int> livePids, DateTimeOffset now, TimeSpan minAge)
+    {
+        List<ProcessRecord>? evicted = null;
+        foreach (var rec in _records.Values)   // ConcurrentDictionary snapshot enumeration is safe under concurrent writes
+        {
+            if (livePids.Contains(rec.Pid)) continue;     // still alive
+            if (now - rec.StartTime < minAge) continue;   // too young — may post-date the live snapshot
+            if (_records.TryRemove(rec.Key, out var removed))
+            {
+                // Only drop the pid→key index if it still points at the record we removed (a PID reused
+                // after the snapshot would have re-pointed the index at the newer record — leave that).
+                if (_pidIndex.TryGetValue(rec.Pid, out var idxKey) && idxKey == rec.Key)
+                    _pidIndex.TryRemove(rec.Pid, out _);
+                (evicted ??= []).Add(removed);
+            }
+        }
+        return evicted ?? (IReadOnlyList<ProcessRecord>)[];
+    }
+
+    /// <summary>
+    /// Gathers the live OS PID set and prunes dead records against it. Best-effort: a process that exits
+    /// mid-enumeration simply isn't in the set (and is pruned on the next pass).
+    /// </summary>
+    public IReadOnlyList<ProcessRecord> PruneDeadProcesses(TimeSpan minAge)
+    {
+        var live = new HashSet<int>();
+        foreach (var p in Process.GetProcesses())
+        {
+            live.Add(p.Id);
+            p.Dispose();
+        }
+        return Prune(live, DateTimeOffset.UtcNow, minAge);
+    }
+
     public bool IsTrackedHarness(int pid)
     {
         var rec = GetByPid(pid);

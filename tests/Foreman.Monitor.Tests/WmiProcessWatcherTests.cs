@@ -38,7 +38,8 @@ public sealed class WmiProcessWatcherTests
         var poller = new IoPoller(
             tree,
             hang,
-            new ForemanSettings { IoPollerIntervalSeconds = 60 });
+            new ForemanSettings { IoPollerIntervalSeconds = 60 },
+            new EventBus());
 
         poller.Start();
         poller.Dispose();

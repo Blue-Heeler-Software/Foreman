@@ -64,6 +64,53 @@ public sealed class ProcessTreeLifecycleTests
     }
 
     [Fact]
+    public void Prune_EvictsDeadRecords_KeepsLiveOnes()
+    {
+        var tree = new ProcessTreeTracker();
+        var now = DateTimeOffset.UtcNow;
+        var aged = TimeSpan.FromMinutes(5);
+        var live = new ProcessRecord { Pid = 920_001, Name = "live.exe", StartTime = now - aged };
+        var dead = new ProcessRecord { Pid = 920_002, Name = "dead.exe", StartTime = now - aged };
+        tree.OnProcessCreated(live);
+        tree.OnProcessCreated(dead);
+
+        var evicted = tree.Prune(new HashSet<int> { live.Pid }, now, TimeSpan.FromSeconds(60));
+
+        Assert.Single(evicted);
+        Assert.Same(dead, evicted[0]);
+        Assert.NotNull(tree.GetByPid(live.Pid));
+        Assert.Null(tree.GetByPid(dead.Pid));
+    }
+
+    [Fact]
+    public void Prune_KeepsYoungRecords_EvenWhenAbsentFromLiveSet()
+    {
+        var tree = new ProcessTreeTracker();
+        var now = DateTimeOffset.UtcNow;
+        var young = new ProcessRecord { Pid = 920_011, Name = "young.exe", StartTime = now - TimeSpan.FromSeconds(5) };
+        tree.OnProcessCreated(young);
+
+        var evicted = tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60));
+
+        Assert.Empty(evicted);
+        Assert.NotNull(tree.GetByPid(young.Pid));   // minAge guards a just-created process from a snapshot race
+    }
+
+    [Fact]
+    public void Prune_NeverEvictsLivePid_EvenWhenRecordIsOld()
+    {
+        var tree = new ProcessTreeTracker();
+        var now = DateTimeOffset.UtcNow;
+        var rec = new ProcessRecord { Pid = 920_021, Name = "harness.exe", StartTime = now - TimeSpan.FromHours(2), IsHarness = true };
+        tree.OnProcessCreated(rec);
+
+        var evicted = tree.Prune(new HashSet<int> { rec.Pid }, now, TimeSpan.FromSeconds(60));
+
+        Assert.Empty(evicted);
+        Assert.NotNull(tree.GetByPid(rec.Pid));
+    }
+
+    [Fact]
     public void GetTreeByHarnessType_IncludesHarnessDescendants()
     {
         var tree = new ProcessTreeTracker();

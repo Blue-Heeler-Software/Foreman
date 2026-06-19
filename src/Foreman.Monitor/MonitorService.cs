@@ -37,7 +37,7 @@ public sealed class MonitorService : IDisposable
             pid => Tree.FindProfileAncestor(pid));
         var hangDetector = new HangDetector(bus, settings, Tree, new Win32UserInputProvider());
         _watcher  = new WmiProcessWatcher(Tree, bus, settings, Profiles, violationDetector);
-        _poller   = new IoPoller(Tree, hangDetector, settings);
+        _poller   = new IoPoller(Tree, hangDetector, settings, bus);
         Behavior  = new BehaviorTracker(
             settings, bus,
             pid => Tree.GetByPid(pid),

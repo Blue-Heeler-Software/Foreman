@@ -28,14 +28,20 @@ public sealed class IoPoller : IDisposable
     private readonly ProcessTreeTracker _tree;
     private readonly HangDetector _hangDetector;
     private readonly ForemanSettings _settings;
+    private readonly EventBus _bus;
     private readonly CancellationTokenSource _cts = new();
     private Task? _task;
 
-    public IoPoller(ProcessTreeTracker tree, HangDetector hangDetector, ForemanSettings settings)
+    // A record must survive at least this long before the reconciler may evict it, so a process created
+    // just after the live-PID snapshot is never mistaken for dead.
+    private static readonly TimeSpan PruneMinAge = TimeSpan.FromSeconds(60);
+
+    public IoPoller(ProcessTreeTracker tree, HangDetector hangDetector, ForemanSettings settings, EventBus bus)
     {
         _tree = tree;
         _hangDetector = hangDetector;
         _settings = settings;
+        _bus = bus;
     }
 
     public void Start()
@@ -48,10 +54,33 @@ public sealed class IoPoller : IDisposable
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_settings.IoPollerIntervalSeconds));
         while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
         {
+            // Reconcile first: evict records whose process has exited (covers WMI termination events
+            // dropped under load, which would otherwise leak the tree to thousands of dead entries —
+            // and shrinks the set this poll then iterates).
+            ReconcileTree();
             foreach (var record in _tree.GetAll())
             {
                 PollRecord(record);
             }
+        }
+    }
+
+    private void ReconcileTree()
+    {
+        try
+        {
+            var evicted = _tree.PruneDeadProcesses(PruneMinAge);
+            foreach (var rec in evicted)
+                _hangDetector.Forget(rec.Pid);   // drop any hang-alert state held for the gone pids
+            // Surface only a meaningful catch-up (the first pass after drift), not routine churn.
+            if (evicted.Count >= 10)
+                _bus.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.Low, "Foreman.Monitor",
+                    $"Process-tree reconciliation evicted {evicted.Count} stale record(s) whose processes had already exited."));
+        }
+        catch
+        {
+            // Best-effort housekeeping — never let it break the I/O poll loop.
         }
     }
 
