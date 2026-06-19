@@ -3,7 +3,7 @@
   "name": "Foreman Agent Safety",
   "version": "0.2.0",
   "description": "On-device, verified link to your local Foreman Agent Safety watchdog. Nothing leaves your machine.",
-  "permissions": ["sidePanel", "storage"],
+  "permissions": ["sidePanel", "storage", "tabs"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidepanel.html" },

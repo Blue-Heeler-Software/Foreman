@@ -86,8 +86,8 @@ public partial class ConnectAgentWindow : Window
         if (LiveWeaveStatusText is null) return;
         var connected = _isLiveWeaveConnected?.Invoke() ?? false;
         LiveWeaveStatusText.Text = connected
-            ? "● Connected — the LiveWeave builder is linked. Any agent on Foreman's MCP can drive it with liveweave_command."
-            : "○ Not connected — pair below, then open LiveWeave in Chrome with “Allow Foreman MCP” enabled.";
+            ? "● Connected — the LiveWeave builder is linked. Only the selected driver harness or operator token can drive it."
+            : "○ Not connected — pair below, then choose LiveWeave mode in the browser extension options.";
     }
 
     private void ConnectClaudeClick(object sender, RoutedEventArgs e)
@@ -267,11 +267,11 @@ public partial class ConnectAgentWindow : Window
         BeginPairingFlow(
             title: "Foreman Agent Safety — Pair LiveWeave extension",
             extraInstructions:
-                "Open LiveWeave in Chrome, go to its Options page, enable “Allow Foreman MCP”, and enter this code " +
-                "within 2 minutes. The code never leaves your machine — LiveWeave proves it holds the code over a " +
-                "loopback challenge/response.\n\n" +
-                "Once linked, any agent already connected to Foreman's MCP (Codex, Claude Code, Cursor, …) can " +
-                "render and edit pages by calling liveweave_status and liveweave_command — no extra per-agent setup.",
+                "Open the Foreman browser extension options, choose LiveWeave local page builder mode, set a driver " +
+                "harness such as codex or claude-code, and enter this code within 2 minutes. The code never leaves " +
+                "your machine; LiveWeave proves it holds the code over a loopback challenge/response.\n\n" +
+                "Once linked, only the selected driver harness, or the operator token, can drive LiveWeave. " +
+                "Empty driver means operator-only; 'any' is an explicit all-harness mode.",
             onPaired: RefreshLiveWeaveStatus);
 
     // Shared pairing entry point: mint an on-screen code, copy it, and explain where to type it. The pairing code

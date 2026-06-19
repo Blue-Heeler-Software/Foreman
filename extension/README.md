@@ -21,6 +21,10 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 - **On-device AI (Gemini Nano)**: optional, never required. When Chrome's built-in model is present it can draft
   a reply or summarise the status entirely on-device (nothing leaves the machine). Absent/sub-spec browsers show
   `unavailable` and everything else still works (Pillar 1: Nano is the fast lane, not the gate).
+- **LiveWeave mode**: pair the same extension as the `liveweave` harness to poll Foreman's `liveweave_*`
+  broker tools and render edits into `liveweave.html`, a local extension-owned canvas. It does not drive
+  arbitrary tabs. A selected driver harness is required before non-operator agents can enqueue commands;
+  an empty driver means operator-token only, and `any` is the explicit all-harness mode.
 
 ## Load it
 
@@ -46,6 +50,7 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 | `manifest.json` | MV3 manifest (loopback host_permissions, side panel, options) |
 | `mcp-client.js` | streamable-HTTP MCP client (`initialize` → `notifications/initialized` → `tools/call`) |
 | `background.js` | service worker: pairing, health poll, MCP session, inbox fetch/reply, side-panel port |
+| `liveweave.html` / `liveweave.js` | local LiveWeave canvas for Foreman-brokered page edits |
 | `nano.js` | on-device Gemini Nano adapter (availability detection + a constrained `prompt` turn) |
 | `settings.js` | `chrome.storage.local` helpers |
 | `options.html` / `options.js` | enter the pairing code |

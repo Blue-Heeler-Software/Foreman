@@ -249,10 +249,10 @@
                     <StackPanel>
                         <TextBlock Text="🌐 LiveWeave (on-device page builder)" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,8"
-                                   Text="LiveWeave — render &amp; edit web pages via on-device Nano, controllable by your agents through Foreman. It's a Chrome extension, so it links by pairing (not a config file): click Pair, then enter the code in LiveWeave's Options with “Allow Foreman MCP” enabled, within 2 minutes." />
+                                   Text="LiveWeave pairs through the browser extension and renders into a local Foreman-owned canvas. In the extension options, choose LiveWeave mode and a driver harness before pairing." />
                         <TextBlock x:Name="LiveWeaveStatusText" Style="{StaticResource Muted}" Margin="0,0,0,8" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,10"
-                                   Text="Once paired, any agent already connected to Foreman's MCP (Codex, Claude Code, Cursor, …) can drive it with the liveweave_status and liveweave_command tools — no extra per-agent setup." />
+                                   Text="Once paired, only the selected driver harness, or the operator token, can drive LiveWeave. Empty driver means operator-only; any is an explicit all-harness mode." />
                         <Button Content="Pair LiveWeave…" Click="PairLiveWeaveClick" HorizontalAlignment="Left"
                                 Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
                     </StackPanel>

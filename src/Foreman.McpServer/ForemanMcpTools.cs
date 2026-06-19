@@ -728,13 +728,13 @@ public static class ForemanMcpTools
             {
                 harnessId = "liveweave",
                 displayName = "LiveWeave",
-                description = "Render & edit web pages via on-device Nano, controllable by your agents through Foreman.",
+                description = "Render and edit a local extension-owned page canvas through Foreman's brokered LiveWeave tools.",
                 connectionType = "browser-extension-pairing",
                 connected = lw,
-                howToConnect = "LiveWeave connects by PAIRING, not a config file. In Foreman, open Connect agent → Pair LiveWeave extension to get a short code, then in Chrome open LiveWeave's Options, enable \"Allow Foreman MCP\", and enter the code within 2 minutes. The code never crosses the wire (loopback challenge/response).",
+                howToConnect = "LiveWeave connects by PAIRING, not a config file. In Foreman, open Connect agent -> Pair LiveWeave extension to get a short code, then open the browser extension options, choose LiveWeave mode, set the driver harness, and enter the code within 2 minutes. The code never crosses the wire (loopback challenge/response).",
                 howAgentsDriveIt = new
                 {
-                    note = "Once LiveWeave is paired, ANY agent already connected to Foreman's MCP (codex, claude-code, cursor, …) can render/edit pages through it — no extra setup per agent.",
+                    note = "Once LiveWeave is paired, the driver harness selected in the extension may render/edit its local canvas through it. Empty driver means operator-token only; 'any' is explicit all-harness mode.",
                     checkStatus = "Call liveweave_status to confirm the extension is linked before issuing commands.",
                     sendCommand = "Call liveweave_command(action, parametersJson) to enqueue a builder action; it returns a commandId.",
                     getResult = "Call liveweave_command_result(commandId) to fetch the outcome.",
@@ -1072,7 +1072,8 @@ public static class ForemanMcpTools
         if (string.IsNullOrWhiteSpace(action))
             return new { accepted = false, reason = "action is required." };
 
-        // Driver gate: LiveWeave only executes commands from the harness its operator chose (or any, if unset).
+        // Driver gate: LiveWeave only executes commands from the harness its operator chose. No driver means
+        // operator-only; "any" is an explicit broad mode.
         // The operator (install token) may always drive. Enforced here so a non-chosen harness gets told why.
         var who = caller.IsOperator ? "operator" : caller.HarnessId;
         if (!caller.IsOperator)
@@ -1092,8 +1093,9 @@ public static class ForemanMcpTools
 
         if (!state.LiveWeave.CanDrive(who, caller.IsOperator))
             return new { accepted = false,
-                reason = $"LiveWeave is currently accepting commands only from '{state.LiveWeave.Driver}'. " +
-                         "Ask the operator to select your harness as LiveWeave's driver." };
+                reason = state.LiveWeave.Driver is null
+                    ? "LiveWeave has no harness driver selected. Ask the operator to choose your harness as LiveWeave's driver."
+                    : $"LiveWeave is currently accepting commands only from '{state.LiveWeave.Driver}'. Ask the operator to select your harness as LiveWeave's driver." };
 
         IReadOnlyDictionary<string, object?> parameters;
         try
@@ -1145,7 +1147,7 @@ public static class ForemanMcpTools
         [Description("Max commands to return")] int limit = 5,
         [Description("Optional JSON tab info snapshot from the extension")] string? tabInfoJson = null,
         [Description("Nano availability: available|downloadable|downloading|unavailable")] string? nanoStatus = null,
-        [Description("The one harness id LiveWeave accepts commands from (its operator's choice); empty/'any' = accept all")] string? driverHarness = null,
+        [Description("The one harness id LiveWeave accepts commands from; empty = operator only, 'any' = explicit all-harness mode")] string? driverHarness = null,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
@@ -1153,9 +1155,10 @@ public static class ForemanMcpTools
         if (!caller.IsOperator && !string.Equals(caller.HarnessId, "liveweave", StringComparison.OrdinalIgnoreCase))
             return new { commands = Array.Empty<object>(), reason = "Only the liveweave harness may poll commands." };
 
-        // The extension (the thing being driven) declares which harness it accepts commands from. "any" / empty
-        // clears the restriction. Stored on the broker so liveweave_command can reject a non-chosen harness up front.
-        state.LiveWeave.SetDriver(string.Equals(driverHarness, "any", StringComparison.OrdinalIgnoreCase) ? null : driverHarness);
+        // The extension (the thing being driven) declares which harness it accepts commands from. Empty means
+        // operator-only; "any" is the explicit broad mode. Stored on the broker so liveweave_command rejects a
+        // non-chosen harness up front.
+        state.LiveWeave.SetDriver(driverHarness);
 
         // Tab info is UNTRUSTED extension input that surfaces to the operator UI and the driving harness via
         // liveweave_status — keep ONLY the known fields, capped and secret-redacted (a URL can carry a token),

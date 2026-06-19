@@ -8,7 +8,8 @@ public sealed class LiveWeaveBrokerTests
     public void Enqueue_Poll_Complete_RoundTrip()
     {
         var broker = new LiveWeaveBroker();
-        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" });
+        broker.SetDriver("codex");
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
 
         var batch = broker.Poll(5);
         Assert.Single(batch);
@@ -21,6 +22,20 @@ public sealed class LiveWeaveBrokerTests
         var cmd = broker.GetCommand(id);
         Assert.NotNull(cmd);
         Assert.Equal(LiveWeaveCommandStatus.Completed, cmd!.Status);
+    }
+
+    [Fact]
+    public void Poll_NoDriver_FailsHarnessCommand()
+    {
+        var broker = new LiveWeaveBroker();
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
+
+        Assert.Empty(broker.Poll(5));
+
+        var cmd = broker.GetCommand(id);
+        Assert.NotNull(cmd);
+        Assert.Equal(LiveWeaveCommandStatus.Failed, cmd!.Status);
+        Assert.Contains("no harness driver selected", cmd.Error);
     }
 
     [Fact]

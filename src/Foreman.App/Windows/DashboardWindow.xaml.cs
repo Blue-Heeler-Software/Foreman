@@ -633,7 +633,7 @@ public partial class DashboardWindow : Window, IEventSink
                 liveweaveConnected ? MetaLightState.Ok
                     : extPaired ? MetaLightState.Warn : MetaLightState.Off,
                 liveweaveConnected
-                    ? "LiveWeave builder linked — agents can use liveweave_command."
+                    ? "LiveWeave builder linked. Only the selected driver harness, or the operator token, can use liveweave_command."
                     : extPaired
                         ? "LiveWeave paired origin exists but extension is idle — open LiveWeave in Chrome."
                         : "LiveWeave not paired — pair LiveWeave extension via Connect agent → Pair browser extension."),

@@ -8,6 +8,11 @@
     h1 { font-size: 18px; margin: 0 0 4px; }
     p { color: #9aa3ad; font-size: 13px; line-height: 1.45; }
     .row { display: flex; gap: 8px; margin: 14px 0; }
+    .mode { background: #15181d; border: 1px solid #2a2f37; border-radius: 6px; padding: 10px; margin-top: 14px; }
+    .mode label { display: block; font-size: 13px; color: #d8dde5; margin: 6px 0; }
+    .mode input[type="radio"] { width: auto; margin-right: 7px; text-transform: none; letter-spacing: 0; }
+    .driver { margin-top: 10px; }
+    .driver input { width: 100%; box-sizing: border-box; margin-top: 5px; text-transform: none; letter-spacing: 0; }
     input { flex: 1; background: #15181d; border: 1px solid #2a2f37; color: #e6e8ec; border-radius: 6px; padding: 9px 10px; font-size: 15px; letter-spacing: 2px; text-transform: uppercase; }
     button { background: #4ade80; color: #0d0f12; border: 0; border-radius: 6px; padding: 9px 16px; font-weight: 700; cursor: pointer; }
     button.secondary { background: #15181d; color: #e6e8ec; border: 1px solid #2a2f37; font-weight: 400; margin-top: 16px; }
@@ -20,6 +25,15 @@
   <h1>🔒 Pair with Foreman Agent Safety</h1>
   <p>In Foreman (the desktop app), open <b>Pair browser extension</b> — it shows a short code. Type it below.
      The code never leaves your machine; this extension proves it over a loopback challenge/response.</p>
+  <div class="mode">
+    <label><input type="radio" name="mode" value="browser-extension" checked /> Foreman status side panel</label>
+    <label><input type="radio" name="mode" value="liveweave" /> LiveWeave local page builder</label>
+    <div class="driver">
+      <label for="driver">LiveWeave driver harness</label>
+      <input id="driver" placeholder="codex, claude-code, or any" autocomplete="off" spellcheck="false" />
+      <p>Empty means operator-token only. Use <code>any</code> only when every connected harness should be able to drive the canvas.</p>
+    </div>
+  </div>
   <div class="row">
     <input id="code" placeholder="ABCDE-FGHJK" maxlength="11" autocomplete="off" spellcheck="false" />
     <button id="pair">Pair</button>

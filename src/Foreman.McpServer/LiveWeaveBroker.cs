@@ -40,26 +40,37 @@ public sealed class LiveWeaveBroker
     private LiveWeavePresence _presence = new();
     private const int MaxCommands = 100;
     private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(10);
-    private volatile string? _driver;   // the chosen harness allowed to drive LiveWeave; null/empty = any
+    private volatile string? _driver;   // null = operator only; "*" = any harness; otherwise chosen harness id
 
     /// <summary>"operator" marker recorded for commands enqueued by the unscoped install token — always allowed.</summary>
     private const string OperatorMarker = "operator";
 
-    /// <summary>The harness the operator chose (via the LiveWeave extension) to let drive the builder; null = any.</summary>
+    /// <summary>The harness the operator chose to let drive the builder; null = operator only, "*" = any harness.</summary>
     public string? Driver => _driver;
 
-    /// <summary>Set by the LiveWeave extension (the thing being driven) to the one harness it accepts commands
-    /// from. "" / null clears it back to "any harness".</summary>
+    /// <summary>Set by the LiveWeave extension to the harness it accepts commands from. Empty means operator only;
+    /// "any" is the explicit broad mode.</summary>
     public void SetDriver(string? harnessId)
-        => _driver = string.IsNullOrWhiteSpace(harnessId) ? null : harnessId.Trim().ToLowerInvariant();
+    {
+        if (string.IsNullOrWhiteSpace(harnessId))
+        {
+            _driver = null;
+            return;
+        }
+
+        var normalized = harnessId.Trim().ToLowerInvariant();
+        _driver = string.Equals(normalized, "any", StringComparison.OrdinalIgnoreCase) ? "*" : normalized;
+    }
 
     /// <summary>May commands from <paramref name="harnessId"/> drive LiveWeave? The operator always may; an
-    /// operator-enqueued command always may; a harness only when it is the chosen driver (or none is set = any).</summary>
+    /// operator-enqueued command always may; a harness only when it is the chosen driver, or when "any" was
+    /// explicitly selected.</summary>
     public bool CanDrive(string? harnessId, bool isOperator)
     {
         if (isOperator || string.Equals(harnessId, OperatorMarker, StringComparison.OrdinalIgnoreCase)) return true;
         var d = _driver;
-        if (string.IsNullOrEmpty(d)) return true;
+        if (string.IsNullOrEmpty(d)) return false;
+        if (string.Equals(d, "*", StringComparison.Ordinal)) return true;
         return harnessId is not null && string.Equals(harnessId, d, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -95,7 +106,9 @@ public sealed class LiveWeaveBroker
                 _commands[id] = cmd with
                 {
                     Status = LiveWeaveCommandStatus.Failed,
-                    Error = $"Rejected: LiveWeave is set to accept commands only from '{_driver}', not '{cmd.ByHarness ?? "unknown"}'.",
+                    Error = string.IsNullOrEmpty(_driver)
+                        ? $"Rejected: LiveWeave has no harness driver selected; '{cmd.ByHarness ?? "unknown"}' cannot drive it."
+                        : $"Rejected: LiveWeave is set to accept commands only from '{DriverLabel(_driver)}', not '{cmd.ByHarness ?? "unknown"}'.",
                     CompletedAt = DateTimeOffset.UtcNow,
                 };
                 continue;
@@ -163,6 +176,11 @@ public sealed class LiveWeaveBroker
             var connected = age < TimeSpan.FromSeconds(30);
             var pending = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.Pending);
             var delivered = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.Delivered);
+            var driverMode = string.IsNullOrEmpty(_driver)
+                ? "operator_only"
+                : string.Equals(_driver, "*", StringComparison.Ordinal)
+                    ? "any_harness"
+                    : "selected_harness";
 
             return new
             {
@@ -172,13 +190,19 @@ public sealed class LiveWeaveBroker
                 tab = _presence.TabInfo,
                 pendingCommands = pending,
                 inFlightCommands = delivered,
-                driverHarness = _driver,   // null = accepting commands from any harness; else only this one
+                driverHarness = DriverLabel(_driver),
+                driverMode,
                 hint = connected
-                    ? "LiveWeave extension is linked. Use liveweave_command to control the builder."
+                    ? (driverMode == "operator_only"
+                        ? "LiveWeave extension is linked, but no harness driver is selected. Operator token only."
+                        : "LiveWeave extension is linked. The selected driver may use liveweave_command.")
                     : "LiveWeave extension not connected — open LiveWeave in Chrome and pair with Foreman (Connect agent → Pair browser extension, choose LiveWeave harness).",
             };
         }
     }
+
+    private static string? DriverLabel(string? driver) =>
+        string.Equals(driver, "*", StringComparison.Ordinal) ? "any" : driver;
 
     private void TouchPresence() => UpdatePresence(null, null);
 

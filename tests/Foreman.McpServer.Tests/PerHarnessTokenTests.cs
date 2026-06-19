@@ -398,8 +398,18 @@ public sealed class CallerScopeToolTests : IDisposable
 
     // ── LiveWeave driver gate: only the operator-chosen harness may drive the builder ────────────
     [Fact]
-    public void LiveweaveCommand_NoDriverSet_AcceptsAnyHarness()
+    public void LiveweaveCommand_NoDriverSet_RejectsHarness()
     {
+        using var doc = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsCodex));
+        Assert.False(doc.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.Contains("no harness driver selected", doc.RootElement.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void LiveweaveCommand_ExplicitAnyDriver_AcceptsHarness()
+    {
+        ForemanMcpTools.LiveweavePollCommands(driverHarness: "any", http: AsLiveweave);
+
         using var doc = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsCodex));
         Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
     }
