@@ -104,7 +104,8 @@ public sealed class PairingManager
 
     private void Clear() { _code = null; _challenge = null; _expires = default; }
 
-    private static bool IsExtensionOrigin(string? origin) =>
+    /// <summary>True when <paramref name="origin"/> is a first-party browser extension scheme.</summary>
+    public static bool IsExtensionOrigin(string? origin) =>
         !string.IsNullOrWhiteSpace(origin)
         && (origin.StartsWith("chrome-extension://", StringComparison.OrdinalIgnoreCase)
             || origin.StartsWith("moz-extension://", StringComparison.OrdinalIgnoreCase));

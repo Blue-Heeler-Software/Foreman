@@ -54,6 +54,7 @@ public sealed class McpServerHost : IAsyncDisposable
         State.McpPort = settings.McpPort;
         State.LlmTriage = settings.LlmTriage;
         State.HarnessModalities = settings.HarnessModalities;
+        State.HarnessCapabilityRestrictions = settings.HarnessCapabilityRestrictions;
         State.GetMcpSessionCount = () => Sessions.Count;
         State.GetMcpClients = () => Sessions.DescribeSessions();
     }
@@ -121,19 +122,35 @@ public sealed class McpServerHost : IAsyncDisposable
             {
                 if (isMcpRequest)
                 {
-                    // Transport gate (before the token): Host must be loopback (DNS-rebinding defence) and
-                    // Origin, if present, must be loopback or a paired extension. See LoopbackRequestPolicy.
+                    // Host must be loopback (DNS-rebinding defence) — checked before anything else.
+                    if (!LoopbackRequestPolicy.IsLoopbackHost(ctx.Request.Host.Value))
+                    {
+                        await Deny(ctx, StatusCodes.Status403Forbidden,
+                            "Request Host is not a loopback address (possible DNS rebinding).").ConfigureAwait(false);
+                        return;
+                    }
+
+                    var origin = ctx.Request.Headers.Origin.ToString();
+                    var presented = ExtractToken(ctx.Request);
+                    var auth = _authToken.Authenticate(presented);
+
+                    // Self-heal paired extension origins: the extension keeps its minted harness token in
+                    // chrome.storage across restarts, but PairedExtensionOrigins may be empty on disk (save
+                    // failed, fresh settings, etc.). A valid liveweave/browser-extension token plus a real
+                    // extension Origin re-adds the origin before the transport gate runs.
+                    if (auth.Ok && IsExtensionHarness(auth.HarnessId) && PairingManager.IsExtensionOrigin(origin))
+                        RememberPairedExtensionOrigin(origin.TrimEnd('/'));
+
+                    // Origin, when present, must be loopback or a paired extension. See LoopbackRequestPolicy.
                     var verdict = LoopbackRequestPolicy.Evaluate(
                         ctx.Request.Host.Value,
-                        ctx.Request.Headers.Origin.ToString(),
+                        origin,
                         _settings.PairedExtensionOrigins);
                     if (!verdict.Allowed)
                     {
                         await Deny(ctx, StatusCodes.Status403Forbidden, verdict.Reason).ConfigureAwait(false);
                         return;
                     }
-                    var presented = ExtractToken(ctx.Request);
-                    var auth = _authToken.Authenticate(presented);
                     if (!auth.Ok)
                     {
                         MaybeReportStaleToken(presented);   // surface "your saved token went stale — reconnect"
@@ -347,6 +364,18 @@ public sealed class McpServerHost : IAsyncDisposable
             $"Harness '{id}' presented a Foreman MCP token this server can't validate — most likely Foreman's token " +
             $"secret was rotated, so '{id}'s saved token is stale. Open Connect Agent and reconnect '{id}' to re-issue " +
             "its token. If you didn't expect this, it could be a forged token from another local process."));
+    }
+
+    private static bool IsExtensionHarness(string? harnessId) =>
+        string.Equals(harnessId, "liveweave", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(harnessId, "browser-extension", StringComparison.OrdinalIgnoreCase);
+
+    private void RememberPairedExtensionOrigin(string origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin)) return;
+        if (_settings.PairedExtensionOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase)) return;
+        _settings.PairedExtensionOrigins.Add(origin);
+        try { SettingsStore.Save(_settings); } catch { /* in-memory allow-list still applies this session */ }
     }
 
     private static string? ExtractToken(HttpRequest req)

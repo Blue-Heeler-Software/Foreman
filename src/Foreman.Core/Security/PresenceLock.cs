@@ -14,6 +14,7 @@ public enum WeakeningAction
     DisableLogPersist,
     ClearOrRotateLog,
     EditHarnessSysprompt,
+    RelaxHarnessCapabilityRestriction,
     ExitForeman,
 }
 
@@ -61,6 +62,7 @@ public static class PresenceLockPolicy
         WeakeningAction.DisableLogPersist,
         WeakeningAction.ClearOrRotateLog,
         WeakeningAction.EditHarnessSysprompt,
+        WeakeningAction.RelaxHarnessCapabilityRestriction,
     ];
 
     public static bool RequiresPresence(WeakeningAction action, PresenceLockSettings settings)

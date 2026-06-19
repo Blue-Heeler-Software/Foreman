@@ -283,6 +283,17 @@ public sealed class ForemanSettings
         => HarnessModalities.TryGetValue(harnessId, out var ids) && ids.Count > 0
             ? ids
             : Foreman.Core.Mcp.ModalityCatalog.DefaultAgentModalities;
+
+    /// <summary>
+    /// Per-harness restrictions for high-risk MCP capability classes. Foreman can enforce these immediately for
+    /// Foreman-brokered tools such as LiveWeave browser driving; third-party MCP servers are reported and the
+    /// policy is delivered to the harness until a dedicated computer-use broker can enforce it directly.
+    /// </summary>
+    public Dictionary<string, Foreman.Core.Mcp.HarnessCapabilityRestrictions> HarnessCapabilityRestrictions { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public Foreman.Core.Mcp.HarnessCapabilityRestrictions EffectiveCapabilityRestrictions(string harnessId)
+        => Foreman.Core.Mcp.HarnessCapabilityPolicy.Effective(HarnessCapabilityRestrictions, harnessId);
 }
 
 public sealed class LlmTriageSettings

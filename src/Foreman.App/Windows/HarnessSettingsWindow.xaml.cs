@@ -37,6 +37,12 @@ public partial class HarnessSettingsWindow : Window
         TrustSlider.Value = CurrentTrust();
         UpdateTrustSummary();
 
+        ComputerUseCombo.ItemsSource = Enum.GetValues<HarnessCapabilityAccess>();
+        BrowserUseCombo.ItemsSource = Enum.GetValues<HarnessCapabilityAccess>();
+        var capabilities = CurrentCapabilityRestrictions();
+        ComputerUseCombo.SelectedItem = capabilities.ComputerUse;
+        BrowserUseCombo.SelectedItem = capabilities.BrowserUse;
+
         var enabled = _settings.EnabledModalities(_harnessId);
         foreach (var m in ModalityCatalog.ForAudience(ModalityAudience.Agent))
         {
@@ -95,6 +101,23 @@ public partial class HarnessSettingsWindow : Window
         return "☁ Cloud model";
     }
 
+    private HarnessCapabilityRestrictions CurrentCapabilityRestrictions() =>
+        _settings.EffectiveCapabilityRestrictions(_harnessId);
+
+    private static HarnessCapabilityAccess SelectedAccess(ComboBox combo) =>
+        combo.SelectedItem is HarnessCapabilityAccess access ? access : HarnessCapabilityAccess.Allow;
+
+    private static bool IsDefault(HarnessCapabilityRestrictions restrictions) =>
+        restrictions.ComputerUse == HarnessCapabilityAccess.Allow
+        && restrictions.BrowserUse == HarnessCapabilityAccess.Allow;
+
+    private static bool SameCapabilities(HarnessCapabilityRestrictions a, HarnessCapabilityRestrictions b) =>
+        a.ComputerUse == b.ComputerUse && a.BrowserUse == b.BrowserUse;
+
+    private static bool RelaxesCapabilities(HarnessCapabilityRestrictions oldRestrictions, HarnessCapabilityRestrictions newRestrictions) =>
+        newRestrictions.ComputerUse < oldRestrictions.ComputerUse
+        || newRestrictions.BrowserUse < oldRestrictions.BrowserUse;
+
     private async void SaveClick(object sender, RoutedEventArgs e)
     {
         // Presence lock (P3): lowering Trust or editing modalities is a weakening — gate before persisting.
@@ -103,6 +126,13 @@ public partial class HarnessSettingsWindow : Window
         var newModalities = _modalityChecks.Where(cb => cb.IsChecked == true).Select(cb => (string)cb.Tag).ToList();
         var oldModalities = _settings.HarnessModalities.TryGetValue(_harnessId, out var m) ? m : [];
         var modalitiesChanged = !new HashSet<string>(oldModalities, StringComparer.OrdinalIgnoreCase).SetEquals(newModalities);
+        var oldCapabilities = CurrentCapabilityRestrictions();
+        var newCapabilities = new HarnessCapabilityRestrictions
+        {
+            ComputerUse = SelectedAccess(ComputerUseCombo),
+            BrowserUse = SelectedAccess(BrowserUseCombo),
+        };
+        var capabilitiesChanged = !SameCapabilities(oldCapabilities, newCapabilities);
 
         if (newTrust < oldTrust && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
                 Foreman.Core.Security.WeakeningAction.LowerTrust, $"{_harnessId}: Trust {oldTrust}→{newTrust}"))
@@ -110,9 +140,19 @@ public partial class HarnessSettingsWindow : Window
         if (modalitiesChanged && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
                 Foreman.Core.Security.WeakeningAction.EditHarnessSysprompt, $"{_harnessId}: modalities edited"))
             return;
+        if (capabilitiesChanged
+            && RelaxesCapabilities(oldCapabilities, newCapabilities)
+            && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.RelaxHarnessCapabilityRestriction,
+                $"{_harnessId}: high-risk tool restrictions relaxed"))
+            return;
 
         _settings.HarnessTrust[_harnessId] = newTrust;
         _settings.HarnessModalities[_harnessId] = newModalities;
+        if (IsDefault(newCapabilities))
+            _settings.HarnessCapabilityRestrictions.Remove(_harnessId);
+        else
+            _settings.HarnessCapabilityRestrictions[_harnessId] = newCapabilities;
         try
         {
             SettingsStore.Save(_settings);

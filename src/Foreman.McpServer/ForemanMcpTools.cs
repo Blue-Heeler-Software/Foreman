@@ -673,6 +673,7 @@ public static class ForemanMcpTools
                 receiveTool = "list_ask_harness_requests",
                 replyTool = "reply_to_ask_harness_request",
             },
+            highRiskCapabilities = CapabilityPolicyShape(state, resolvedHarness),
         };
     }
 
@@ -706,6 +707,7 @@ public static class ForemanMcpTools
         {
             harnessId = resolved,
             note = "Honour these when asked, or proactively. Keep replies terse — don't pad.",
+            highRiskCapabilities = CapabilityPolicyShape(state, resolved),
             modalities,
         };
     }
@@ -943,6 +945,19 @@ public static class ForemanMcpTools
         c.Model,
     };
 
+    private static object CapabilityPolicyShape(ForemanState state, string? harnessId)
+    {
+        var restrictions = HarnessCapabilityPolicy.Effective(state.HarnessCapabilityRestrictions, harnessId);
+        var computer = HarnessCapabilityPolicy.EvaluateComputerUse(restrictions);
+        var browser = HarnessCapabilityPolicy.EvaluateBrowserUse(restrictions);
+        return new
+        {
+            computerUse = new { access = computer.Access.ToString(), allowed = computer.Allowed, computer.Reason },
+            browserUse = new { access = browser.Access.ToString(), allowed = browser.Allowed, browser.Reason },
+            instruction = "Before using any desktop-control, screen-reading, keyboard/mouse, browser, Playwright, Puppeteer, Selenium, WebDriver, Chrome DevTools, BrowserMCP, or LiveWeave capability, check this policy. AskFirst means get explicit operator approval in the chat first and say which capability you will use.",
+        };
+    }
+
     // Resets a harness's escalation and announces it. If the harness had actually escalated
     // (above Watch), the reset is published as a visible Medium alert rather than a silent Info,
     // so a (possibly adversarial) harness cannot quietly wipe a real escalation to self-exonerate.
@@ -1060,6 +1075,21 @@ public static class ForemanMcpTools
         // Driver gate: LiveWeave only executes commands from the harness its operator chose (or any, if unset).
         // The operator (install token) may always drive. Enforced here so a non-chosen harness gets told why.
         var who = caller.IsOperator ? "operator" : caller.HarnessId;
+        if (!caller.IsOperator)
+        {
+            var browserUse = HarnessCapabilityPolicy.EvaluateBrowserUse(
+                HarnessCapabilityPolicy.Effective(state.HarnessCapabilityRestrictions, caller.HarnessId));
+            if (!browserUse.Allowed)
+            {
+                return new
+                {
+                    accepted = false,
+                    status = browserUse.Access == HarnessCapabilityAccess.Block ? "blocked" : "operator_approval_required",
+                    reason = browserUse.Reason,
+                };
+            }
+        }
+
         if (!state.LiveWeave.CanDrive(who, caller.IsOperator))
             return new { accepted = false,
                 reason = $"LiveWeave is currently accepting commands only from '{state.LiveWeave.Driver}'. " +

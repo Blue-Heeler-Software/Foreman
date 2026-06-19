@@ -61,6 +61,8 @@ public static class SettingsSeal
             emergency       = s.EmergencyRuleIds.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
             trust           = s.HarnessTrust.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
                                             .Select(kv => $"{kv.Key.ToLowerInvariant()}={kv.Value}").ToArray(),
+            capabilities    = s.HarnessCapabilityRestrictions.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                                            .Select(kv => $"{kv.Key.ToLowerInvariant()}={(int)kv.Value.ComputerUse}:{(int)kv.Value.BrowserUse}").ToArray(),
             mutes           = s.Mutes.OrderBy(MuteKey, StringComparer.Ordinal).Select(MuteKey).ToArray(),
         };
         return JsonSerializer.Serialize(projection);

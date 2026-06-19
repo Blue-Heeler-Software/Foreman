@@ -1,4 +1,5 @@
 using Foreman.Core.Models;
+using Foreman.Core.Mcp;
 using Foreman.Core.Settings;
 
 namespace Foreman.Core.Tests.Settings;
@@ -19,6 +20,14 @@ public sealed class SettingsSealTests
             DisabledHarnesses = ["aider", "cline"],
             EmergencyRuleIds = ["cred-004", "net-001"],
             HarnessTrust = new() { ["codex"] = 3, ["claude-code"] = 4 },
+            HarnessCapabilityRestrictions = new()
+            {
+                ["claude-code"] = new()
+                {
+                    ComputerUse = HarnessCapabilityAccess.AskFirst,
+                    BrowserUse = HarnessCapabilityAccess.Block,
+                },
+            },
         };
         s.PresenceLock.Enabled = true;
         s.DecoyCredentials.EnableReadAuditing = true;
@@ -50,6 +59,7 @@ public sealed class SettingsSealTests
     [InlineData("emergency")]
     [InlineData("decoyRead")]
     [InlineData("peerBinding")]
+    [InlineData("capabilities")]
     [InlineData("mute")]
     public void TamperingASecurityField_IsDetected(string field)
     {
@@ -67,6 +77,7 @@ public sealed class SettingsSealTests
             case "emergency":       s.EmergencyRuleIds = ["cred-004"]; break;   // dropped net-001
             case "decoyRead":       s.DecoyCredentials.EnableReadAuditing = false; break;
             case "peerBinding":     s.McpPeerBindingEnforce = false; break;
+            case "capabilities":    s.HarnessCapabilityRestrictions["claude-code"].BrowserUse = HarnessCapabilityAccess.Allow; break;
             case "mute":            s.Mutes.Add(new MuteEntry { Scope = "category", Value = "cred" }); break;
         }
 

@@ -16,6 +16,7 @@ public sealed class PresenceLockPolicyTests
     [InlineData(WeakeningAction.DisableLogPersist)]
     [InlineData(WeakeningAction.ClearOrRotateLog)]
     [InlineData(WeakeningAction.EditHarnessSysprompt)]
+    [InlineData(WeakeningAction.RelaxHarnessCapabilityRestriction)]
     [InlineData(WeakeningAction.ExitForeman)]
     public void LockOff_GatesNothing(WeakeningAction action)
         => Assert.False(PresenceLockPolicy.RequiresPresence(action, Off()));
@@ -28,6 +29,7 @@ public sealed class PresenceLockPolicyTests
     [InlineData(WeakeningAction.DisableLogPersist)]
     [InlineData(WeakeningAction.ClearOrRotateLog)]
     [InlineData(WeakeningAction.EditHarnessSysprompt)]
+    [InlineData(WeakeningAction.RelaxHarnessCapabilityRestriction)]
     public void Standard_GatesTheWeakeningSet(WeakeningAction action)
         => Assert.True(PresenceLockPolicy.RequiresPresence(action, Standard()));
 
