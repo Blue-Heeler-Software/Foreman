@@ -10,12 +10,12 @@ to rebuild `Foreman.Monitor` and `Foreman.App`). McpServer/Core changes build + 
    ~386 actually on the box.~~ **DONE 2026-06-19 (commits `30de561` + `9ec94a5`):** `ProcessTreeTracker.Prune` /
    `PruneDeadProcesses` evict records whose PID is absent from the live OS set; the IoPoller runs it each tick
    with a two-pass grace so the WMI deletion event (and its orphan/nonzero-exit accounting) wins the race, plus
-   degraded-state logging. Adversarially reviewed (false-eviction + concurrency clean). RESIDUAL FOLLOW-UP
-   (pre-existing, NOT introduced by the prune): orphan + harness-nonzero-exit detection live only in
-   `OnProcessDeleted`, so when a WMI `__InstanceDeletionEvent` is genuinely DROPPED, those events are missed
-   entirely and the prune (a janitor) doesn't recover them. To close it, have the reconciler also emit orphan
-   events for live children of an evicted parent (mirroring `OnProcessDeleted`, honoring the local-model-host
-   suppression + deduping against WMI-path orphans). Low priority — only bites on a dropped delete event.
+   degraded-state logging. Adversarially reviewed (false-eviction + concurrency clean). RESIDUAL FOLLOW-UP — ORPHAN recovery DONE 2026-06-19 (commit `3f4f449`): the reconciler now returns a
+   `PruneOutcome` (Evicted + Orphans); for each evicted parent it marks + surfaces still-live children as
+   orphaned, and the IoPoller emits `OrphanDetectedEvent` with the WMI path's local-model-host suppression
+   (no double-emit — the two-pass grace means WMI-handled parents are gone before eviction). STILL OPEN:
+   harness-nonzero-EXIT detection on a dropped delete event is not recovered (the exit code is gone with the
+   missed WMI event, so it cannot be reconstructed) — accept as a known limit of a dropped-event world.
 2. **Dashboard opens every heavy tab at once** — `TrayController.cs:493` constructs ProcessMonitor/Harnesses/
    BehaviorMetrics/Log windows (and their timers) on dashboard open. **Lazy-create tabs; start timers only when
    visible.** App-side.
