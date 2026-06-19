@@ -203,6 +203,20 @@ public static class ForemanMcpTools
             };
 
         var acknowledged = state.AcknowledgeAlert(alertId);
+        if (acknowledged)
+        {
+            // Reflect the ack in the event log so a harness clearing its own (low/medium) alert leaves a trail —
+            // the operator UI ack paths already log this; here we close the MCP gap. The reason is agent-supplied,
+            // so it is secret-redacted before it enters the log.
+            var who = caller.IsOperator ? "operator" : (caller.HarnessId ?? "harness");
+            var why = string.IsNullOrWhiteSpace(reason)
+                ? string.Empty
+                : " — " + Foreman.Core.Security.SecretRedactor.Redact(reason!.Trim());
+            var preview = evt.Message.Length <= 80 ? evt.Message : evt.Message[..80];
+            EventBus.Instance.Publish(new InfoEvent(
+                DateTimeOffset.UtcNow, "Foreman.Ack",
+                $"Alert acknowledged via MCP by {who}: [{alertId}] {preview}{why}"));
+        }
         return new { acknowledged, reason };
     }
 

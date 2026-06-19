@@ -46,6 +46,24 @@ public sealed class McpHardeningTests
     }
 
     [Fact]
+    public void AcknowledgeAlert_OverMcp_LogsAnAckEvent()
+    {
+        var state = new ForemanState();
+        ForemanMcpTools.SetState(state);
+        var evt = Alert(ForemanSeverity.Medium, "win-002");
+        state.AddEvent(evt);
+
+        ForemanEvent? logged = null;
+        void Handler(ForemanEvent e) { if (e.Message.Contains("Alert acknowledged via MCP")) logged = e; }
+        EventBus.Instance.Subscribe(Handler);
+        try { using var _ = ToJson(ForemanMcpTools.AcknowledgeAlert(evt.Id, reason: "benign, expected")); }
+        finally { EventBus.Instance.Unsubscribe(Handler); }
+
+        Assert.NotNull(logged);                     // the ack is reflected in the event log...
+        Assert.Contains(evt.Id, logged!.Message);   // ...and names the alert it cleared
+    }
+
+    [Fact]
     public void ReportSuspiciousCommand_NeverStampsAKillTargetPid()
     {
         var tracked = new ProcessRecord { Pid = 940_001, Name = "cmd.exe", StartTime = DateTimeOffset.UtcNow };
