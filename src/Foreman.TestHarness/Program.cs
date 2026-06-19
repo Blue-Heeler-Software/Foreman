@@ -32,8 +32,12 @@ internal static class Program
         var interval = int.TryParse(Arg(args, "interval", "15"), out var iv) ? Math.Max(2, iv) : 15;
         var limit    = int.TryParse(Arg(args, "limit", "10"), out var lim) ? lim : 10;
         var once     = args.ContainsKey("once");
+        var probe    = args.ContainsKey("probe");
         var ack      = !args.ContainsKey("no-ack");
         var name     = Arg(args, "name", FriendlyName(harness));
+
+        if (probe)
+            return await ProbeAsync(harness, port, limit, Arg(args, "token", ""), ct: default);
 
         // Token: an explicit --token wins; otherwise mint a scoped per-harness token from the install secret.
         string token; string scope;
@@ -110,6 +114,61 @@ internal static class Program
 
         Log("", "Disconnected.");
         return 0;
+    }
+
+    /// <summary>
+    /// Cheap inbox probe for schedulers / loop watchers. One MCP round-trip, no logging spam.
+    /// Exit 0 = idle, 1 = pending Ask Harness mail, 2 = Foreman unreachable.
+    /// </summary>
+    private static async Task<int> ProbeAsync(string harness, int port, int limit, string explicitToken, CancellationToken ct)
+    {
+        string token;
+        if (!string.IsNullOrWhiteSpace(explicitToken))
+            token = explicitToken.Trim();
+        else
+            token = new McpAuthToken().MintHarnessToken(harness);
+
+        var url = $"http://localhost:{port}/mcp";
+        var transport = new HttpClientTransport(new HttpClientTransportOptions
+        {
+            Endpoint          = new Uri(url),
+            Name              = FriendlyName(harness),
+            ConnectionTimeout = TimeSpan.FromSeconds(8),
+            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" },
+        }, null);
+
+        try
+        {
+            await using var client = await McpClient.CreateAsync(transport, new McpClientOptions
+            {
+                ClientInfo = new Implementation { Name = FriendlyName(harness), Version = "probe", Title = FriendlyName(harness) },
+            }, null, ct);
+
+            var result = await Call(client, "list_ask_harness_requests",
+                new() { ["harnessId"] = harness, ["includeAnswered"] = false, ["limit"] = limit }, ct);
+            var requests = result?["requests"] as JsonArray ?? [];
+            var pending = requests.Count(r => string.Equals(Str(r, "status"), "pending", StringComparison.OrdinalIgnoreCase));
+
+            var payload = new JsonObject
+            {
+                ["status"] = pending > 0 ? "pending" : "idle",
+                ["pendingCount"] = pending,
+                ["harness"] = harness,
+            };
+            Console.WriteLine(payload.ToJsonString());
+            return pending > 0 ? 1 : 0;
+        }
+        catch (OperationCanceledException) { return 2; }
+        catch
+        {
+            Console.WriteLine(new JsonObject
+            {
+                ["status"] = "unreachable",
+                ["pendingCount"] = 0,
+                ["harness"] = harness,
+            }.ToJsonString());
+            return 2;
+        }
     }
 
     // ---- the loop ----------------------------------------------------------
@@ -255,6 +314,7 @@ internal static class Program
           --interval <secs>  Seconds between ticks (default: 15, min 2).
           --limit <n>        Max Ask Harness requests to pull per tick (default: 10).
           --once             Run a single SITREP + ACK pass and exit.
+          --probe            One-line JSON probe; exit 0 idle, 1 pending mail, 2 unreachable.
           --no-ack           Print pending requests but do NOT reply to them.
           --help             Show this help.
 

@@ -1,0 +1,26 @@
+{
+  "name": "Cursor inbox poll (idle exit)",
+  "description": "Checks .cursor-inbox for dropped tasks. Replies IDLE and stops when empty — cheap cron guard. Foreman mailbox requires a local session; this automation only reads the file inbox.",
+  "workflow": {
+    "triggers": [
+      {
+        "cron": {
+          "cron": "0 */1 * * *"
+        }
+      }
+    ],
+    "actions": [],
+    "prompts": [
+      "Inbox poll only — minimal tokens.\n\n1. List files in .cursor-inbox/ with extensions .md, .txt, or .msg. Ignore README, .gitkeep, and anything under processed/.\n2. If there are no such files: reply exactly the single word IDLE and stop. Do not read other paths or explore the repo.\n3. For each inbox file: read it, execute the request, then move the file to .cursor-inbox/processed/ (create that folder if needed).\n4. Summarize what you did in 3–8 lines."
+    ],
+    "model": "",
+    "agentOptions": {
+      "skipInstall": false
+    },
+    "memoryEnabled": false,
+    "gitConfig": {
+      "repo": "W:/TOOLS",
+      "branch": "main"
+    }
+  }
+}
