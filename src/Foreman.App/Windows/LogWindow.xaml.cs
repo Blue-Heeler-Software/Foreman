@@ -37,22 +37,6 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         _view.Filter = FilterPredicate;
         EventList.ItemsSource = _view;
 
-        // Hydrate: merge persisted (prior-session) events with this session's in-memory history,
-        // de-duped by Id, oldest first, capped at MaxEvents.
-        var persisted = LoadPersisted?.Invoke() ?? [];
-        var seen = new HashSet<string>();
-        var merged = persisted.Concat(EventBus.Instance.GetHistory())
-            .Where(e => seen.Add(e.Id))
-            .OrderBy(e => e.Timestamp)
-            .ToList();
-        if (merged.Count > MaxEvents)
-            merged = merged.GetRange(merged.Count - MaxEvents, MaxEvents);
-        foreach (var evt in merged)
-            _events.Add(EventViewModel.FromEvent(evt));
-
-        // subscribe for future events
-        EventBus.Instance.Subscribe(this);
-
         EventList.AddHandler(System.Windows.Controls.ScrollViewer.ScrollChangedEvent,
             new System.Windows.Controls.ScrollChangedEventHandler(OnScrollChanged));
 
@@ -60,6 +44,38 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
         Loaded += (_, _) => ScrollToBottom();
 
         UpdateStatusLabel();
+
+        // Hydrate OFF the UI thread: parsing the on-disk event log (it can be several MB) on the dispatcher froze
+        // the dashboard on open. Parse in the background, then merge + subscribe back on the UI thread.
+        _ = HydrateAsync();
+    }
+
+    private async Task HydrateAsync()
+    {
+        try
+        {
+            IReadOnlyList<ForemanEvent> persisted;
+            try { persisted = await Task.Run(() => LoadPersisted?.Invoke() ?? (IReadOnlyList<ForemanEvent>)[]); }
+            catch { persisted = []; }
+
+            // Resumes on the UI thread (the await captured the dispatcher context). Merge persisted (prior-session)
+            // with this session's in-memory history, de-duped by Id, oldest first, capped at MaxEvents.
+            var seen = new HashSet<string>();
+            var merged = persisted.Concat(EventBus.Instance.GetHistory())
+                .Where(e => seen.Add(e.Id))
+                .OrderBy(e => e.Timestamp)
+                .ToList();
+            if (merged.Count > MaxEvents)
+                merged = merged.GetRange(merged.Count - MaxEvents, MaxEvents);
+            foreach (var evt in merged)
+                _events.Add(EventViewModel.FromEvent(evt));
+
+            // Subscribe AFTER the backfill so live events append after the historical ones.
+            EventBus.Instance.Subscribe(this);
+            UpdateStatusLabel();
+            ScrollToBottom();
+        }
+        catch { /* best-effort hydrate — an empty view is acceptable, never freeze/crash the dashboard */ }
     }
 
     // ── IEventSink ───────────────────────────────────────────────────────────
