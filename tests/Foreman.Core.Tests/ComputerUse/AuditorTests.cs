@@ -1,5 +1,6 @@
 using Foreman.Core.ComputerUse;
 using Foreman.Core.Heuristics;
+using Foreman.Core.Models;
 
 namespace Foreman.Core.Tests.ComputerUse;
 
@@ -136,5 +137,49 @@ public sealed class AuditorTests
         var v = await pipe.JudgeAsync(Nav("x"), new CuContext());
         Assert.Equal(CuDecision.Hold, v.Decision);
         Assert.Contains("timed out", v.Reason);
+    }
+
+    // ── Audit cadence (token economy) ──────────────────────────────────────────
+    private static FakeAuditor LowConfMediumAllow() =>
+        new(new CuVerdict(CuDecision.Allow, "low-signal", "fast-path", ForemanSeverity.Medium, 0.5));
+
+    [Fact]
+    public async Task Cadence_Off_NeverCallsCloud_EvenForAHold()
+    {
+        var deep = new FakeAuditor(CuVerdict.Block("cloud", "x"));
+        var pipe = new AuditPipeline(new FakeAuditor(CuVerdict.Hold("fast-path", "high")), deep,
+            cadence: new CuAuditCadence(CadenceMode.Off));
+        var v = await pipe.JudgeAsync(Nav("x"), new CuContext());
+        Assert.Equal(CuDecision.Hold, v.Decision);   // fast-path Hold stands; cloud never consulted
+        Assert.Equal(0, deep.Calls);
+    }
+
+    [Fact]
+    public async Task Cadence_RiskBased_ReviewsHigh_ButNotMediumGray()
+    {
+        var deepHigh = new FakeAuditor(CuVerdict.Allow("cloud", "cleared"));
+        var pipeHigh = new AuditPipeline(new FakeAuditor(CuVerdict.Hold("fast-path", "high")), deepHigh,
+            cadence: new CuAuditCadence(CadenceMode.RiskBased));
+        await pipeHigh.JudgeAsync(Nav("x"), new CuContext());
+        Assert.Equal(1, deepHigh.Calls);   // High (at threshold) is always reviewed
+
+        var deepMed = new FakeAuditor(CuVerdict.Block("cloud", "x"));
+        var pipeMed = new AuditPipeline(LowConfMediumAllow(), deepMed,
+            cadence: new CuAuditCadence(CadenceMode.RiskBased));
+        var v = await pipeMed.JudgeAsync(Nav("x"), new CuContext());
+        Assert.Equal(0, deepMed.Calls);    // Medium gray action skipped to save tokens
+        Assert.Equal(CuDecision.Allow, v.Decision);
+    }
+
+    [Fact]
+    public async Task Cadence_EveryNth_SamplesGrayActions()
+    {
+        var deep = new FakeAuditor(CuVerdict.Block("cloud", "x"));
+        var pipe = new AuditPipeline(LowConfMediumAllow(), deep,
+            cadence: new CuAuditCadence(CadenceMode.EveryNth, EveryN: 2));
+        await pipe.JudgeAsync(Nav("x"), new CuContext());   // reviewable #1 -> 1 % 2 != 0 -> skip
+        Assert.Equal(0, deep.Calls);
+        await pipe.JudgeAsync(Nav("x"), new CuContext());   // reviewable #2 -> 2 % 2 == 0 -> review
+        Assert.Equal(1, deep.Calls);
     }
 }

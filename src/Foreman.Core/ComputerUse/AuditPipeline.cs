@@ -21,12 +21,16 @@ public sealed class AuditPipeline : IAuditor
     private readonly IAuditor _fastPath;
     private readonly IAuditor? _deepJudge;
     private readonly CuAuditOptions _opts;
+    private readonly CuAuditCadence _cadence;
+    private long _reviewable;   // running count of reviewable actions, for EveryNth sampling
 
-    public AuditPipeline(IAuditor fastPath, IAuditor? deepJudge = null, CuAuditOptions? opts = null)
+    public AuditPipeline(IAuditor fastPath, IAuditor? deepJudge = null, CuAuditOptions? opts = null,
+        CuAuditCadence? cadence = null)
     {
         _fastPath = fastPath ?? throw new ArgumentNullException(nameof(fastPath));
         _deepJudge = deepJudge;
         _opts = opts ?? new CuAuditOptions();
+        _cadence = cadence ?? new CuAuditCadence();   // default: review every reviewable action
     }
 
     public async Task<CuVerdict> JudgeAsync(CuAction action, CuContext context, CancellationToken ct = default)
@@ -40,6 +44,11 @@ public sealed class AuditPipeline : IAuditor
         // Confident allow, a read-only verb, or no deep judge configured -> the fast path's verdict stands
         // (a fast-path Hold with no deep judge correctly becomes an operator Hold).
         if (!ambiguous || !CuVerbs.IsStateChanging(action.Verb) || _deepJudge is null)
+            return fast;
+
+        // Token economy: sample the (paid) deep judge per the operator's cadence. Skipping leaves the fast-path
+        // verdict standing (a Hold stays a Hold; a low-confidence Allow proceeds) — it never clears a Block.
+        if (!_cadence.ShouldReview(fast, Interlocked.Increment(ref _reviewable)))
             return fast;
 
         try
