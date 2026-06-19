@@ -42,6 +42,9 @@ public partial class App : Application
     private LogAnchor? _launchAnchor;
     // TPM head-seal key handle (circle-back Phase B); held for the app's lifetime, disposed at exit.
     private IDisposable? _headSealKey;
+    // The same head-seal signer, used to MAC the external rollback anchors written to the OS log (so a same-user
+    // agent can't forge a counterfeit witness). Null until the persisted-log path wires it; no-op under NullHeadSigner.
+    private ILogHeadSigner? _headSigner;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -124,6 +127,7 @@ public partial class App : Application
         var recentOsLog = _osLogEnabled ? _osLog.ReadOwnRecent(256) : (IReadOnlyList<OsEventRecord>)[];
         var priorShutdown = LifecycleForensics.ClassifyFrom(recentOsLog);
         var anchorVerdict = AnchorVerdict.NoPriorAnchor;
+        var anchorForged = false;
         LogAnchor? witnessedAnchor = null;
         string? headSealNotice = null;   // Phase B: a head-seal key-change warning to publish once the bus/tray are live.
 
@@ -158,6 +162,7 @@ public partial class App : Application
             // path (Phase B) — the casual user is unchanged. TOFU-pins the key's public half on first run.
             var headSeal = GuardianSignerFactory.Build(settings, SettingsStore.Save);
             _headSealKey = headSeal.Owns;
+            _headSigner = headSeal.Signer;
             headSealNotice = headSeal.Notice;
             var eventLog = new EventLogStore(integrity: settings.LogIntegrity, signer: headSeal.Signer);
             // Verify the PRIOR-session chain before we append anything this session; surface tamper as a
@@ -169,9 +174,18 @@ public partial class App : Application
             // rollback — the agent reverts the JSONL and its seal together, so Verify still passes — but a revert
             // removes the externally-witnessed head from the file, which the out-of-band OS-log witness exposes.
             _eventLogPath = eventLog.FilePath;
+            // recentOsLog is newest-first, so the parsed anchors are too. When head-sealing is on, Evaluate trusts
+            // only an authentically-sealed anchor — a same-user agent can WriteEntry under our OS-log source, so an
+            // unsealed/badly-sealed anchor it plants to mask a rollback is rejected (and a bad seal is flagged).
+            var anchorCandidates = new List<LogAnchor>();
             foreach (var r in recentOsLog)
-                if (r.EventId == OsEventIds.LogChainAnchor && LogAnchor.TryParse(r.Message) is { } a) { witnessedAnchor = a; break; }
-            anchorVerdict = AnchorPolicy.Check(LogHeadReader.ReadChainedHashes(_eventLogPath), witnessedAnchor);
+                if (r.EventId == OsEventIds.LogChainAnchor && LogAnchor.TryParse(r.Message) is { } a)
+                    anchorCandidates.Add(a);
+            var anchorEval = AnchorPolicy.Evaluate(
+                LogHeadReader.ReadChainedHashes(_eventLogPath), anchorCandidates, headSeal.Signer);
+            anchorVerdict = anchorEval.Verdict;
+            anchorForged = anchorEval.ForgedSealSeen;
+            witnessedAnchor = anchorEval.TrustedAnchor;
             _launchAnchor = LogHeadReader.CurrentAnchor(_eventLogPath);
 
             var eventLogFailureReported = 0;
@@ -465,7 +479,7 @@ public partial class App : Application
             // Stamp the chain head this launch inherited into the OS log as the external rollback witness for the
             // NEXT launch (also re-stamped at clean stop). count 0 = nothing persisted yet, so nothing to witness.
             if (_launchAnchor is { Count: > 0 } launchAnchor)
-                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info, launchAnchor.Format());
+                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info, SealAnchor(launchAnchor).Format());
             if (!_osLog.IsAvailable && _osLog.UnavailableReason is { } why)
                 EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.OsLog", why));
         }
@@ -508,6 +522,29 @@ public partial class App : Application
                 " is no longer present on disk. The on-disk log was reverted to an earlier state while Foreman was " +
                 "down — the classic same-user move to erase tracks. Treat recent on-disk history as untrustworthy and investigate."));
 
+        // Anchor forgery (anchor-MAC): a candidate witness in the OS event log carried a seal that did NOT verify
+        // under Foreman's pinned head-seal key. Once the OS-log source is registered a same-user agent can write
+        // entries under it, so it can plant a counterfeit anchor to mask a rollback — but it can't produce a valid
+        // seal without the key. Verdict Forged = no authentic anchor survived (a rollback may be masked → Critical);
+        // ForgedSealSeen alongside a valid anchor = an attempt that didn't take (still High — someone tried).
+        // GATE: when the pinned key itself changed this launch (TPM reset / re-key), OLD-key anchors legitimately
+        // fail verification — that's the key-change notice's job to report (above), not a forgery. BUT an attacker
+        // can FORCE a key change by rewriting the pinned key in settings.json, which trips the settings-tamper seal
+        // (Tampered). So only treat a key change as innocent when settings are NOT tampered; a key change that
+        // coincides with settings tampering is the attack chain itself -> let the forgery alarm fire.
+        var keyChangeExplainsBadSeals = headSealNotice is not null
+            && SettingsStore.LastSealVerdict != SettingsSealVerdict.Tampered;
+        if ((anchorVerdict == AnchorVerdict.Forged || anchorForged) && !keyChangeExplainsBadSeals)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow,
+                anchorVerdict == AnchorVerdict.Forged ? ForemanSeverity.Critical : ForemanSeverity.High,
+                "Foreman.LogIntegrity",
+                "Event-log anchor FORGERY detected: an external rollback witness in the OS event log was not signed " +
+                "by Foreman's pinned head-seal key — a same-user agent planted a counterfeit witness. " +
+                (anchorVerdict == AnchorVerdict.Forged
+                    ? "No authentic anchor remained, so an offline rollback may be masked; treat on-disk history as untrustworthy and investigate."
+                    : "An authentic anchor still verified this launch, but the attempt itself means an agent is trying to erase tracks; investigate.")));
+
         // Watchdog-of-the-watchdog (B9): the prior instance left a dangling run in the OS log — no clean stop and no
         // crash record, the signature of a forced kill (an agent disabling its watchdog). Reconstructed here and
         // re-logged, so the kill itself becomes a durable, surviving Critical.
@@ -532,6 +569,12 @@ public partial class App : Application
                 id => _mcpHost.MintHarnessToken(id)));
     }
 
+    // Bind an external rollback anchor to Foreman's pinned head-seal key before it goes into the OS event log, so a
+    // same-user agent (which can WriteEntry under our source) can't forge a counterfeit witness. Under NullHeadSigner
+    // or a key-less run SealHead returns null and the anchor stays unsealed — verified accordingly on the next launch.
+    private LogAnchor SealAnchor(LogAnchor anchor) =>
+        _headSigner?.SealHead(anchor.SealPayloadHead(), anchor.Count) is { } seal ? anchor with { Seal = seal } : anchor;
+
     // Operator action (presence-gated): rotate + re-seal the event log. Archives the current chain, starts a
     // fresh sealed one, and publishes a SUPERSEDING external anchor so the next launch doesn't read the stale
     // witness and (correctly) flag the now-absent head as a rollback. Re-baselining the tamper witness is a
@@ -551,7 +594,7 @@ public partial class App : Application
             {
                 // Superseding external anchor: next launch compares the FRESH chain against this FRESH witness.
                 _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info,
-                    result.NewAnchor.Format());
+                    SealAnchor(result.NewAnchor).Format());
                 // DISTINCT durable record — the bare anchor above is indistinguishable from a routine lifecycle
                 // bump, so also write an explicit security-significant entry. The OS log is the one witness a
                 // same-user agent can't surgically edit, so a re-baseline must be unmistakable there.
@@ -725,7 +768,7 @@ public partial class App : Application
             // untouched until the next launch, so next launch's anchor head must equal this — a mismatch then = an
             // offline revert. Recompute from disk (the session appended since the start-anchor).
             if (_eventLogPath is { } logPath && LogHeadReader.CurrentAnchor(logPath) is { Count: > 0 } finalAnchor)
-                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info, finalAnchor.Format());
+                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info, SealAnchor(finalAnchor).Format());
             _osLog.Write(OsEventIds.StoppedClean, OsEventCategory.Lifecycle, ForemanSeverity.Info,
                 $"Foreman Agent Safety stopped (clean shutdown), pid {Environment.ProcessId}.");
         }

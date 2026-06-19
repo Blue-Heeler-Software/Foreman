@@ -16,28 +16,59 @@ namespace Foreman.Core.Events;
 /// restore the snapshot. The restored state is internally consistent, so <see cref="EventLogStore.Verify"/>
 /// passes — the agent rolled BOTH the chain and its head back together. The external anchor defeats exactly this:
 /// on launch we check that the head we last witnessed EXTERNALLY is still present in the on-disk chain. A rollback
-/// removes it (the restored snapshot predates that head) → <see cref="AnchorVerdict.Rolledback"/>.
+/// removes it (the restored snapshot predates that head) -> <see cref="AnchorVerdict.Rolledback"/>.
+///
+/// ANCHOR FORGE WINDOW (closed by <paramref name="Seal"/>): once the OS-log source is registered, a same-user agent
+/// can WriteEntry under it (no elevation), so it can also PLANT a counterfeit anchor pointing at a rolled-back head.
+/// When head-sealing is enabled the anchor carries a MAC under the chain's signing key, and only an authentically
+/// sealed anchor is trusted (see <see cref="AnchorPolicy.Evaluate"/>) — a forged one the agent can't sign is rejected.
 /// </summary>
-public sealed record LogAnchor(string HeadHash, long Count)
+/// <param name="Seal">
+/// Optional authentication tag over (<paramref name="HeadHash"/>, <paramref name="Count"/>) produced by the chain's
+/// <see cref="ILogHeadSigner"/>. Present only when head-sealing is enabled; null for the no-op signer / pre-seal
+/// anchors (which still parse). The signed input is domain-separated (see <see cref="SealPayloadHead"/>) so it can
+/// never be confused with the on-disk head-file seal.
+/// </param>
+public sealed record LogAnchor(string HeadHash, long Count, string? Seal = null)
 {
     private static readonly Regex _parse = new(
-        @"head=(?<h>[0-9A-Fa-f]+)\s+count=(?<c>\d+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        @"head=(?<h>[0-9A-Fa-f]+)\s+count=(?<c>\d+)(?:\s+seal=(?<s>[^\s.]+))?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>Domain-separation prefix for the anchor MAC. It contains non-hex letters, so it can never begin a
+    /// real (hex SHA-256) head hash — which is what keeps an anchor seal's signed input distinct from a head seal's.</summary>
+    private const string SealDomain = "foreman-anchor-v1:";
 
     /// <summary>The OS-event-log message body that carries the anchor — a stable, SIEM-greppable one-liner.</summary>
-    public string Format() =>
-        $"Foreman log-chain anchor — head={HeadHash} count={Count.ToString(CultureInfo.InvariantCulture)}. " +
-        "External rollback witness; do not edit.";
+    public string Format()
+    {
+        var sealPart = string.IsNullOrEmpty(Seal) ? string.Empty : $" seal={Seal}";
+        return $"Foreman log-chain anchor - head={HeadHash} count={Count.ToString(CultureInfo.InvariantCulture)}{sealPart}. " +
+               "External rollback witness; do not edit.";
+    }
 
-    /// <summary>Parses an anchor previously written by <see cref="Format"/>; null if the text isn't an anchor.</summary>
+    /// <summary>Parses an anchor previously written by <see cref="Format"/>; null if the text isn't an anchor.
+    /// The <c>seal=</c> field is optional, so anchors written before sealing (or by the no-op signer) still parse.</summary>
     public static LogAnchor? TryParse(string? message)
     {
         if (string.IsNullOrEmpty(message)) return null;
         var m = _parse.Match(message);
         if (!m.Success) return null;
+        var seal = m.Groups["s"].Success ? m.Groups["s"].Value : null;
         return long.TryParse(m.Groups["c"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count)
-            ? new LogAnchor(m.Groups["h"].Value, count)
+            ? new LogAnchor(m.Groups["h"].Value, count, seal)
             : null;
     }
+
+    /// <summary>
+    /// Domain-separated head input for the anchor MAC. The chain's <see cref="ILogHeadSigner"/> signs (headInput,
+    /// count); the on-disk <c>.head</c> seal signs the BARE head, so WITHOUT a tag an agent could read a <c>.head</c>
+    /// file (current or an archived <c>*.archived.head</c>) and lift its genuine seal verbatim into a counterfeit
+    /// anchor — and it would verify, defeating the MAC. Prefixing <see cref="SealDomain"/> (which a hex head can
+    /// never contain) makes anchor seals and head-file seals cryptographically distinct domains, so a lifted head
+    /// seal fails anchor verification. The tag is only ever the SIGNED input; the stored head stays plain hex.
+    /// </summary>
+    public string SealPayloadHead() => SealDomain + HeadHash;
 }
 
 /// <summary>Outcome of checking the on-disk chain against the last external anchor.</summary>
@@ -49,6 +80,9 @@ public enum AnchorVerdict
     Match,
     /// <summary>The externally-witnessed head is GONE from the on-disk chain — the log was reverted/rewritten while Foreman was down.</summary>
     Rolledback,
+    /// <summary>A candidate anchor carried a seal that FAILED verification under the pinned key, and no authentically
+    /// sealed anchor remained — a same-user agent forged a counterfeit external witness (so a rollback may be masked).</summary>
+    Forged,
 }
 
 /// <summary>
@@ -56,9 +90,9 @@ public enum AnchorVerdict
 /// cap during a RUNNING session (which re-anchors the hash chain and changes every retained record's hash), but
 /// it never trims while DOWN. So the test isn't "does the head still equal the anchor" (a trim would change it) —
 /// it's "is the anchored head still PRESENT anywhere in the chain":
-///  - present as the last record  → clean stop→start cycle, nothing touched while down;
-///  - present as an interior record → this session appended past the anchor then was killed (honest forward progress);
-///  - ABSENT                       → the on-disk log no longer contains the state we externally committed to = rollback.
+///  - present as the last record  -> clean stop->start cycle, nothing touched while down;
+///  - present as an interior record -> this session appended past the anchor then was killed (honest forward progress);
+///  - ABSENT                       -> the on-disk log no longer contains the state we externally committed to = rollback.
 /// The residual false-positive (a single session appends more than the on-disk cap AND a trim evicts the anchored
 /// head from the front before a kill) is rare and surfaces as a recheck-worthy notice, never silent.
 /// </summary>
@@ -66,11 +100,74 @@ public static class AnchorPolicy
 {
     public static AnchorVerdict Check(IReadOnlyCollection<string> onDiskChainedHashes, LogAnchor? anchor)
     {
-        if (anchor is null || anchor.Count <= 0 || string.IsNullOrEmpty(anchor.HeadHash))
+        if (!IsUsable(anchor))
             return AnchorVerdict.NoPriorAnchor;
-        return onDiskChainedHashes.Contains(anchor.HeadHash) ? AnchorVerdict.Match : AnchorVerdict.Rolledback;
+        return onDiskChainedHashes.Contains(anchor!.HeadHash) ? AnchorVerdict.Match : AnchorVerdict.Rolledback;
     }
+
+    /// <summary>
+    /// Seal-aware anchor decision. The OS-log anchor is forgeable by a same-user agent once the source is registered
+    /// (it can <c>WriteEntry</c> under our source without elevation), so when head-sealing is enabled we trust ONLY
+    /// an anchor whose seal verifies under the pinned key — defeating a counterfeit witness planted to mask a rollback.
+    ///
+    /// <para>Selection (candidates are newest->oldest, as <c>ReadOwnRecent</c> returns them):</para>
+    /// <list type="bullet">
+    ///   <item>Signer expects no seal (the casual <c>NullHeadSigner</c> default): unchanged behaviour — the newest
+    ///   usable anchor wins, seals ignored. Zero change for users who never enabled sealing.</item>
+    ///   <item>Seal present and valid -> trusted witness; check its head against the on-disk chain (Match/Rolledback).</item>
+    ///   <item>Seal present but INVALID -> a forgery attempt; skipped, flagged via <c>ForgedSealSeen</c>, keep scanning.</item>
+    ///   <item>Seal ABSENT -> legacy/pre-pin/stripped; skipped quietly (a clean upgrade isn't an attack).</item>
+    /// </list>
+    /// If no authentically sealed anchor is found, a forged one anywhere yields <see cref="AnchorVerdict.Forged"/>;
+    /// only-unsigned yields <see cref="AnchorVerdict.NoPriorAnchor"/> (migration-tolerant).
+    ///
+    /// <para>RESIDUAL WINDOWS (documented, not closed here):</para>
+    /// <list type="bullet">
+    ///   <item>REPLAY: a genuinely-old VALID anchor can be re-written as the newest — the agent rolls the on-disk
+    ///   log back to a previously-anchored state and replays that authentic anchor. Its head is present in the
+    ///   rolled-back chain, so it reads as Match. Closing it needs a monotonic anchor epoch sealed into each anchor.</item>
+    ///   <item>MIGRATION / KEY-LESS: the first sealing launch (no sealed anchor exists yet), and any session where the
+    ///   private key was unavailable (SealHead returned null -> an unsigned anchor was written), leave unsigned anchors
+    ///   that are skipped as a clean upgrade. A rollback whose surviving witnesses are all unsigned reads as NoPrior.</item>
+    /// </list>
+    /// </summary>
+    public static AnchorEvaluation Evaluate(
+        IReadOnlyCollection<string> onDiskChainedHashes,
+        IReadOnlyList<LogAnchor>? candidatesNewestFirst,
+        ILogHeadSigner signer)
+    {
+        ArgumentNullException.ThrowIfNull(signer);
+        candidatesNewestFirst ??= [];
+
+        if (!signer.ExpectsSeal)
+        {
+            LogAnchor? newest = null;
+            foreach (var a in candidatesNewestFirst)
+                if (IsUsable(a)) { newest = a; break; }
+            return new AnchorEvaluation(Check(onDiskChainedHashes, newest), newest, ForgedSealSeen: false);
+        }
+
+        var forgedSealSeen = false;
+        foreach (var a in candidatesNewestFirst)
+        {
+            if (!IsUsable(a)) continue;
+            if (string.IsNullOrEmpty(a.Seal)) continue;                          // unsigned: pre-pin/legacy or stripped -> not trusted
+            if (signer.VerifyHead(a.SealPayloadHead(), a.Count, a.Seal))         // domain-separated input (see SealPayloadHead)
+                return new AnchorEvaluation(Check(onDiskChainedHashes, a), a, forgedSealSeen);
+            forgedSealSeen = true;                                                // sealed but invalid = forgery/tamper
+        }
+
+        return new AnchorEvaluation(
+            forgedSealSeen ? AnchorVerdict.Forged : AnchorVerdict.NoPriorAnchor, TrustedAnchor: null, forgedSealSeen);
+    }
+
+    private static bool IsUsable(LogAnchor? a) => a is { Count: > 0 } && !string.IsNullOrEmpty(a.HeadHash);
 }
+
+/// <summary>Outcome of <see cref="AnchorPolicy.Evaluate"/>: the rollback verdict, the anchor it trusted (null if
+/// none verified), and whether any candidate carried an invalid seal (a forgery attempt worth surfacing even when
+/// an authentic anchor still verified).</summary>
+public sealed record AnchorEvaluation(AnchorVerdict Verdict, LogAnchor? TrustedAnchor, bool ForgedSealSeen);
 
 /// <summary>
 /// Reads the on-disk event-log JSONL independently of <see cref="EventLogStore"/> (so the anchor check doesn't
