@@ -19,6 +19,12 @@ public sealed class ProcessTreeTracker
     // has only just exited. Touched solely on the IoPoller (prune) thread.
     private readonly HashSet<string> _absentSincePrevPrune = new();
 
+    /// <summary>A still-live child left orphaned because the reconciler evicted its (WMI-missed-dead) parent.</summary>
+    public sealed record OrphanedChild(ProcessRecord Child, ProcessRecord Parent);
+
+    /// <summary>What one reconciliation pass produced: the evicted dead records + any children it orphaned.</summary>
+    public sealed record PruneOutcome(IReadOnlyList<ProcessRecord> Evicted, IReadOnlyList<OrphanedChild> Orphans);
+
     public IEnumerable<ProcessRecord> GetAll() => _records.Values;
 
     public ProcessRecord? GetByPid(int pid)
@@ -88,7 +94,7 @@ public sealed class ProcessTreeTracker
     /// touched only on the single prune thread. NOTE: a reused PID keeps BOTH its records alive here (the live
     /// PID protects them); that rarer case is handled by <see cref="OnProcessCreated"/> re-pointing the index.
     /// </summary>
-    public IReadOnlyList<ProcessRecord> Prune(IReadOnlySet<int> livePids, DateTimeOffset now, TimeSpan minAge)
+    public PruneOutcome Prune(IReadOnlySet<int> livePids, DateTimeOffset now, TimeSpan minAge)
     {
         List<ProcessRecord>? evicted = null;
         var absentNow = new HashSet<string>();
@@ -114,14 +120,34 @@ public sealed class ProcessTreeTracker
         // Carry this pass's absentees forward as the grace baseline for the next pass.
         _absentSincePrevPrune.Clear();
         _absentSincePrevPrune.UnionWith(absentNow);
-        return evicted ?? (IReadOnlyList<ProcessRecord>)[];
+
+        // Orphan recovery: the WMI delete watcher flags orphaned children in OnProcessDeleted; when that delete
+        // event is DROPPED (the very case this reconciler cleans up), those children were never flagged. So for
+        // each parent we just evicted, mark any still-live, not-yet-flagged child orphaned and surface it. No
+        // double-emit: the two-pass grace means a WMI-HANDLED parent is already gone before we'd evict it, so
+        // this only fires for genuinely-missed deaths.
+        List<OrphanedChild>? orphans = null;
+        if (evicted is { Count: > 0 })
+        {
+            var evictedByPid = new Dictionary<int, ProcessRecord>();
+            foreach (var p in evicted) evictedByPid[p.Pid] = p;   // last wins on the rare same-pid dup
+            foreach (var rec in _records.Values)
+            {
+                if (rec.State is ProcessState.Orphaned or ProcessState.Terminated) continue;
+                if (!evictedByPid.TryGetValue(rec.ParentPid, out var parent)) continue;
+                rec.State = ProcessState.Orphaned;
+                (orphans ??= []).Add(new OrphanedChild(rec, parent));
+            }
+        }
+
+        return new PruneOutcome(evicted ?? [], orphans ?? []);
     }
 
     /// <summary>
     /// Gathers the live OS PID set and prunes dead records against it. Best-effort: a process that exits
     /// mid-enumeration simply isn't in the set (and is pruned on the next pass).
     /// </summary>
-    public IReadOnlyList<ProcessRecord> PruneDeadProcesses(TimeSpan minAge)
+    public PruneOutcome PruneDeadProcesses(TimeSpan minAge)
     {
         var live = new HashSet<int>();
         foreach (var p in Process.GetProcesses())

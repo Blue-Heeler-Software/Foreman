@@ -75,8 +75,8 @@ public sealed class ProcessTreeLifecycleTests
         tree.OnProcessCreated(dead);
 
         var livePids = new HashSet<int> { live.Pid };
-        tree.Prune(livePids, now, TimeSpan.FromSeconds(60));                 // pass 1: grace defers
-        var evicted = tree.Prune(livePids, now, TimeSpan.FromSeconds(60));   // pass 2: evicts
+        tree.Prune(livePids, now, TimeSpan.FromSeconds(60));                          // pass 1: grace defers
+        var evicted = tree.Prune(livePids, now, TimeSpan.FromSeconds(60)).Evicted;    // pass 2: evicts
 
         Assert.Single(evicted);
         Assert.Same(dead, evicted[0]);
@@ -93,11 +93,11 @@ public sealed class ProcessTreeLifecycleTests
         tree.OnProcessCreated(dead);
         var noLive = new HashSet<int>();
 
-        var firstPass = tree.Prune(noLive, now, TimeSpan.FromSeconds(60));
+        var firstPass = tree.Prune(noLive, now, TimeSpan.FromSeconds(60)).Evicted;
         Assert.Empty(firstPass);                  // grace gives the WMI deletion event time to win the race
         Assert.NotNull(tree.GetByPid(dead.Pid));  // still tracked after one pass
 
-        var secondPass = tree.Prune(noLive, now, TimeSpan.FromSeconds(60));
+        var secondPass = tree.Prune(noLive, now, TimeSpan.FromSeconds(60)).Evicted;
         Assert.Single(secondPass);                // absent on two consecutive passes -> evicted
         Assert.Null(tree.GetByPid(dead.Pid));
     }
@@ -112,7 +112,7 @@ public sealed class ProcessTreeLifecycleTests
 
         tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60));             // absent -> defer
         tree.Prune(new HashSet<int> { rec.Pid }, now, TimeSpan.FromSeconds(60));   // present -> grace reset
-        var evicted = tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60)); // absent again -> defer, not evict
+        var evicted = tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60)).Evicted; // absent again -> defer
 
         Assert.Empty(evicted);
         Assert.NotNull(tree.GetByPid(rec.Pid));
@@ -126,7 +126,7 @@ public sealed class ProcessTreeLifecycleTests
         var young = new ProcessRecord { Pid = 920_011, Name = "young.exe", StartTime = now - TimeSpan.FromSeconds(5) };
         tree.OnProcessCreated(young);
 
-        var evicted = tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60));
+        var evicted = tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60)).Evicted;
 
         Assert.Empty(evicted);
         Assert.NotNull(tree.GetByPid(young.Pid));   // minAge guards a just-created process from a snapshot race
@@ -140,10 +140,33 @@ public sealed class ProcessTreeLifecycleTests
         var rec = new ProcessRecord { Pid = 920_021, Name = "harness.exe", StartTime = now - TimeSpan.FromHours(2), IsHarness = true };
         tree.OnProcessCreated(rec);
 
-        var evicted = tree.Prune(new HashSet<int> { rec.Pid }, now, TimeSpan.FromSeconds(60));
+        var evicted = tree.Prune(new HashSet<int> { rec.Pid }, now, TimeSpan.FromSeconds(60)).Evicted;
 
         Assert.Empty(evicted);
         Assert.NotNull(tree.GetByPid(rec.Pid));
+    }
+
+    [Fact]
+    public void Prune_RecoversOrphans_WhenParentsDeathEventWasMissed()
+    {
+        var tree = new ProcessTreeTracker();
+        var now = DateTimeOffset.UtcNow;
+        var aged = TimeSpan.FromMinutes(5);
+        // A harness parent whose WMI termination event was dropped (still tracked) + a live child of it.
+        var parent = new ProcessRecord { Pid = 930_001, ParentPid = 0, Name = "codex.exe", StartTime = now - aged, HarnessType = "codex" };
+        var child  = new ProcessRecord { Pid = 930_002, ParentPid = parent.Pid, Name = "python.exe", StartTime = now - aged };
+        tree.OnProcessCreated(parent);
+        tree.OnProcessCreated(child);
+
+        var liveWithoutParent = new HashSet<int> { child.Pid };   // parent gone from the OS; child still alive
+        tree.Prune(liveWithoutParent, now, TimeSpan.FromSeconds(60));                  // pass 1: grace defers
+        var outcome = tree.Prune(liveWithoutParent, now, TimeSpan.FromSeconds(60));    // pass 2: evict + recover
+
+        Assert.Contains(outcome.Evicted, r => r.Pid == parent.Pid);
+        var orphan = Assert.Single(outcome.Orphans);
+        Assert.Same(child, orphan.Child);
+        Assert.Same(parent, orphan.Parent);
+        Assert.Equal(ProcessState.Orphaned, child.State);   // flagged, so a second pass won't re-emit it
     }
 
     [Fact]

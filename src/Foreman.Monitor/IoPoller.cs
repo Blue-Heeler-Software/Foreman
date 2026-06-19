@@ -70,7 +70,7 @@ public sealed class IoPoller : IDisposable
     {
         try
         {
-            var evicted = _tree.PruneDeadProcesses(PruneMinAge);
+            var outcome = _tree.PruneDeadProcesses(PruneMinAge);
             if (_reconcileDegraded)
             {
                 _reconcileDegraded = false;
@@ -78,13 +78,29 @@ public sealed class IoPoller : IDisposable
                     DateTimeOffset.UtcNow, ForemanSeverity.Low, "Foreman.Monitor",
                     "Process-tree reconciliation recovered."));
             }
-            foreach (var rec in evicted)
+            foreach (var rec in outcome.Evicted)
                 _hangDetector.Forget(rec.Pid);   // drop any hang-alert state held for the gone pids
+
+            // Orphan recovery: a parent whose WMI termination event was DROPPED never went through
+            // OnProcessDeleted, so its surviving children were never flagged orphaned. Emit them now —
+            // mirroring the WMI path's local-model-host suppression (a local-model host shedding children
+            // on exit is normal teardown, not an abandoned orphan).
+            foreach (var o in outcome.Orphans)
+            {
+                if (KnownHarnesses.IsLocalModelHost(o.Parent.HarnessType)) continue;
+                _bus.Publish(new OrphanDetectedEvent(
+                    DateTimeOffset.UtcNow, "Foreman.Monitor",
+                    $"{o.Child.Name} (pid {o.Child.Pid}) is orphaned — parent {o.Parent.Name} (pid {o.Parent.Pid}) " +
+                    "exited (its termination event was missed; caught by reconciliation)",
+                    o.Child.Pid, o.Child.Name, o.Parent.Pid, o.Parent.Name, o.Child.UptimeMinutes)
+                    { ProcessStartTime = o.Child.StartTime });
+            }
+
             // Surface only a meaningful catch-up (the first pass after drift), not routine churn.
-            if (evicted.Count >= 10)
+            if (outcome.Evicted.Count >= 10)
                 _bus.Publish(new MonitoringNoticeEvent(
                     DateTimeOffset.UtcNow, ForemanSeverity.Low, "Foreman.Monitor",
-                    $"Process-tree reconciliation evicted {evicted.Count} stale record(s) whose processes had already exited."));
+                    $"Process-tree reconciliation evicted {outcome.Evicted.Count} stale record(s) whose processes had already exited."));
         }
         catch (Exception ex)
         {
