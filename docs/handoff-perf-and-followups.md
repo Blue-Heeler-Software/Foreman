@@ -173,3 +173,17 @@ DJC, so it must be reconnected to Foreman first.
 > Review each commit against your original suggestion. For each report: (a) does the change fully and
 > correctly address what you raised, (b) is anything missed or only partially done, (c) any regression or
 > new risk introduced. Be specific and cite file:line. Reply via `reply_to_ask_harness_request`.
+
+## J. Pre-existing anti-rollback hardening (surfaced by the rotate review, 2026-06-19)
+
+The presence-gated rotate + re-seal (commits `373943d` + `376b5ce`) is sound; its adversarial review flagged two
+PRE-EXISTING SEC B8 gaps it does NOT introduce or widen, worth their own hardening later:
+1. **Unauthenticated OS-log anchor.** `LogChainAnchor` entries are plaintext (`head=… count=…`) with no
+   signature/MAC, and any same-user process can write the registered Application-log source. So a rogue same-user
+   agent can forge a superseding anchor to neutralise rollback detection — independent of the rotate feature
+   (which just adds a gated, legitimate way to supersede). Hardening: sign/MAC the anchor payload (TPM / guardian
+   key) so a forged anchor fails verification, and/or bind a monotonic epoch the reader can rank.
+2. **Witness-read is count/scan-bounded, not order-explicit.** `WindowsEventLogSink.ReadOwnRecent(256)` also stops
+   after ~20k raw shared-log entries; a flooded Application log can push Foreman's latest anchor out of the read
+   slice. It degrades SAFELY (→ NoPriorAnchor, never a false rollback), so it's robustness not a break. Hardening:
+   read by descending TimeGenerated / `EventLogReadingDirection.Backwards`, budgeting the cap to Foreman entries.
