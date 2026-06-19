@@ -149,31 +149,57 @@ public sealed class EventLogStore
     {
         lock (_lock)
         {
-            // 1. Close the OLD chain with a final, in-chain record of the rotation (kept in the archive).
-            AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
-                $"Event log rotated + re-sealed: {reason}. This is the final record of the prior chain."));
-            var priorCount = _count;
+            try
+            {
+                // 1. Close the OLD chain with a final, in-chain record of the rotation (kept in the archive).
+                AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
+                    $"Event log rotated + re-sealed: {reason}. This is the final record of the prior chain."));
+                var priorCount = _count;
 
-            // 2. Archive the JSONL + its head seal to a timestamped sibling (move, never delete — evidence stays).
-            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
-            var archive = $"{_file}.{now.ToUnixTimeSeconds()}.archived";
-            if (File.Exists(_file)) File.Move(_file, archive, overwrite: true);
-            if (File.Exists(HeadFile)) File.Move(HeadFile, archive + ".head", overwrite: true);
+                // 2. Archive the JSONL + its head seal to a UNIQUE sibling (move, never delete or overwrite — the
+                //    point is to preserve evidence, so two rotates in the same second must not clobber each other).
+                Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
+                var stamp = now.ToUnixTimeSeconds();
+                var archive = $"{_file}.{stamp}.archived";
+                for (var n = 1; File.Exists(archive) || File.Exists(archive + ".head"); n++)
+                    archive = $"{_file}.{stamp}.{n}.archived";
+                if (File.Exists(_file)) File.Move(_file, archive);
+                if (File.Exists(HeadFile)) File.Move(HeadFile, archive + ".head");
 
-            // 3. Reset in-memory chain state so the next append seeds a fresh genesis from the now-absent file.
-            _headHash = null;
-            _lastSequence = null;
-            _lastRecordedAtUtc = null;
-            _lastMonotonicTicks = null;
-            _lastTemporalSessionId = null;
-            _lastMonotonicFrequency = 0;
+                // 3. Reset ALL in-memory chain state so the next append seeds a fresh genesis from the absent file.
+                ResetChainState();
 
-            // 4. Open the NEW chain with its first record (writes a fresh file + fresh head seal).
-            AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
-                $"Fresh event-log chain established (prior chain of {priorCount} record(s) archived). Baseline re-sealed."));
+                // 4. Open the NEW chain with its first record (writes a fresh file + fresh head seal).
+                AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
+                    $"Fresh event-log chain established (prior chain of {priorCount} record(s) archived). Baseline re-sealed."));
 
-            return new RotateResult(archive, priorCount, new LogAnchor(_headHash ?? LogChain.Genesis, _count));
+                return new RotateResult(archive, priorCount, new LogAnchor(_headHash ?? LogChain.Genesis, _count));
+            }
+            catch
+            {
+                // Crash-consistency: a mid-rotate failure (e.g. the .head move or the new-chain append throws on a
+                // disk-full / AV lock) must NOT leave a stale in-memory head chaining onto a moved/absent file —
+                // that would silently corrupt the chain into a BrokenLink on the next launch, indistinguishable
+                // from real tampering. Drop chain state so the next append re-seeds from whatever is on disk now
+                // (or genesis if the file was already moved) and re-anchors cleanly. The failure surfaces to the
+                // caller, which records it loudly.
+                ResetChainState();
+                throw;
+            }
         }
+    }
+
+    // Resets every in-memory chain field to the "unseeded" state so the next AppendCore re-runs SeedState against
+    // the current on-disk file. Kept in one place so a rotate (or any future reset) can't leave a field stale.
+    private void ResetChainState()
+    {
+        _headHash = null;
+        _count = 0;
+        _lastSequence = null;
+        _lastRecordedAtUtc = null;
+        _lastMonotonicTicks = null;
+        _lastTemporalSessionId = null;
+        _lastMonotonicFrequency = 0;
     }
 
     /// <summary>Loads persisted events oldest-first, skipping corrupt lines and trimming to maxEntries.</summary>

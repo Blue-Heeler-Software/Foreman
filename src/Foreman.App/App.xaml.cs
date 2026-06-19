@@ -545,22 +545,43 @@ public partial class App : Application
         try
         {
             var result = eventLog.RotateAndReseal("operator rotate + re-seal", DateTimeOffset.UtcNow);
-            // Superseding external anchor: next launch compares the FRESH chain against this FRESH witness.
+            var detail = $"Prior chain ({result.PriorCount} record(s)) archived to " +
+                         $"{Path.GetFileName(result.ArchivePath)}; fresh tamper-evidence baseline established.";
             if (_osLogEnabled)
+            {
+                // Superseding external anchor: next launch compares the FRESH chain against this FRESH witness.
                 _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info,
                     result.NewAnchor.Format());
-            // Loud, indelible record — lands in the fresh chain (bus subscriber) and the OS log (forwarder).
+                // DISTINCT durable record — the bare anchor above is indistinguishable from a routine lifecycle
+                // bump, so also write an explicit security-significant entry. The OS log is the one witness a
+                // same-user agent can't surgically edit, so a re-baseline must be unmistakable there.
+                _osLog.Write(OsEventIds.SecuritySignificant, OsEventCategory.Security, ForemanSeverity.High,
+                    $"Operator presence-verified event-log rotate + re-seal. {detail}");
+            }
+            // In-chain record (lands in the fresh chain via the bus subscriber).
             EventBus.Instance.Publish(new MonitoringNoticeEvent(
                 DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.LogRotate",
-                $"Operator rotated + re-sealed the event log (presence-verified). Prior chain " +
-                $"({result.PriorCount} record(s)) archived to {Path.GetFileName(result.ArchivePath)}; " +
-                "fresh tamper-evidence baseline established."));
+                $"Operator rotated + re-sealed the event log (presence-verified). {detail}"));
             return (true, $"Event log rotated — prior chain ({result.PriorCount} records) archived, fresh baseline sealed.");
         }
         catch (Exception ex)
         {
-            return (false, $"Rotate failed: {ex.Message}");
+            // A FAILED re-baseline must be as loud + durable as a success — a partial rotate could leave the chain
+            // inconsistent (Core re-seeds so the next append re-anchors, but the operator must still see it).
+            var verify = SafeVerifyStatus(eventLog);
+            if (_osLogEnabled)
+                _osLog.Write(OsEventIds.SecuritySignificant, OsEventCategory.Security, ForemanSeverity.High,
+                    $"Operator-initiated event-log rotate FAILED ({ex.GetType().Name}). On-disk chain verify: {verify}.");
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.LogRotate",
+                $"Event-log rotate FAILED ({ex.GetType().Name}); on-disk chain verify: {verify}. Retry the rotate."));
+            return (false, $"Rotate failed: {ex.Message} (chain verify: {verify}).");
         }
+    }
+
+    private static string SafeVerifyStatus(EventLogStore log)
+    {
+        try { return log.Verify().Status.ToString(); } catch { return "unknown"; }
     }
 
     // Best-effort live delivery of an auto-response prompt to the target's MCP session; the mailbox copy

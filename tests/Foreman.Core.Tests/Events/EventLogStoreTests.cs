@@ -277,6 +277,26 @@ public sealed class EventLogStoreTests : IDisposable
     }
 
     [Fact]
+    public void RotateAndReseal_FailureMidRotate_DoesNotCorruptChain()
+    {
+        var store = new EventLogStore(_dir);
+        store.Append(new InfoEvent(T, "src", "a"));
+        store.Append(new InfoEvent(T, "src", "b"));
+
+        // Force the archive move to fail: pre-create a DIRECTORY at the predicted archive path (File.Move onto an
+        // existing directory throws). 'now' is fixed so the path is deterministic.
+        var now = DateTimeOffset.UnixEpoch;
+        Directory.CreateDirectory($"{store.FilePath}.{now.ToUnixTimeSeconds()}.archived");
+
+        Assert.ThrowsAny<Exception>(() => store.RotateAndReseal("boom", now));
+
+        // Crash-consistency: the store stays usable and the chain stays verifiable — a FAILED re-baseline must
+        // never chain off a stale head and corrupt the log into a BrokenLink.
+        store.Append(new InfoEvent(T, "src", "after"));
+        Assert.Equal(VerifyStatus.Valid, new EventLogStore(_dir).Verify().Status);
+    }
+
+    [Fact]
     public void Verify_EditedMiddleRecord_DetectsBrokenLink()
     {
         var store = new EventLogStore(_dir);
