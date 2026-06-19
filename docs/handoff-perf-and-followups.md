@@ -187,11 +187,17 @@ DJC, so it must be reconnected to Foreman first.
 
 The presence-gated rotate + re-seal (commits `373943d` + `376b5ce`) is sound; its adversarial review flagged two
 PRE-EXISTING SEC B8 gaps it does NOT introduce or widen, worth their own hardening later:
-1. **Unauthenticated OS-log anchor.** `LogChainAnchor` entries are plaintext (`head=… count=…`) with no
-   signature/MAC, and any same-user process can write the registered Application-log source. So a rogue same-user
-   agent can forge a superseding anchor to neutralise rollback detection — independent of the rotate feature
-   (which just adds a gated, legitimate way to supersede). Hardening: sign/MAC the anchor payload (TPM / guardian
-   key) so a forged anchor fails verification, and/or bind a monotonic epoch the reader can rank.
+1. ~~**Unauthenticated OS-log anchor.**~~ **DONE — anchor-MAC, commit `65359d1` (2026-06-19).** Anchors now carry a
+   MAC under the chain head-seal key (`LogAnchor.Seal`); `AnchorPolicy.Evaluate` trusts only an authentically-sealed
+   anchor when sealing is on (NullHeadSigner path unchanged → zero change for casual users). Forged/unsigned anchors
+   are rejected; a present-but-invalid seal raises a distinct forgery alarm. The MAC input is domain-separated
+   (`foreman-anchor-v1:<head>`) so a `.head`/archived-`.head` seal can't be lifted into an anchor, and the forgery
+   alarm is not suppressed by a key-change that coincides with a settings-tamper flag (both fixes from the adversarial
+   review). RESIDUALS still open (need a sealed **monotonic epoch** to close, the "bind a monotonic epoch" idea below):
+   (a) **replay** of a genuinely-old VALID anchor re-written as newest after rolling back to its state; (b) the
+   **migration / key-less windows** where unsigned anchors (first sealing launch, or a session where the private key
+   was unavailable) are skipped, so a rollback whose surviving witnesses are all unsigned reads as NoPrior. A sealed
+   epoch (ranked by the reader, max-epoch-valid-wins) closes both without the trim false-positive that max-count has.
 2. **Witness-read is count/scan-bounded, not order-explicit.** `WindowsEventLogSink.ReadOwnRecent(256)` also stops
    after ~20k raw shared-log entries; a flooded Application log can push Foreman's latest anchor out of the read
    slice. It degrades SAFELY (→ NoPriorAnchor, never a false rollback), so it's robustness not a break. Hardening:
