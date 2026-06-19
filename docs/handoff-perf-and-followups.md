@@ -139,6 +139,15 @@ event and refuse to serve `/mcp` (return a clear 503 "token unreadable") rather 
 guarantees every client 401s. Never mint-fresh over an existing-but-locked file. Consider a fixed/explicit data
 dir off the redirected/AV-sensitive path.
 
+RESOLVED 2026-06-19: CONFIRMED root cause was Bitdefender's real-time/behavioral shield blocking the Foreman
+PROCESS from reading/writing `%LocalAppData%\Foreman` at startup (no quarantine; antivirus file/path exclusions
+did NOT cover it). Proof: with BD fully off + a fresh restart, the dir wrote again and tokens validated (401 ->
+400). Final fix that stuck: PC reboot (cleared BD's accumulated behavioral state + the Monitor.dll build pin) +
+BD exclusions applied on restart + a full rebuild -> launching the fresh build with BD back ON now reads/writes
+the dir and validates tokens. Durable cure remains SignPath code-signing so BD trusts the binary instead of
+heuristically flagging it (the unsigned dev build trips its AV-killer heuristics). The `LoadOrCreate` fail-loud
+hardening above is still worth doing so a future read-miss is visible, not silent.
+
 ## G. Deferred: Codex cross-review handoff (operator chose "wait for reboot", 2026-06-19)
 
 The plan was to have Codex review how its own audit suggestions were implemented. It never landed and
