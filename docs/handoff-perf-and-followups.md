@@ -6,13 +6,16 @@ to rebuild `Foreman.Monitor` and `Foreman.App`). McpServer/Core changes build + 
 
 ## A. Responsiveness audit (read-only audit; no code changed)
 
-1. **Stale monitored-process volume is the biggest drag.** Live Foreman reported ~8,692 monitored processes vs
-   ~386 actually on the box — the tree accumulates terminated processes without pruning. Hot path:
-   `ProcessTreeTracker.GetAll()` → `ForemanState.ProcessCount`, dashboard snapshots, process-monitor refreshes,
-   `IoPoller`. **Fix = a reconciliation/prune pass** (periodically compare tracked PID+start-time to the OS live
-   set; evict records that no longer exist; keep terminated/orphan evidence in the event log, not the hot
-   snapshot). **Lives in `Foreman.Monitor` — AV-pin-blocked.** Short-term mitigation: a fresh Foreman restart
-   clears the oversized in-memory tree (rebuilds from live WMI); it re-accumulates until the prune lands.
+1. **Stale monitored-process volume is the biggest drag.** ~~Live Foreman reported ~8,692 monitored processes vs
+   ~386 actually on the box.~~ **DONE 2026-06-19 (commits `30de561` + `9ec94a5`):** `ProcessTreeTracker.Prune` /
+   `PruneDeadProcesses` evict records whose PID is absent from the live OS set; the IoPoller runs it each tick
+   with a two-pass grace so the WMI deletion event (and its orphan/nonzero-exit accounting) wins the race, plus
+   degraded-state logging. Adversarially reviewed (false-eviction + concurrency clean). RESIDUAL FOLLOW-UP
+   (pre-existing, NOT introduced by the prune): orphan + harness-nonzero-exit detection live only in
+   `OnProcessDeleted`, so when a WMI `__InstanceDeletionEvent` is genuinely DROPPED, those events are missed
+   entirely and the prune (a janitor) doesn't recover them. To close it, have the reconciler also emit orphan
+   events for live children of an evicted parent (mirroring `OnProcessDeleted`, honoring the local-model-host
+   suppression + deduping against WMI-path orphans). Low priority — only bites on a dropped delete event.
 2. **Dashboard opens every heavy tab at once** — `TrayController.cs:493` constructs ProcessMonitor/Harnesses/
    BehaviorMetrics/Log windows (and their timers) on dashboard open. **Lazy-create tabs; start timers only when
    visible.** App-side.
