@@ -25,7 +25,7 @@ namespace Foreman.App.Windows;
 public partial class HarnessDetailWindow : Window
 {
     private readonly HarnessDetailContext _ctx;
-    private readonly ResourceSampler _sampler = new();
+    private readonly UiTelemetryCache _telemetry;
     private readonly DispatcherTimer _timer;
     private readonly ObservableCollection<UsageBarVm> _usage = [];
     private readonly long _physicalMemBytes = ReadPhysicalMemoryBytes();
@@ -35,6 +35,9 @@ public partial class HarnessDetailWindow : Window
     public HarnessDetailWindow(HarnessDetailContext ctx)
     {
         _ctx = ctx;
+        // Background resource sampling for this harness's process tree — keeps the slow GPU perf-counter
+        // enumeration off the dispatcher (the UI reads the latest snapshot each 2s tick).
+        _telemetry = new UiTelemetryCache(() => _ctx.GetProcesses().Select(p => p.Pid).ToList());
         InitializeComponent();
 
         UsageBars.ItemsSource = _usage;
@@ -119,7 +122,7 @@ public partial class HarnessDetailWindow : Window
 
         // ── Processes ─────────────────────────────────────────────────────────
         var metrics = running
-            ? _sampler.Sample(procs.Select(p => p.Pid).ToList())
+            ? _telemetry.Latest
             : new Dictionary<int, ResourceSampler.Metrics>();
 
         ProcessHeader.Text = $"PROCESSES ({procs.Count})";
@@ -167,7 +170,7 @@ public partial class HarnessDetailWindow : Window
         if (!running)
             return;
 
-        var metrics = _sampler.Sample(procs.Select(p => p.Pid).ToList());
+        var metrics = _telemetry.Latest;
         var usage = HarnessUsageAggregator.Aggregate(procs, metrics, _ctx.GetNetRate);
 
         // CPU: percent of a single core's worth of time (tree sum); bar clamps at 100%.
@@ -400,7 +403,7 @@ public partial class HarnessDetailWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _timer.Stop();
-        _sampler.Dispose();
+        _telemetry.Dispose();
         base.OnClosed(e);
     }
 }

@@ -15,7 +15,7 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
     private readonly Func<int, double?>? _getNetRate;
     private readonly Func<string, (bool Ok, string Message)>? _requestCleanup;
     private readonly DispatcherTimer _timer;
-    private readonly ResourceSampler _sampler = new();
+    private readonly UiTelemetryCache _telemetry;
     private ProcessMonitorVm? _selected;
 
     public ProcessMonitorWindow(
@@ -26,6 +26,9 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
         _getSnapshot = getSnapshot;
         _getNetRate  = getNetRate;
         _requestCleanup = requestCleanup;
+        // Sample resource usage on a background loop; the UI just reads the latest snapshot (the GPU
+        // perf-counter enumeration is far too slow to run on the dispatcher every 2s).
+        _telemetry = new UiTelemetryCache(() => _getSnapshot().Select(p => p.Pid).ToList());
         InitializeComponent();
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -58,8 +61,8 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
             .ThenBy(p => p.Pid)
             .ToList();
 
-        // Live resource metrics (CPU/mem/I/O/GPU) for just the rows we're about to show.
-        var metrics = _sampler.Sample(filteredRecords.Select(p => p.Pid).ToList());
+        // Live resource metrics (CPU/mem/I/O/GPU), read from the background sampler's latest snapshot.
+        var metrics = _telemetry.Latest;
 
         var filtered = filteredRecords
             .Select(p => new ProcessMonitorVm(
@@ -194,7 +197,7 @@ public partial class ProcessMonitorWindow : UserControl, IDisposable
     public void Dispose()
     {
         _timer.Stop();
-        _sampler.Dispose();
+        _telemetry.Dispose();
     }
 }
 

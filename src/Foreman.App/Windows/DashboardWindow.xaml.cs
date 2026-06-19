@@ -33,8 +33,8 @@ public partial class DashboardWindow : Window, IEventSink
     private string _lastAlertSig = "";   // so the alert feed only rebuilds (and resets scroll) when events change
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _usageTimer;
-    private readonly ResourceSampler _usageSampler = new();
-    private Dictionary<int, ResourceSampler.Metrics> _liveMetrics = [];
+    private readonly UiTelemetryCache _telemetry;
+    private IReadOnlyDictionary<int, ResourceSampler.Metrics> _liveMetrics = new Dictionary<int, ResourceSampler.Metrics>();
     private readonly List<IDisposable> _hostedViews = [];
 
     // "Is this harness configured for Foreman?" reads each agent's config file (and ~/.claude.json can be many
@@ -107,6 +107,11 @@ public partial class DashboardWindow : Window, IEventSink
         _refreshTimer.Tick += (_, _) => Refresh();
         _refreshTimer.Start();
 
+        // Resource usage is sampled on a background loop (GetProcessSnapshot is wired by the tray after
+        // construction, so the provider reads it lazily each pass); the usage timer just pulls the latest
+        // snapshot onto the UI thread — never running the slow GPU perf-counter enumeration on the dispatcher.
+        _telemetry = new UiTelemetryCache(() =>
+            GetProcessSnapshot?.Invoke()?.Select(p => p.Pid).ToList() ?? (IReadOnlyCollection<int>)[]);
         _usageTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _usageTimer.Tick += (_, _) => SampleUsage();
         _usageTimer.Start();
@@ -552,14 +557,8 @@ public partial class DashboardWindow : Window, IEventSink
 
     private void SampleUsage()
     {
-        var pids = GetProcessSnapshot?.Invoke()?.Select(p => p.Pid).ToList();
-        if (pids is null || pids.Count == 0)
-        {
-            _liveMetrics = [];
-            return;
-        }
-
-        _liveMetrics = _usageSampler.Sample(pids);
+        // Read the latest background sample (never null; empty until the first pass) and re-render.
+        _liveMetrics = _telemetry.Latest;
         Refresh();
     }
 
@@ -910,7 +909,7 @@ public partial class DashboardWindow : Window, IEventSink
         EventBus.Instance.Unsubscribe(this);
         _refreshTimer.Stop();
         _usageTimer.Stop();
-        _usageSampler.Dispose();
+        _telemetry.Dispose();
         foreach (var d in _hostedViews) { try { d.Dispose(); } catch { /* best-effort */ } }
         _hostedViews.Clear();
         base.OnClosed(e);
