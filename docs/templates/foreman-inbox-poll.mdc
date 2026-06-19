@@ -1,0 +1,16 @@
+---
+description: Poll Foreman mailbox and .cursor-inbox at task start; cheap idle exit.
+alwaysApply: true
+---
+
+# Inbox poll (Foreman + file drop)
+
+When you start work in this workspace (or a wake prompt mentions inbox/Foreman mail):
+
+1. **File inbox** — If `.cursor-inbox/` has `*.md`, `*.txt`, or `*.msg` (not `README` or `processed/`): read each, execute the request, move to `.cursor-inbox/processed/`.
+2. **Foreman mailbox** — If the `foreman` MCP server is available, call `report_task_start` with a short task description. When `pendingAskHarnessRequests` > 0 (or `foreman_status` shows pending), call `list_ask_harness_requests` and handle each pending item with `reply_to_ask_harness_request`.
+3. **Idle** — If both are empty, continue with the user's message only. Do not scan the repo or run broad discovery for inbox polling.
+
+External parties queue Foreman mail with `request_harness_review(targetHarnessId: "cursor", …)` (operator token) or drop files in `.cursor-inbox/`.
+
+For scheduled wakes while this session is open, the parent may arm `Foreman/scripts/Poll-CursorInbox.ps1` on a long interval (see `Foreman/docs/cursor-external-wake.md`).

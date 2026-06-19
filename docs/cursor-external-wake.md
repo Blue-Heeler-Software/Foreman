@@ -103,12 +103,18 @@ Draft prefill for the Automations editor: `Foreman/docs/cursor-inbox-automation-
 | Prompt "reply IDLE and stop" | Keeps empty cron runs cheap |
 | Foreman `--probe` only in script | Avoids full agent MCP round-trips in the scheduler |
 
+## Install templates
+
+Canonical copies of the workspace-only inbox files live in `Foreman/docs/templates/`. `W:\TOOLS` is not a single git repo, so install (or refresh) them manually after clone or template updates: copy `Foreman/docs/templates/cursor-inbox-README.md` to `W:\TOOLS\.cursor-inbox\README.md`, and copy `Foreman/docs/templates/foreman-inbox-poll.mdc` to `W:\TOOLS\.cursor\rules\foreman-inbox-poll.mdc`. The live workspace paths are left untouched by Foreman commits.
+
 ## Files
 
 | Path | Role |
 |------|------|
 | `.cursor-inbox/` | External file drop |
 | `.cursor/rules/foreman-inbox-poll.mdc` | In-session poll rule |
+| `Foreman/docs/templates/cursor-inbox-README.md` | Tracked template for `.cursor-inbox/README.md` |
+| `Foreman/docs/templates/foreman-inbox-poll.mdc` | Tracked template for inbox poll rule |
 | `Foreman/scripts/Poll-CursorInbox.ps1` | Cheap combined probe + loop sentinel |
 | `Foreman/src/Foreman.TestHarness` `--probe` | Foreman-only exit-code probe |
 | `Foreman/docs/cursor-inbox-automation-prefill.json` | Automation editor draft |
