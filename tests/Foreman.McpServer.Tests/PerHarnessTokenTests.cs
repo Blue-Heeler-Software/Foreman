@@ -1,4 +1,5 @@
 using Foreman.Core.Behavior;
+using Foreman.Core.Mcp;
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
 using Foreman.McpServer;
@@ -401,6 +402,21 @@ public sealed class CallerScopeToolTests : IDisposable
     {
         using var doc = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsCodex));
         Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public void LiveweaveCommand_BrowserUseRestricted_RejectsHarness()
+    {
+        _state.HarnessCapabilityRestrictions["codex"] = new()
+        {
+            BrowserUse = HarnessCapabilityAccess.Block,
+        };
+
+        using var doc = J(ForemanMcpTools.LiveweaveCommand("new_canvas", http: AsCodex));
+
+        Assert.False(doc.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.Equal("blocked", doc.RootElement.GetProperty("status").GetString());
+        Assert.Contains("Browser use is restricted", doc.RootElement.GetProperty("reason").GetString());
     }
 
     [Fact]

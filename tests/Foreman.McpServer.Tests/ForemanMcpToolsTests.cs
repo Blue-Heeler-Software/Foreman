@@ -1,4 +1,5 @@
 using Foreman.Core.Heuristics;
+using Foreman.Core.Mcp;
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
 using System.Text.Json;
@@ -102,6 +103,25 @@ public sealed class ForemanMcpToolsTests : IDisposable
         Assert.Equal(2, validation.RootElement.GetProperty("runningProcessCount").GetInt32());
         Assert.Equal(2, validation.RootElement.GetProperty("mcpSessions").GetInt32());
         Assert.Equal("Codex CLI", validation.RootElement.GetProperty("connectedClients")[0].GetProperty("Name").GetString());
+    }
+
+    [Fact]
+    public void GetMyInstructions_IncludesHighRiskCapabilityPolicy()
+    {
+        _state.HarnessCapabilityRestrictions["codex"] = new()
+        {
+            ComputerUse = HarnessCapabilityAccess.AskFirst,
+            BrowserUse = HarnessCapabilityAccess.Block,
+        };
+
+        using var doc = ToJson(ForemanMcpTools.GetMyInstructions(harnessId: "codex"));
+        var caps = doc.RootElement.GetProperty("highRiskCapabilities");
+
+        Assert.Equal("AskFirst", caps.GetProperty("computerUse").GetProperty("access").GetString());
+        Assert.False(caps.GetProperty("computerUse").GetProperty("allowed").GetBoolean());
+        Assert.Equal("Block", caps.GetProperty("browserUse").GetProperty("access").GetString());
+        Assert.False(caps.GetProperty("browserUse").GetProperty("allowed").GetBoolean());
+        Assert.Contains("Playwright", caps.GetProperty("instruction").GetString());
     }
 
     [Fact]
