@@ -94,6 +94,7 @@ public static class PresenceGuard
         WeakeningAction.DisableLogPersist    => "disable persistent logging",
         WeakeningAction.ClearOrRotateLog     => "clear the log",
         WeakeningAction.EditHarnessSysprompt => "edit harness modalities",
+        WeakeningAction.ResumeComputerUse    => "resume computer use after a panic stop",
         WeakeningAction.ExitForeman          => "quit Foreman",
         _                                    => "security change",
     };

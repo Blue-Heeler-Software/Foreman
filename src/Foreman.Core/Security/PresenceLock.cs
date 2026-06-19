@@ -15,6 +15,7 @@ public enum WeakeningAction
     ClearOrRotateLog,
     EditHarnessSysprompt,
     RelaxHarnessCapabilityRestriction,
+    ResumeComputerUse,      // un-halt Foreman-mediated computer/browser use after a panic STOP
     ExitForeman,
 }
 
@@ -63,6 +64,7 @@ public static class PresenceLockPolicy
         WeakeningAction.ClearOrRotateLog,
         WeakeningAction.EditHarnessSysprompt,
         WeakeningAction.RelaxHarnessCapabilityRestriction,
+        WeakeningAction.ResumeComputerUse,
     ];
 
     public static bool RequiresPresence(WeakeningAction action, PresenceLockSettings settings)

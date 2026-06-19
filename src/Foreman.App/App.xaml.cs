@@ -22,6 +22,7 @@ public partial class App : Application
     private static Mutex? _singleInstance;
     private static bool _ownsSingleInstance;
     private TrayController? _tray;
+    private Foreman.App.ComputerUse.PanicHotkey? _panicHotkey;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -239,6 +240,24 @@ public partial class App : Application
         _tray.GetPendingAskCount            = id => _mcpHost.State.CountAskHarnessRequests(id);
         _tray.BeginPairing                  = () => _mcpHost.BeginExtensionPairing();
         _tray.IsLiveWeaveConnected          = () => _mcpHost.State.LiveWeave.IsConnected;
+
+        // Computer-use panic kill (mediated-CU Phase 0): a process-global halt + a SYSTEM-global hotkey that keeps
+        // working even if the UI is busy. Halt is the safe direction (unguarded); resume is presence-gated in the
+        // controller. The halt flag is shared into MCP state so the computer_use_status tool can report it.
+        var panicState = new Foreman.Core.Security.CuPanicState();
+        _mcpHost.State.Panic = panicState;
+        var panicController = new Foreman.App.ComputerUse.PanicController(
+            panicState, EventBus.Instance, _osLog, () => _osLogEnabled);
+        _tray.Panic = panicController;
+        // Keep the tray STOP/RESUME label correct even when a halt/resume doesn't change the tray status colour.
+        panicState.Changed += _ => Dispatcher.BeginInvoke(new Action(() => _tray?.RefreshMenu()));
+        _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
+            () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
+        if (!_panicHotkey.Registered)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Low,
+                "Foreman.ComputerUse",
+                $"Panic hotkey ({Foreman.App.ComputerUse.PanicHotkey.ChordText}) could not be registered (another " +
+                "app may own it). Use the tray STOP item to halt computer use."));
 
         // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a
         // forgotten one is a compile error). The ORIGINATING PROCESS section, escalation/profile display,
@@ -780,6 +799,7 @@ public partial class App : Application
         _sidecar?.Dispose();
         _mcpHost?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
         _monitor?.Dispose();
+        _panicHotkey?.Dispose();
         _tray?.Dispose();
         if (_ownsSingleInstance) _singleInstance?.ReleaseMutex();
         base.OnExit(e);

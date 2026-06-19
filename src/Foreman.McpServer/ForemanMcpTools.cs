@@ -39,6 +39,25 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
+        "Returns the computer-use panic state: whether Foreman-mediated computer/browser use is currently HALTED by " +
+        "an operator panic stop. While halted, all mediated computer/browser actions are refused. Resume is " +
+        "operator-only (a presence tap at the machine) and is intentionally NOT available over MCP — an agent " +
+        "cannot un-halt itself.")]
+    public static object ComputerUseStatus()
+    {
+        var state = _state ?? new ForemanState();
+        var halted = state.Panic?.IsHalted ?? false;
+        return new
+        {
+            halted,
+            resumeViaMcp = false,
+            message = halted
+                ? "Computer use is HALTED by an operator panic stop. Mediated actions are refused until the operator resumes at the machine (presence-gated)."
+                : "Computer use is active (not halted).",
+        };
+    }
+
+    [McpServerTool, Description(
         "Scans a directory's AI-agent configuration supply chain for the Miasma 'rules file backdoor' attack " +
         "class: auto-run hooks in .claude/.gemini settings.json, .cursor rules with alwaysApply, .vscode " +
         "tasks.json with runOn:folderOpen, the .github/setup.js dropper, obfuscated scripts, prompt-injection " +

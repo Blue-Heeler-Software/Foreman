@@ -32,6 +32,10 @@ public sealed class TrayController : IEventSink, IDisposable
     // guard: only show one Emergency window per harness per session
     private readonly HashSet<string> _emergencyWindowShown = new(StringComparer.OrdinalIgnoreCase);
 
+    // Last values that affect the tray context-menu labels (see RefreshAlertState).
+    private int _lastMenuMuteCount = -1;
+    private bool _lastGameModeActive;
+
     // Game mode: pauses on-screen popups while a fullscreen game/app is detected; counts what was held.
     private GameModeWatcher? _gameMode;
     private int _gmSuppressedTotal;
@@ -108,6 +112,9 @@ public sealed class TrayController : IEventSink, IDisposable
         _bus = bus;
         _cadence = new AlertCadenceGovernor(settings.CadenceGovernor);
     }
+
+    /// <summary>Computer-use panic controller (halt/resume). Injected by the App; the STOP/RESUME menu item shows only when set.</summary>
+    public Foreman.App.ComputerUse.PanicController? Panic { get; set; }
 
     public void Initialize()
     {
@@ -368,7 +375,7 @@ public sealed class TrayController : IEventSink, IDisposable
         }
     }
 
-    private void SetStatus(TrayStatus status)
+    private void SetStatus(TrayStatus status, bool rebuildMenu)
     {
         _status = status;
         if (_tray is null) return;
@@ -380,7 +387,7 @@ public sealed class TrayController : IEventSink, IDisposable
         {
             TrySetIcon(status);
             TrySetToolTip(BuildStatusToolTip());
-            TrySetContextMenu();
+            if (rebuildMenu) TrySetContextMenu();
         }
         catch (Exception ex)
         {
@@ -439,19 +446,39 @@ public sealed class TrayController : IEventSink, IDisposable
             .Where(AlertActivity.IsActive)   // the one shared definition (tray/dashboard/MCP agree)
             .ToList();
 
-        _activeAlerts = active.Count;
-        _highestEscalation = active
+        var newCount = active.Count;
+        var newEscalation = active
             .OfType<EscalationEvent>()
             .Select(e => e.NewLevel)
             .DefaultIfEmpty(EscalationLevel.Watch)
             .Max();
 
-        var status = active.Any(e => e.Severity >= ForemanSeverity.High)
+        var newStatus = active.Any(e => e.Severity >= ForemanSeverity.High)
             ? TrayStatus.Red
             : active.Any(e => e.Severity >= ForemanSeverity.Low)
                 ? TrayStatus.Amber
                 : TrayStatus.Green;
-        SetStatus(status);
+
+        // Context-menu labels embed alert count / escalation / mute list — rebuild only when those change.
+        // Rebuilding the full WPF menu on every event (including Info/cadence rollups) was wedging the
+        // UI thread when hundreds of active alerts were present and events arrived in bursts.
+        var menuChanged = newCount != _activeAlerts
+            || newEscalation != _highestEscalation
+            || _settings.Mutes.Count != _lastMenuMuteCount;
+        var gameModeActive = GameModeActive;
+
+        if (newCount == _activeAlerts
+            && newEscalation == _highestEscalation
+            && newStatus == _status
+            && gameModeActive == _lastGameModeActive
+            && !menuChanged)
+            return;
+
+        _activeAlerts = newCount;
+        _highestEscalation = newEscalation;
+        _lastMenuMuteCount = _settings.Mutes.Count;
+        _lastGameModeActive = gameModeActive;
+        SetStatus(newStatus, rebuildMenu: menuChanged);
     }
 
     private void OpenDashboardWindow()
@@ -555,6 +582,14 @@ public sealed class TrayController : IEventSink, IDisposable
         WindowActivation.Surface(_settingsWindow);
     }
 
+    /// <summary>Rebuild the tray context menu now (e.g. when the computer-use panic state flips and the colour
+    /// status didn't change). Must be called on the UI thread.</summary>
+    public void RefreshMenu()
+    {
+        if (_tray is null) return;
+        try { _tray.ContextMenu = BuildMenu(); } catch { /* transient WPF/COM hiccup — next event rebuilds */ }
+    }
+
     private ContextMenu BuildMenu()
     {
         var menu = new ContextMenu();
@@ -563,6 +598,16 @@ public sealed class TrayController : IEventSink, IDisposable
             ? $"  [{_highestEscalation.ToString().ToUpperInvariant()}]" : "";
         AddMenuItem(menu, $"Foreman Agent Safety v{GetVersion()}  ●  {_activeAlerts} alert(s){levelStr}", null, enabled: false);
         menu.Items.Add(new Separator());
+        // Computer-use panic control — kept at the very top so "give me my screen back" is one click away. STOP is
+        // unguarded (safe direction); RESUME is presence-gated inside PanicController.
+        if (Panic is { } panic)
+        {
+            if (panic.IsHalted)
+                AddMenuItem(menu, "▶ RESUME computer use (verify presence)", () => ResumeComputerUseFromTray());
+            else
+                AddMenuItem(menu, "⛔ STOP computer use (panic)", () => panic.Halt("tray STOP"));
+            menu.Items.Add(new Separator());
+        }
         AddMenuItem(menu, "Dashboard", () => OpenDashboardWindow());
         AddMenuItem(menu, "Open Log", () => OpenLogWindow());
         AddMenuItem(menu, "Process Monitor…", () => OpenProcessMonitorWindow());
@@ -597,6 +642,15 @@ public sealed class TrayController : IEventSink, IDisposable
         if (await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
                 Foreman.Core.Security.WeakeningAction.ExitForeman, "quit Foreman"))
             Application.Current.Shutdown();
+    }
+
+    // Resume computer use after a panic STOP — presence-gated inside PanicController (an agent can't un-halt itself).
+    private async void ResumeComputerUseFromTray()
+    {
+        if (Panic is not { } panic) return;
+        var (ok, msg) = await panic.ResumeAsync();
+        MessageBox.Show(msg, "Foreman Agent Safety — Computer use", MessageBoxButton.OK,
+            ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     // Enroll (arm) or disarm the presence lock. Disarming is itself a presence tap, so an agent can't un-gate.
