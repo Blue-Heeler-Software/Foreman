@@ -1,3 +1,4 @@
+using Foreman.App.Security;
 using Foreman.App.Tray;
 using Foreman.App.Windows;
 using Foreman.Core.Alerts;
@@ -10,6 +11,7 @@ using Foreman.Core.Security;
 using Foreman.Core.Settings;
 using Foreman.McpServer;
 using Foreman.Monitor;
+using System.IO;
 using System.Threading;
 using System.Windows;
 
@@ -187,6 +189,7 @@ public partial class App : Application
                     $"Reason: {error}"));
             });
             LogWindow.LoadPersisted = () => eventLog.Load();
+            LogWindow.RotateAndReseal = () => RotateEventLogAsync(eventLog);
             if (!integrity.Ok)
                 EventBus.Instance.Publish(new MonitoringNoticeEvent(
                     DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.LogIntegrity",
@@ -527,6 +530,37 @@ public partial class App : Application
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
             () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _mcpHost.Sessions.DescribeSessions(),
                 id => _mcpHost.MintHarnessToken(id)));
+    }
+
+    // Operator action (presence-gated): rotate + re-seal the event log. Archives the current chain, starts a
+    // fresh sealed one, and publishes a SUPERSEDING external anchor so the next launch doesn't read the stale
+    // witness and (correctly) flag the now-absent head as a rollback. Re-baselining the tamper witness is a
+    // weakening action, so it is gated behind presence (Windows Hello) and recorded loudly in the new chain +
+    // the OS log — a silent reset would let a rogue same-user agent erase its tracks.
+    private async Task<(bool Ok, string Message)> RotateEventLogAsync(EventLogStore eventLog)
+    {
+        if (!await PresenceGuard.AuthorizeAsync(WeakeningAction.ClearOrRotateLog,
+                "rotate + re-seal the event log (reset the tamper-evidence baseline)").ConfigureAwait(false))
+            return (false, "Presence not verified — the event log was not rotated.");
+        try
+        {
+            var result = eventLog.RotateAndReseal("operator rotate + re-seal", DateTimeOffset.UtcNow);
+            // Superseding external anchor: next launch compares the FRESH chain against this FRESH witness.
+            if (_osLogEnabled)
+                _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info,
+                    result.NewAnchor.Format());
+            // Loud, indelible record — lands in the fresh chain (bus subscriber) and the OS log (forwarder).
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.LogRotate",
+                $"Operator rotated + re-sealed the event log (presence-verified). Prior chain " +
+                $"({result.PriorCount} record(s)) archived to {Path.GetFileName(result.ArchivePath)}; " +
+                "fresh tamper-evidence baseline established."));
+            return (true, $"Event log rotated — prior chain ({result.PriorCount} records) archived, fresh baseline sealed.");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Rotate failed: {ex.Message}");
+        }
     }
 
     // Best-effort live delivery of an auto-response prompt to the target's MCP session; the mailbox copy

@@ -241,6 +241,42 @@ public sealed class EventLogStoreTests : IDisposable
     }
 
     [Fact]
+    public void RotateAndReseal_ArchivesOldChain_AndStartsFreshVerifiableChain()
+    {
+        var store = new EventLogStore(_dir);
+        for (var i = 0; i < 3; i++) store.Append(new InfoEvent(T, "src", $"e{i}"));
+
+        var result = store.RotateAndReseal("test rotate", DateTimeOffset.UnixEpoch);
+
+        // 3 appended + the closing "rotated" record = 4 in the archived chain.
+        Assert.Equal(4, result.PriorCount);
+        Assert.True(File.Exists(result.ArchivePath));               // evidence preserved (JSONL)
+        // (the .head seal is archived too, but only exists under a real signer — none in this default store)
+
+        // Fresh chain verifies clean and no longer contains the old records.
+        Assert.Equal(VerifyStatus.Valid, store.Verify().Status);
+        var loaded = store.Load();
+        Assert.DoesNotContain(loaded, e => e.Message.Contains("e0"));
+        Assert.Contains(loaded, e => e.Message.Contains("Fresh event-log chain established"));
+
+        // KEY: the new anchor's head IS present in the fresh chain, so the anti-rollback check MATCHES.
+        // A naive archive would leave the stale anchor's head absent -> AnchorVerdict.Rolledback.
+        var freshHashes = LogHeadReader.ReadChainedHashes(store.FilePath);
+        Assert.Equal(AnchorVerdict.Match, AnchorPolicy.Check(freshHashes, result.NewAnchor));
+    }
+
+    [Fact]
+    public void RotateAndReseal_FreshChainVerifies_AfterReopen()
+    {
+        var store = new EventLogStore(_dir);
+        store.Append(new InfoEvent(T, "src", "before"));
+        store.RotateAndReseal("test", DateTimeOffset.UnixEpoch);
+
+        // A new store instance over the same dir continues the rotated chain and verifies clean.
+        Assert.Equal(VerifyStatus.Valid, new EventLogStore(_dir).Verify().Status);
+    }
+
+    [Fact]
     public void Verify_EditedMiddleRecord_DetectsBrokenLink()
     {
         var store = new EventLogStore(_dir);

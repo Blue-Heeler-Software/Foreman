@@ -126,6 +126,56 @@ public sealed class EventLogStore
         }
     }
 
+    /// <summary>The outcome of a rotate: where the prior chain was archived, how many records it held, and the
+    /// FRESH chain's anchor (head + count) the caller must publish as a superseding external witness.</summary>
+    public sealed record RotateResult(string ArchivePath, long PriorCount, LogAnchor NewAnchor);
+
+    /// <summary>
+    /// Archives the current chain (preserving the evidence) and starts a fresh, freshly-sealed one. This is the
+    /// recovery for a chain whose integrity baseline must be reset — e.g. after an offline restore reverted the
+    /// log, leaving a permanent BrokenLink/rollback that is real but no longer actionable. The rotation is
+    /// recorded in BOTH the closing old chain (its final record, preserved in the archive) and the opening new
+    /// chain (its first record), so it is indelible on either side.
+    ///
+    /// Returns the archive path, the prior chained count, and the NEW chain's anchor so the caller can publish a
+    /// SUPERSEDING external anchor to the OS event log. Without that, the next launch would read the stale anchor
+    /// and (correctly) flag the now-absent old head as a rollback — re-raising the very alert this clears.
+    ///
+    /// SECURITY: re-baselining the tamper witness is a weakening action. The CALLER MUST presence-gate it and log
+    /// it loudly (a silent reset would let a rogue same-user agent erase tracks). This method only does the file
+    /// work; it never gates or hides anything.
+    /// </summary>
+    public RotateResult RotateAndReseal(string reason, DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            // 1. Close the OLD chain with a final, in-chain record of the rotation (kept in the archive).
+            AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
+                $"Event log rotated + re-sealed: {reason}. This is the final record of the prior chain."));
+            var priorCount = _count;
+
+            // 2. Archive the JSONL + its head seal to a timestamped sibling (move, never delete — evidence stays).
+            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
+            var archive = $"{_file}.{now.ToUnixTimeSeconds()}.archived";
+            if (File.Exists(_file)) File.Move(_file, archive, overwrite: true);
+            if (File.Exists(HeadFile)) File.Move(HeadFile, archive + ".head", overwrite: true);
+
+            // 3. Reset in-memory chain state so the next append seeds a fresh genesis from the now-absent file.
+            _headHash = null;
+            _lastSequence = null;
+            _lastRecordedAtUtc = null;
+            _lastMonotonicTicks = null;
+            _lastTemporalSessionId = null;
+            _lastMonotonicFrequency = 0;
+
+            // 4. Open the NEW chain with its first record (writes a fresh file + fresh head seal).
+            AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
+                $"Fresh event-log chain established (prior chain of {priorCount} record(s) archived). Baseline re-sealed."));
+
+            return new RotateResult(archive, priorCount, new LogAnchor(_headHash ?? LogChain.Genesis, _count));
+        }
+    }
+
     /// <summary>Loads persisted events oldest-first, skipping corrupt lines and trimming to maxEntries.</summary>
     public IReadOnlyList<ForemanEvent> Load()
     {

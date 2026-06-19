@@ -19,6 +19,9 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
     /// <summary>Wired by App — loads prior-session events from the on-disk event log (null = persistence off).</summary>
     public static Func<IReadOnlyList<ForemanEvent>>? LoadPersisted { get; set; }
 
+    /// <summary>Wired by App — presence-gated rotate + re-seal of the on-disk chain (null = persistence off).</summary>
+    public static Func<Task<(bool Ok, string Message)>>? RotateAndReseal { get; set; }
+
     private readonly ObservableCollection<EventViewModel> _events = [];
     private readonly ICollectionView _view;
     private bool _autoScroll = true;
@@ -253,6 +256,38 @@ public partial class LogWindow : UserControl, IEventSink, IDisposable
     {
         _events.Clear();
         UpdateStatusLabel();
+    }
+
+    // Rotate + re-seal the on-disk chain. Distinct from Clear (which only clears this view): this archives the
+    // current chain and starts a fresh sealed one — the recovery for a benign-but-permanent integrity alert left
+    // by an external restore. Presence-gated and loudly logged inside the App handler (re-baselining the tamper
+    // witness is a weakening action).
+    private async void RotateClick(object sender, RoutedEventArgs e)
+    {
+        if (RotateAndReseal is null)
+        {
+            MessageBox.Show("Persistent logging is off — there is no on-disk chain to rotate.",
+                "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            "Rotate and re-seal the event log?\n\n" +
+            "The current chain is archived (kept on disk as evidence) and a fresh, sealed chain starts with a new " +
+            "tamper-evidence baseline. Use this to clear a benign integrity alert left by an external restore — not " +
+            "routine maintenance.\n\n" +
+            "This is a security-weakening action: if the presence lock is armed it will require Windows Hello, and the " +
+            "rotation is recorded in the new chain and the OS event log.",
+            "Foreman Agent Safety — rotate event log",
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.OK) return;
+
+        (bool Ok, string Message) result;
+        try { result = await RotateAndReseal.Invoke(); }
+        catch (Exception ex) { result = (false, $"Rotate failed: {ex.Message}"); }
+
+        MessageBox.Show(result.Message, "Foreman Agent Safety",
+            MessageBoxButton.OK, result.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
