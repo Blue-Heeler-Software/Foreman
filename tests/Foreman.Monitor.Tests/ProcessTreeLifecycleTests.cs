@@ -74,12 +74,48 @@ public sealed class ProcessTreeLifecycleTests
         tree.OnProcessCreated(live);
         tree.OnProcessCreated(dead);
 
-        var evicted = tree.Prune(new HashSet<int> { live.Pid }, now, TimeSpan.FromSeconds(60));
+        var livePids = new HashSet<int> { live.Pid };
+        tree.Prune(livePids, now, TimeSpan.FromSeconds(60));                 // pass 1: grace defers
+        var evicted = tree.Prune(livePids, now, TimeSpan.FromSeconds(60));   // pass 2: evicts
 
         Assert.Single(evicted);
         Assert.Same(dead, evicted[0]);
         Assert.NotNull(tree.GetByPid(live.Pid));
         Assert.Null(tree.GetByPid(dead.Pid));
+    }
+
+    [Fact]
+    public void Prune_DefersEviction_UntilAbsentOnTwoConsecutivePasses()
+    {
+        var tree = new ProcessTreeTracker();
+        var now = DateTimeOffset.UtcNow;
+        var dead = new ProcessRecord { Pid = 920_031, Name = "dead.exe", StartTime = now - TimeSpan.FromMinutes(5) };
+        tree.OnProcessCreated(dead);
+        var noLive = new HashSet<int>();
+
+        var firstPass = tree.Prune(noLive, now, TimeSpan.FromSeconds(60));
+        Assert.Empty(firstPass);                  // grace gives the WMI deletion event time to win the race
+        Assert.NotNull(tree.GetByPid(dead.Pid));  // still tracked after one pass
+
+        var secondPass = tree.Prune(noLive, now, TimeSpan.FromSeconds(60));
+        Assert.Single(secondPass);                // absent on two consecutive passes -> evicted
+        Assert.Null(tree.GetByPid(dead.Pid));
+    }
+
+    [Fact]
+    public void Prune_ResetsGrace_WhenPidReappearsBetweenPasses()
+    {
+        var tree = new ProcessTreeTracker();
+        var now = DateTimeOffset.UtcNow;
+        var rec = new ProcessRecord { Pid = 920_041, Name = "flap.exe", StartTime = now - TimeSpan.FromMinutes(5) };
+        tree.OnProcessCreated(rec);
+
+        tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60));             // absent -> defer
+        tree.Prune(new HashSet<int> { rec.Pid }, now, TimeSpan.FromSeconds(60));   // present -> grace reset
+        var evicted = tree.Prune(new HashSet<int>(), now, TimeSpan.FromSeconds(60)); // absent again -> defer, not evict
+
+        Assert.Empty(evicted);
+        Assert.NotNull(tree.GetByPid(rec.Pid));
     }
 
     [Fact]

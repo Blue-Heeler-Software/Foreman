@@ -13,6 +13,12 @@ public sealed class ProcessTreeTracker
     // secondary lookup: pid → key (last winner wins on reuse)
     private readonly ConcurrentDictionary<int, string> _pidIndex = new();
 
+    // Keys seen ABSENT from the live OS process set on the previous Prune pass. A record must be absent on
+    // TWO consecutive passes before eviction (see Prune), so the WMI deletion event — and the orphan /
+    // nonzero-exit accounting that ONLY OnProcessDeleted performs — reliably wins the race for a process that
+    // has only just exited. Touched solely on the IoPoller (prune) thread.
+    private readonly HashSet<string> _absentSincePrevPrune = new();
+
     public IEnumerable<ProcessRecord> GetAll() => _records.Values;
 
     public ProcessRecord? GetByPid(int pid)
@@ -70,17 +76,32 @@ public sealed class ProcessTreeTracker
     /// <paramref name="minAge"/> are kept, since they may simply post-date a snapshot taken a moment
     /// before they were created. Returns the evicted records so the caller can log the reconciliation.
     ///
-    /// Pure and deterministic for testing; <see cref="PruneDeadProcesses"/> supplies the live set.
-    /// NOTE: a reused PID keeps BOTH its records alive here (the live PID protects them); that rarer case
-    /// is handled by <see cref="OnProcessCreated"/> re-pointing the index, not by this janitor.
+    /// Two-pass grace: a record is evicted only after it has been absent on TWO consecutive passes. The WMI
+    /// deletion event (WITHIN ~2s) — and the orphan + nonzero-exit accounting that ONLY
+    /// <see cref="OnProcessDeleted"/> performs — therefore reliably wins the race for a just-exited process
+    /// (its record is removed by that handler before this janitor's second pass), so reconciliation only ever
+    /// cleans up records WMI genuinely missed. Without the grace, a Prune tick landing in the WMI delivery
+    /// window would remove the record first and silently suppress those events.
+    ///
+    /// Deterministic for testing (call twice with the PID still absent to cross the grace);
+    /// <see cref="PruneDeadProcesses"/> supplies the live set. State (<see cref="_absentSincePrevPrune"/>) is
+    /// touched only on the single prune thread. NOTE: a reused PID keeps BOTH its records alive here (the live
+    /// PID protects them); that rarer case is handled by <see cref="OnProcessCreated"/> re-pointing the index.
     /// </summary>
     public IReadOnlyList<ProcessRecord> Prune(IReadOnlySet<int> livePids, DateTimeOffset now, TimeSpan minAge)
     {
         List<ProcessRecord>? evicted = null;
+        var absentNow = new HashSet<string>();
         foreach (var rec in _records.Values)   // ConcurrentDictionary snapshot enumeration is safe under concurrent writes
         {
             if (livePids.Contains(rec.Pid)) continue;     // still alive
             if (now - rec.StartTime < minAge) continue;   // too young — may post-date the live snapshot
+
+            absentNow.Add(rec.Key);
+            // Grace: defer eviction until a record has been absent on two consecutive passes, so the WMI
+            // deletion event (and its orphan / nonzero-exit accounting) wins the race for a just-exited process.
+            if (!_absentSincePrevPrune.Contains(rec.Key)) continue;
+
             if (_records.TryRemove(rec.Key, out var removed))
             {
                 // Only drop the pid→key index if it still points at the record we removed (a PID reused
@@ -90,6 +111,9 @@ public sealed class ProcessTreeTracker
                 (evicted ??= []).Add(removed);
             }
         }
+        // Carry this pass's absentees forward as the grace baseline for the next pass.
+        _absentSincePrevPrune.Clear();
+        _absentSincePrevPrune.UnionWith(absentNow);
         return evicted ?? (IReadOnlyList<ProcessRecord>)[];
     }
 

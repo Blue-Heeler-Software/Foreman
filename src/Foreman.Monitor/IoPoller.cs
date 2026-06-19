@@ -31,6 +31,7 @@ public sealed class IoPoller : IDisposable
     private readonly EventBus _bus;
     private readonly CancellationTokenSource _cts = new();
     private Task? _task;
+    private bool _reconcileDegraded;   // true after a reconciliation pass throws, until one succeeds again
 
     // A record must survive at least this long before the reconciler may evict it, so a process created
     // just after the live-PID snapshot is never mistaken for dead.
@@ -70,6 +71,13 @@ public sealed class IoPoller : IDisposable
         try
         {
             var evicted = _tree.PruneDeadProcesses(PruneMinAge);
+            if (_reconcileDegraded)
+            {
+                _reconcileDegraded = false;
+                _bus.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.Low, "Foreman.Monitor",
+                    "Process-tree reconciliation recovered."));
+            }
             foreach (var rec in evicted)
                 _hangDetector.Forget(rec.Pid);   // drop any hang-alert state held for the gone pids
             // Surface only a meaningful catch-up (the first pass after drift), not routine churn.
@@ -78,9 +86,22 @@ public sealed class IoPoller : IDisposable
                     DateTimeOffset.UtcNow, ForemanSeverity.Low, "Foreman.Monitor",
                     $"Process-tree reconciliation evicted {evicted.Count} stale record(s) whose processes had already exited."));
         }
-        catch
+        catch (Exception ex)
         {
-            // Best-effort housekeeping — never let it break the I/O poll loop.
+            // Never break the I/O poll loop — but a PERSISTENT janitor failure silently regresses to the
+            // stale-record leak this exists to prevent, so surface the first occurrence (and the recovery
+            // above), then stay quiet so a recurring fault can't flood.
+            if (!_reconcileDegraded)
+            {
+                _reconcileDegraded = true;
+                try
+                {
+                    _bus.Publish(new MonitoringNoticeEvent(
+                        DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Monitor",
+                        $"Process-tree reconciliation is failing ({ex.GetType().Name}); the monitored-process list may drift until it recovers."));
+                }
+                catch { }
+            }
         }
     }
 
