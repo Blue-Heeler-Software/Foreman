@@ -82,12 +82,12 @@ public partial class HarnessDetailWindow : Window
         AddBadge($"Trust {trust}", Color.FromRgb(0x2A, 0x24, 0x10), Color.FromRgb(0xF0, 0xB8, 0x4A));
         var (escBg, escFg) = EscalationColors(level);
         AddBadge($"Escalation: {level.ToString().ToUpperInvariant()}", escBg, escFg);
-        // configured-but-not-connected (and running) → actionable "restart to link" (amber), not a dead-end "No MCP".
+        // configured-but-not-connected (and running) → "Ready" (amber): links on first Foreman tool call, not a dead-end "No MCP".
         var configured = !mcpConnected && running && (_ctx.IsConfigured?.Invoke() ?? false);
         var (mcpText, mcpBg, mcpFg) = mcpConnected
             ? ("MCP linked", Color.FromRgb(0x12, 0x2A, 0x1C), Color.FromRgb(0x6E, 0xC8, 0x8E))
             : configured
-                ? ("MCP: restart to link", Color.FromRgb(0x2A, 0x24, 0x10), Color.FromRgb(0xE8, 0xB2, 0x3C))
+                ? ("MCP: Ready", Color.FromRgb(0x2A, 0x24, 0x10), Color.FromRgb(0xE8, 0xB2, 0x3C))
                 : ("No MCP", Color.FromRgb(0x22, 0x16, 0x16), Color.FromRgb(0xC8, 0x7E, 0x7E));
         AddBadge(mcpText, mcpBg, mcpFg);
 

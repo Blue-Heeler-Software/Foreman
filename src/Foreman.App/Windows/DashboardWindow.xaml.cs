@@ -1178,7 +1178,7 @@ public sealed class HarnessChipVm
         EscalationLevel = profile?.CurrentLevel ?? EscalationLevel.Watch;
         LevelLabel = EscalationLevel.ToString().ToUpperInvariant();
         TrustLabel = $"  ·  T{trust}";
-        McpLabel = mcpConnected ? "  ·  MCP" : (isRunning && configured) ? "  ·  restart to link" : string.Empty;
+        McpLabel = mcpConnected ? "  ·  MCP" : (isRunning && configured) ? "  ·  Ready" : string.Empty;
         (LevelBg, LevelFg) = EscalationColors(EscalationLevel);
         ToolTip = BuildToolTip(harness.DisplayName, isRunning, mcpConnected, configured, trust, AlertCount, EscalationLevel);
     }
@@ -1203,7 +1203,7 @@ public sealed class HarnessChipVm
         $"{name}\n{(running ? "Running" : "Not running")} · Trust {trust} · {level}\n" +
         $"{alerts} alert{(alerts == 1 ? "" : "s")}" +
         (mcp ? " · MCP connected"
-             : (running && configured) ? " · MCP configured — restart this agent to link"
+             : (running && configured) ? " · MCP configured — links automatically the next time it calls a Foreman tool (no restart needed)"
              : configured ? " · MCP configured (idle — start it to connect)"
              : " · MCP not connected") +
         "\nClick for live detail.";
@@ -1301,10 +1301,10 @@ public sealed class DashboardHarnessCardVm
         }
         else if (isRunning && configured)
         {
-            // Foreman is in this agent's config, but the running instance started before that — MCP is only
-            // loaded at harness startup, so it must be restarted to actually connect. Make that actionable, not
-            // a dead-end "No MCP". (amber = the ball is in the agent's court, not Foreman's.)
-            detail = $"Configured · restart to link · {pa}";
+            // Foreman is in this agent's config with a valid token; the agent just hasn't called a Foreman tool
+            // yet. MCP clients connect lazily (on first tool use), so it links automatically when it next does —
+            // restarting does NOT help. (amber = the ball is in the agent's court, not Foreman's.)
+            detail = $"Configured · Ready · {pa}";
             detailFg = new SolidColorBrush(Color.FromRgb(0xE8, 0xB2, 0x3C));
         }
         else if (isRunning)
