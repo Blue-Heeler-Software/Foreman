@@ -1264,6 +1264,213 @@ public static class ForemanMcpTools
         return new { accepted = done.Ok, reason = done.Reason };
     }
 
+    // ── Mediated computer-use broker (CuBroker) ─────────────────────────────────
+    // Every action is AUDITED before it can execute: cu_submit -> Auditing -> (Approved | Held | Blocked); a Held
+    // action waits for an operator cu_approve/cu_reject; the executor claims Approved actions via cu_poll_actions and
+    // reports via cu_complete_action. The panic halt (computer_use_status) blocks submit + empties the poll.
+
+    [McpServerTool, Description(
+        "Mediated computer-use broker status: whether CU is halted (panic), the chosen driver, and the actions " +
+        "currently HELD for operator approval. Read-only.")]
+    public static object CuStatus()
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null)
+            return new { available = false, reason = "Mediated computer use is not wired (headless/test)." };
+        var held = state.Cu.ListHeld();
+        return new
+        {
+            available = true,
+            halted = state.Panic?.IsHalted ?? false,
+            driver = state.Cu.Driver,
+            heldCount = held.Count,
+            held = held.Select(i => new { actionId = i.ActionId, modality = i.Action.Modality.ToString().ToLowerInvariant(), verb = i.Action.Verb, reason = i.Verdict?.Reason }).ToArray(),
+        };
+    }
+
+    [McpServerTool, Description(
+        "Submit a computer-use action for Foreman to AUDIT and (if cleared) execute. modality = 'browser' or " +
+        "'desktop'; verb e.g. navigate/click/type/read; argsJson is a JSON object of verb args, e.g. " +
+        "{\"url\":\"https://...\"} or {\"text\":\"...\",\"selector\":\"#q\"}. Returns the action's state: 'approved' " +
+        "(cleared to run), 'held' (awaiting operator approval — poll cu_action_status), or 'blocked' (refused).")]
+    public static async Task<object> CuSubmit(
+        [Description("'browser' or 'desktop'")] string modality,
+        [Description("Action verb, e.g. navigate, click, type, read")] string verb,
+        [Description("JSON object of verb arguments")] string? argsJson = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null)
+            return new { accepted = false, reason = "Mediated computer use is not available." };
+
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate)
+            return new { accepted = false, reason = "Refused: token/process identity mismatch." };
+        if (string.IsNullOrWhiteSpace(verb))
+            return new { accepted = false, reason = "verb is required." };
+        if (!Enum.TryParse<Foreman.Core.ComputerUse.CuModality>(modality?.Trim(), ignoreCase: true, out var mod))
+            return new { accepted = false, reason = "modality must be 'browser' or 'desktop'." };
+
+        var who = caller.IsOperator ? "operator" : caller.HarnessId;
+
+        // Browser actions also honour the per-harness browser-use capability policy (Allow/AskFirst/Block).
+        if (!caller.IsOperator && mod == Foreman.Core.ComputerUse.CuModality.Browser)
+        {
+            var browserUse = HarnessCapabilityPolicy.EvaluateBrowserUse(
+                HarnessCapabilityPolicy.Effective(state.HarnessCapabilityRestrictions, caller.HarnessId));
+            if (!browserUse.Allowed)
+                return new { accepted = false, status = browserUse.Access == HarnessCapabilityAccess.Block ? "blocked" : "operator_approval_required", reason = browserUse.Reason };
+        }
+
+        if (!state.Cu.CanDrive(who, caller.IsOperator))
+            return new { accepted = false, reason = state.Cu.Driver is null
+                ? "No computer-use driver selected. Ask the operator to choose your harness as the CU driver."
+                : $"Computer use is currently accepting actions only from '{state.Cu.Driver}'." };
+
+        Dictionary<string, string> args;
+        try { args = ParseCuArgs(argsJson); }
+        catch (Exception ex) { return new { accepted = false, reason = $"Invalid argsJson: {ex.Message}" }; }
+
+        var action = new Foreman.Core.ComputerUse.CuAction(mod, verb.Trim().ToLowerInvariant(), args, ByHarness: who);
+        var item = await state.Cu.SubmitAsync(action, new Foreman.Core.ComputerUse.CuContext(caller.HarnessId)).ConfigureAwait(false);
+
+        return new
+        {
+            accepted = item.State != Foreman.Core.ComputerUse.CuActionState.Blocked,
+            actionId = item.ActionId,
+            state = item.State.ToString().ToLowerInvariant(),
+            decision = item.Verdict?.Decision.ToString().ToLowerInvariant(),
+            reason = item.Verdict?.Reason,
+            hint = item.State == Foreman.Core.ComputerUse.CuActionState.Held
+                ? "Held for operator approval — poll cu_action_status(actionId)."
+                : item.State == Foreman.Core.ComputerUse.CuActionState.Approved
+                    ? "Approved — the executor will run it; poll cu_action_status(actionId) for the result."
+                    : null,
+        };
+    }
+
+    [McpServerTool, Description("Returns the current state + result of a computer-use action submitted via cu_submit.")]
+    public static object CuActionStatus(
+        [Description("actionId from cu_submit")] string actionId)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { found = false, reason = "Mediated computer use is not available." };
+        if (string.IsNullOrWhiteSpace(actionId)) return new { found = false, reason = "actionId is required." };
+        var item = state.Cu.Get(actionId.Trim());
+        if (item is null) return new { found = false, reason = "Unknown actionId." };
+        return new
+        {
+            found = true,
+            actionId = item.ActionId,
+            state = item.State.ToString().ToLowerInvariant(),
+            decision = item.Verdict?.Decision.ToString().ToLowerInvariant(),
+            reason = item.Verdict?.Reason,
+            result = item.Result,
+            error = item.Error,
+        };
+    }
+
+    [McpServerTool, Description("CU executor only: claim APPROVED computer-use actions to run them. Returns nothing while halted.")]
+    public static object CuPollActions(
+        [Description("Max actions to claim")] int limit = 5,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { actions = Array.Empty<object>() };
+        var caller = CallerScope.From(http);
+        // NOTE (Phase 5 hardening TODO): restrict to the VERIFIED executor (extension/sidecar) rather than any
+        // mutating caller. The broker already only yields APPROVED (audited) actions and the panic empties this.
+        if (!caller.CanMutate) return new { actions = Array.Empty<object>(), reason = "Refused: token/process identity mismatch." };
+        var batch = state.Cu.Claim(limit);
+        return new
+        {
+            actions = batch.Select(i => new
+            {
+                actionId = i.ActionId,
+                modality = i.Action.Modality.ToString().ToLowerInvariant(),
+                verb = i.Action.Verb,
+                args = i.Action.Args,
+            }).ToArray(),
+        };
+    }
+
+    [McpServerTool, Description("CU executor only: report the outcome of an executing computer-use action.")]
+    public static object CuCompleteAction(
+        [Description("actionId being completed")] string actionId,
+        [Description("Whether the action succeeded")] bool ok,
+        [Description("Optional JSON result payload")] string? resultJson = null,
+        [Description("Error message when ok=false")] string? error = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { accepted = false, reason = "Mediated computer use is not available." };
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate) return new { accepted = false, reason = "Refused: token/process identity mismatch." };
+        if (string.IsNullOrWhiteSpace(actionId)) return new { accepted = false, reason = "actionId is required." };
+
+        object? result = null;
+        if (!string.IsNullOrWhiteSpace(resultJson))
+        {
+            if (resultJson.Length > LiveWeaveMaxResultChars)
+                return new { accepted = false, reason = $"resultJson too large (cap {LiveWeaveMaxResultChars} chars)." };
+            try { result = JsonSerializer.Deserialize<object>(Core.Security.SecretRedactor.Redact(resultJson)); }
+            catch (Exception ex) { return new { accepted = false, reason = $"Invalid resultJson: {ex.Message}" }; }
+        }
+        var redactedError = Core.Security.SecretRedactor.Redact(Truncate(error ?? string.Empty, 500)) is { Length: > 0 } e ? e : null;
+        var done = state.Cu.Complete(actionId.Trim(), ok, result, redactedError);
+        return new { accepted = done.Ok, reason = done.Reason };
+    }
+
+    [McpServerTool, Description(
+        "Operator only: APPROVE a computer-use action the auditor held. The harness that submitted it cannot approve " +
+        "its own held action — only the operator may.")]
+    public static object CuApprove(
+        [Description("actionId to approve")] string actionId,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { ok = false, reason = "Mediated computer use is not available." };
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) return new { ok = false, reason = "Only the operator may approve a held computer-use action." };
+        if (string.IsNullOrWhiteSpace(actionId)) return new { ok = false, reason = "actionId is required." };
+        var (ok, reason) = state.Cu.ApproveHeld(actionId.Trim());
+        if (ok)
+            EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
+                $"Operator APPROVED held computer-use action [{actionId.Trim()}]."));
+        return new { ok, reason };
+    }
+
+    [McpServerTool, Description("Operator only: REJECT a held computer-use action so it never runs.")]
+    public static object CuReject(
+        [Description("actionId to reject")] string actionId,
+        [Description("Optional reason")] string? reason = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { ok = false, reason = "Mediated computer use is not available." };
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) return new { ok = false, reason = "Only the operator may reject a held computer-use action." };
+        if (string.IsNullOrWhiteSpace(actionId)) return new { ok = false, reason = "actionId is required." };
+        var redacted = string.IsNullOrWhiteSpace(reason) ? null : Core.Security.SecretRedactor.Redact(Truncate(reason!.Trim(), 300));
+        var (rok, rreason) = state.Cu.RejectHeld(actionId.Trim(), redacted);
+        if (rok)
+            EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
+                $"Operator REJECTED held computer-use action [{actionId.Trim()}]{(redacted is null ? "" : $": {redacted}")}."));
+        return new { ok = rok, reason = rreason };
+    }
+
+    // Parse cu_submit's argsJson into a flat string map (verb args like url/text/selector/key).
+    private static Dictionary<string, string> ParseCuArgs(string? json)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(json)) return map;
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new FormatException("argsJson must be a JSON object.");
+        foreach (var p in doc.RootElement.EnumerateObject())
+            map[p.Name] = p.Value.ValueKind == JsonValueKind.String ? (p.Value.GetString() ?? "") : p.Value.ToString();
+        return map;
+    }
+
     private const int LiveWeaveMaxResultChars = 64 * 1024;
     private const int LiveWeaveMaxTabInfoChars = 4096;
 

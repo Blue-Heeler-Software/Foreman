@@ -246,6 +246,12 @@ public partial class App : Application
         // controller. The halt flag is shared into MCP state so the computer_use_status tool can report it.
         var panicState = new Foreman.Core.Security.CuPanicState();
         _mcpHost.State.Panic = panicState;
+        // Mediated computer-use broker (Phase 0.5): every CU action is audited (local fast-path; the cloud deep judge
+        // stays OFF until the operator enables it) before it can execute, and the panic halt empties it. Reachable
+        // via the cu_* MCP tools.
+        _mcpHost.State.Cu = new Foreman.Core.ComputerUse.CuBroker(
+            new Foreman.Core.ComputerUse.AuditPipeline(new Foreman.Core.ComputerUse.FastPathAuditor()),
+            () => panicState.IsHalted);
         var panicController = new Foreman.App.ComputerUse.PanicController(
             panicState, EventBus.Instance, _osLog, () => _osLogEnabled);
         _tray.Panic = panicController;

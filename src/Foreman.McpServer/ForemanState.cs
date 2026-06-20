@@ -78,6 +78,10 @@ public sealed class ForemanState : IEventSink
     /// <summary>Computer-use panic state (halted?). Injected by the App; null in tests/headless → reported as not halted.</summary>
     public CuPanicState? Panic { get; set; }
 
+    /// <summary>The mediated computer-use broker (Held-state, audited). Injected by the App; null in tests/headless
+    /// (unless a test sets it), in which case the cu_* tools report the capability as unavailable.</summary>
+    public Foreman.Core.ComputerUse.CuBroker? Cu { get; set; }
+
     void IEventSink.OnEvent(ForemanEvent evt)
     {
         if (evt.Severity > ForemanSeverity.Info)
