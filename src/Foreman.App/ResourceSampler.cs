@@ -29,7 +29,7 @@ public sealed class ResourceSampler : IDisposable
     {
         var now = DateTimeOffset.UtcNow;
         var result = new Dictionary<int, Metrics>(pids.Count);
-        var gpu = ReadGpuByPid(pids);
+        var gpu = ReadGpuByPidGuarded(pids);
 
         foreach (var pid in pids)
         {
@@ -83,6 +83,20 @@ public sealed class ResourceSampler : IDisposable
             return GetProcessIoCounters(p.Handle, out var c) ? c.ReadBytes + c.WriteBytes + c.OtherBytes : 0UL;
         }
         catch { return 0UL; }
+    }
+
+    // The GPU "GPU Engine" performance counters can HANG indefinitely on some systems (notably certain NVIDIA
+    // driver/overlay combinations) — PerformanceCounter has no cancellation. Bound the read with a timeout; if it
+    // stalls, permanently disable GPU sampling so CPU/memory/I/O keep flowing. Always runs on the background
+    // sampler thread (never the UI), and a stalled read self-disables after one timeout.
+    private Dictionary<int, double> ReadGpuByPidGuarded(IReadOnlyCollection<int> pids)
+    {
+        if (!_gpuAvailable || pids.Count == 0) return new Dictionary<int, double>();
+        var task = Task.Run(() => ReadGpuByPid(pids));
+        if (task.Wait(TimeSpan.FromSeconds(2)) && task.IsCompletedSuccessfully)
+            return task.Result;
+        _gpuAvailable = false;   // hung or faulted GPU counters on this box — stop reading them
+        return new Dictionary<int, double>();
     }
 
     // ── GPU (sum of "Utilization Percentage" across the pid's GPU Engine instances) ──

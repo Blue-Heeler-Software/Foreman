@@ -25,7 +25,12 @@ public sealed class UiTelemetryCache : IDisposable
     public UiTelemetryCache(Func<IReadOnlyCollection<int>> pids, TimeSpan? interval = null)
     {
         _pids = pids;
-        _loop = RunAsync(interval ?? TimeSpan.FromSeconds(2), _cts.Token);
+        // Task.Run the WHOLE loop onto the thread pool. RunAsync's first Sample() runs SYNCHRONOUSLY (it's before
+        // the first await), so calling RunAsync directly here would run that sample — including the slow and, on
+        // some NVIDIA systems, indefinitely-HANGING GPU performance-counter read — on the CALLER's thread, which
+        // is the WPF UI thread (this cache is built in window constructors). That wedged the whole dispatcher when
+        // the dashboard/Process-Monitor opened. Task.Run guarantees sampling never touches the UI thread.
+        _loop = Task.Run(() => RunAsync(interval ?? TimeSpan.FromSeconds(2), _cts.Token));
     }
 
     /// <summary>The most recent completed sample. Empty until the first background pass finishes (≈immediately).</summary>
@@ -49,9 +54,11 @@ public sealed class UiTelemetryCache : IDisposable
     public void Dispose()
     {
         _cts.Cancel();
-        try { _loop.GetAwaiter().GetResult(); }
-        catch (OperationCanceledException) { /* normal shutdown */ }
-        catch { /* loop already faulted/finished */ }
+        // BOUNDED wait — Dispose runs on the UI thread (window close), and the loop may be parked in an
+        // uncancellable native GPU counter read. Never block the dispatcher waiting for it; let that thread die on
+        // its own. A short join is enough for the common (idle) case.
+        try { _loop.Wait(TimeSpan.FromSeconds(2)); }
+        catch { /* cancelled / already finished / faulted */ }
         _cts.Dispose();
         _sampler.Dispose();
     }
