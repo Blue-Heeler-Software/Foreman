@@ -142,4 +142,35 @@ public sealed class CuToolsTests
         using var codexDone = Json(ForemanMcpTools.CuCompleteAction(actionId, true, null, null, AsHarness("codex")));
         Assert.False(codexDone.RootElement.GetProperty("accepted").GetBoolean());
     }
+
+    [Fact]
+    public async Task CuSetDriver_GatesWhoMaySubmit()
+    {
+        StateWith(CuVerdict.Allow("test"));   // desktop modality skips the browser-use policy, isolating the driver gate
+
+        // Default: no driver -> a harness cannot submit (operator-only).
+        using var noDrv = Json(await ForemanMcpTools.CuSubmit("desktop", "move", "{}", AsHarness("codex")));
+        Assert.False(noDrv.RootElement.GetProperty("accepted").GetBoolean());
+
+        // Operator designates codex as the driver.
+        using var set = Json(ForemanMcpTools.CuSetDriver("codex"));   // null http = operator
+        Assert.True(set.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("codex", set.RootElement.GetProperty("driver").GetString());
+
+        // codex may now submit…
+        using var codexOk = Json(await ForemanMcpTools.CuSubmit("desktop", "move", "{}", AsHarness("codex")));
+        Assert.True(codexOk.RootElement.GetProperty("accepted").GetBoolean());
+
+        // …a different harness still may not.
+        using var claudeNo = Json(await ForemanMcpTools.CuSubmit("desktop", "move", "{}", AsHarness("claude-code")));
+        Assert.False(claudeNo.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public void CuSetDriver_OperatorOnly()
+    {
+        StateWith(CuVerdict.Allow("test"));
+        using var doc = Json(ForemanMcpTools.CuSetDriver("codex", AsHarness("codex")));   // a non-operator harness
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+    }
 }

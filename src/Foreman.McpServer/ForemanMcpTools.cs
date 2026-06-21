@@ -1464,6 +1464,24 @@ public static class ForemanMcpTools
         return new { ok = rok, reason = rreason };
     }
 
+    [McpServerTool, Description(
+        "Operator only: choose which harness may DRIVE computer use (submit cu_* actions). Empty/blank = operator " +
+        "only (default); a harness id (e.g. 'codex', 'claude-code') = just that harness; 'any' = every connected " +
+        "harness. The chosen driver still has every action audited, held when risky, and panic-haltable.")]
+    public static object CuSetDriver(
+        [Description("Harness id to authorize as the CU driver; empty = operator-only; 'any' = all harnesses")] string? harnessId = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { ok = false, reason = "Mediated computer use is not available." };
+        var caller = CallerScope.From(http);
+        if (!caller.IsOperator) return new { ok = false, reason = "Only the operator may set the computer-use driver." };
+        state.Cu.SetDriver(harnessId);
+        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
+            $"Operator set the computer-use driver to {(state.Cu.Driver is { } d ? $"'{d}'" : "operator-only")}."));
+        return new { ok = true, driver = state.Cu.Driver };
+    }
+
     // Parse cu_submit's argsJson into a flat string map (verb args like url/text/selector/key).
     private static Dictionary<string, string> ParseCuArgs(string? json)
     {
