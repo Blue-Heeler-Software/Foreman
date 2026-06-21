@@ -1378,9 +1378,12 @@ public static class ForemanMcpTools
         var state = _state ?? new ForemanState();
         if (state.Cu is null) return new { actions = Array.Empty<object>() };
         var caller = CallerScope.From(http);
-        // NOTE (Phase 5 hardening TODO): restrict to the VERIFIED executor (extension/sidecar) rather than any
-        // mutating caller. The broker already only yields APPROVED (audited) actions and the panic empties this.
         if (!caller.CanMutate) return new { actions = Array.Empty<object>(), reason = "Refused: token/process identity mismatch." };
+        // Only the EXECUTOR may claim approved actions. Today that is the browser-extension (and the operator);
+        // the desktop CU sidecar harness joins this allow-list when Phase 3 lands. Mirrors the liveweave_poll
+        // restriction so a submitting/driving harness cannot also drain (and fake-complete) the approved queue.
+        if (!caller.IsOperator && !string.Equals(caller.HarnessId, "browser-extension", StringComparison.OrdinalIgnoreCase))
+            return new { actions = Array.Empty<object>(), reason = "Only the browser-extension executor may claim computer-use actions." };
         var batch = state.Cu.Claim(limit);
         return new
         {
@@ -1406,6 +1409,8 @@ public static class ForemanMcpTools
         if (state.Cu is null) return new { accepted = false, reason = "Mediated computer use is not available." };
         var caller = CallerScope.From(http);
         if (!caller.CanMutate) return new { accepted = false, reason = "Refused: token/process identity mismatch." };
+        if (!caller.IsOperator && !string.Equals(caller.HarnessId, "browser-extension", StringComparison.OrdinalIgnoreCase))
+            return new { accepted = false, reason = "Only the browser-extension executor may complete computer-use actions." };
         if (string.IsNullOrWhiteSpace(actionId)) return new { accepted = false, reason = "actionId is required." };
 
         object? result = null;

@@ -6,15 +6,18 @@
  *      the user types it on the options page → we prove we hold it via a challenge/response (the code never
  *      crosses the wire) → Foreman allow-lists our origin and hands back a scoped bearer token.
  *   2. Connected: we poll /health for liveness and call the MCP endpoint (with the token) for status/alerts,
- *      and feed the side panel.
+ *      feed the side panel, surface the Ask-Harness inbox, and act as the executor for Foreman's audited
+ *      browser-use (BU) broker.
  *
  * The extension has host_permissions for 127.0.0.1/localhost, so the service worker can fetch the loopback
  * server cross-origin without CORS. Nothing here ever talks to a remote host.
+ *
+ * (LiveWeave, the local page builder, now lives in its own extension — `extension-liveweave/`.)
  */
 import { loadSettings, saveSettings, onSettingsChanged } from './settings.js';
 import { callMcpTool, openMcpSession } from './mcp-client.js';
 
-let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '', harnessId: 'browser-extension', liveweaveDriver: '' };
+let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '', harnessId: 'browser-extension' };
 let connected = false;
 let lastStatus = null;          // last foreman_status payload (or null)
 let lastAsks = [];              // pending Ask-Harness requests scoped to this extension
@@ -36,10 +39,9 @@ async function hmacHex(key, message) {
     return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
-async function pair(code, harnessId = cfg.harnessId, liveweaveDriver = cfg.liveweaveDriver) {
+async function pair(code) {
     const clean = (code || '').trim().toUpperCase();
     if (!clean) return { ok: false, error: 'Enter the code shown in Foreman.' };
-    const requestedHarness = harnessId === 'liveweave' ? 'liveweave' : 'browser-extension';
     try {
         const cr = await fetch(`${base()}/pair/challenge`);
         if (cr.status === 409) return { ok: false, error: 'No pairing window is open. Click "Pair browser extension" in Foreman first.' };
@@ -50,13 +52,13 @@ async function pair(code, harnessId = cfg.harnessId, liveweaveDriver = cfg.livew
         const done = await fetch(`${base()}/pair/complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response, origin: selfOrigin(), harnessId: requestedHarness }),
+            body: JSON.stringify({ response, origin: selfOrigin(), harnessId: 'browser-extension' }),
         });
         const body = await done.json().catch(() => ({}));
         if (!done.ok || !body.ok) return { ok: false, error: body.reason || `Pairing failed (${done.status}).` };
 
-        cfg = { ...cfg, token: body.token || '', pairedOrigin: body.origin || selfOrigin(), harnessId: body.harnessId || requestedHarness, liveweaveDriver: liveweaveDriver || '' };
-        await saveSettings({ token: cfg.token, pairedOrigin: cfg.pairedOrigin, harnessId: cfg.harnessId, liveweaveDriver: cfg.liveweaveDriver });
+        cfg = { ...cfg, token: body.token || '', pairedOrigin: body.origin || selfOrigin(), harnessId: body.harnessId || 'browser-extension' };
+        await saveSettings({ token: cfg.token, pairedOrigin: cfg.pairedOrigin, harnessId: cfg.harnessId });
         mcpSession = null;
         await refresh();
         return { ok: true };
@@ -105,144 +107,61 @@ async function replyAsk(requestId, response) {
     return ok ? { ok: true } : { ok: false, error: (r && (r.reason || r.error)) || lastMcpError || 'Reply was not accepted.' };
 }
 
-const DEFAULT_CANVAS = {
-    title: 'LiveWeave Canvas',
-    html: '<main style="font-family: system-ui, sans-serif; padding: 32px;"><h1>LiveWeave Canvas</h1><p>Ready for Foreman-brokered edits.</p></main>',
-    css: '',
-    updatedAt: '',
-};
+// ── Browser use (BU) — executor for Foreman's audited cu_* broker ───────────────
+// Foreman AUDITS every action (and holds risky ones for operator approval) BEFORE it reaches here; this
+// extension is only the executor for actions Foreman already APPROVED. Bounded mode: navigate + read tab
+// metadata, which need nothing beyond the existing "tabs" permission. click/type/scroll/screenshot need
+// `scripting` + host permissions (a future broad-mode operator opt-in) and return a clear error until then.
 
-async function readCanvas() {
-    const s = await chrome.storage.local.get({ liveweaveCanvas: DEFAULT_CANVAS, liveweaveHistory: [] });
-    return {
-        canvas: { ...DEFAULT_CANVAS, ...(s.liveweaveCanvas || {}) },
-        history: Array.isArray(s.liveweaveHistory) ? s.liveweaveHistory : [],
-    };
-}
-
-async function saveCanvas(canvas, pushHistory = true) {
-    const prior = await readCanvas();
-    const next = { ...DEFAULT_CANVAS, ...canvas, updatedAt: new Date().toISOString() };
-    const patch = { liveweaveCanvas: next };
-    if (pushHistory) patch.liveweaveHistory = [...prior.history.slice(-9), prior.canvas];
-    await chrome.storage.local.set(patch);
-    await openLiveWeaveCanvas();
-    return next;
-}
-
-async function openLiveWeaveCanvas() {
-    const url = chrome.runtime.getURL('liveweave.html');
-    const tabs = await chrome.tabs.query({ url });
-    if (tabs[0]?.id != null) return;
-    await chrome.tabs.create({ url, active: false });
-}
-
-function textParam(params, name, fallback = '') {
-    const v = params?.[name];
-    return v == null ? fallback : String(v);
-}
-
-async function executeLiveWeaveCommand(cmd) {
-    const action = String(cmd.action || '').toLowerCase();
-    const params = cmd.parameters || {};
-    const { canvas, history } = await readCanvas();
-
-    switch (action) {
-        case 'new_canvas':
-            return { ok: true, canvas: await saveCanvas({ ...DEFAULT_CANVAS, title: textParam(params, 'title', 'LiveWeave Canvas') }) };
-
-        case 'apply_page':
-            return {
-                ok: true,
-                canvas: await saveCanvas({
-                    title: textParam(params, 'title', canvas.title),
-                    html: textParam(params, 'html', canvas.html),
-                    css: textParam(params, 'css', canvas.css),
-                }),
-            };
-
-        case 'apply_section': {
-            const html = textParam(params, 'html');
-            const css = textParam(params, 'css');
-            const placement = textParam(params, 'placement', 'append').toLowerCase();
-            const nextHtml = placement === 'prepend' ? `${html}\n${canvas.html}` : `${canvas.html}\n${html}`;
-            return { ok: true, canvas: await saveCanvas({ ...canvas, html: nextHtml, css: `${canvas.css || ''}\n${css}` }) };
+async function executeCuAction(act) {
+    const verb = String(act.verb || '').toLowerCase();
+    const args = act.args || {};
+    switch (verb) {
+        case 'navigate': {
+            const url = String(args.url || '');
+            // Scheme-gate to http(s) (rejects javascript:/data:/file:/chrome:/about:), then confirm it parses.
+            // Defense-in-depth even though Foreman already audited the action upstream.
+            if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'navigate requires an http(s) url.' };
+            try { new URL(url); } catch { return { ok: false, error: 'navigate requires a valid url.' }; }
+            const tab = await chrome.tabs.create({ url, active: true });
+            return { ok: true, result: { tabId: tab.id ?? null, url } };
         }
-
-        case 'apply_inner': {
-            const html = textParam(params, 'html');
-            const path = textParam(params, 'path', 'body');
-            const marker = `\n<!-- liveweave:${path} -->\n${html}`;
-            return { ok: true, canvas: await saveCanvas({ ...canvas, html: `${canvas.html}${marker}`, css: `${canvas.css || ''}\n${textParam(params, 'css')}` }) };
+        case 'read': {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab) return { ok: false, error: 'No active tab to read.' };
+            // Bounded: tab metadata only. Page CONTENT (DOM/text) needs scripting (broad mode).
+            return { ok: true, result: { url: tab.url ?? '', title: tab.title ?? '' } };
         }
-
-        case 'set_style': {
-            const path = textParam(params, 'path', 'body');
-            const styles = textParam(params, 'styles');
-            return { ok: true, canvas: await saveCanvas({ ...canvas, css: `${canvas.css || ''}\n${path}{${styles}}` }) };
-        }
-
-        case 'set_background': {
-            const value = textParam(params, 'value', textParam(params, 'background', '#ffffff'));
-            return { ok: true, canvas: await saveCanvas({ ...canvas, css: `${canvas.css || ''}\nbody{background:${value};}` }) };
-        }
-
-        case 'undo': {
-            if (history.length === 0) return { ok: false, error: 'Nothing to undo.' };
-            const previous = history[history.length - 1];
-            await chrome.storage.local.set({ liveweaveCanvas: previous, liveweaveHistory: history.slice(0, -1) });
-            await openLiveWeaveCanvas();
-            return { ok: true, canvas: previous };
-        }
-
-        case 'scan':
-        case 'outline':
-            return {
-                ok: true,
-                title: canvas.title,
-                html: canvas.html,
-                css: canvas.css,
-                htmlLength: canvas.html.length,
-                cssLength: canvas.css.length,
-            };
-
+        case 'click':
+        case 'type':
+        case 'scroll':
+        case 'screenshot':
+            return { ok: false, error: `'${verb}' needs broad browser-use mode (scripting + host permissions), which is not enabled in this build.` };
         default:
-            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: new_canvas, apply_page, apply_section, apply_inner, set_style, set_background, undo, scan, outline.` };
+            return { ok: false, error: `Unsupported browser-use verb '${verb}'.` };
     }
 }
 
-async function liveweaveTabInfo() {
-    const { canvas } = await readCanvas();
-    return {
-        url: chrome.runtime.getURL('liveweave.html'),
-        title: canvas.title || 'LiveWeave Canvas',
-        kind: 'extension-canvas',
-        editable: true,
-    };
-}
-
-async function pollLiveWeave() {
-    if (cfg.harnessId !== 'liveweave' || !cfg.token || !connected) return;
-    const tabInfoJson = JSON.stringify(await liveweaveTabInfo());
-    const batch = await mcpCall('liveweave_poll_commands', {
-        limit: 5,
-        tabInfoJson,
-        nanoStatus: 'unavailable',
-        driverHarness: cfg.liveweaveDriver || '',
-    });
-    const commands = Array.isArray(batch?.commands) ? batch.commands : [];
-    for (const cmd of commands) {
+async function pollCu() {
+    if (!cfg.token || !connected) return;
+    const batch = await mcpCall('cu_poll_actions', { limit: 5 });
+    const actions = Array.isArray(batch?.actions) ? batch.actions : [];
+    for (const act of actions) {
         let result;
-        try {
-            result = await executeLiveWeaveCommand(cmd);
-        } catch (e) {
-            result = { ok: false, error: String(e?.message || e) };
+        // This extension executes BROWSER actions only. No desktop executor exists yet, so all cu actions are
+        // browser; when the desktop sidecar lands, cu_poll_actions should filter by modality so we never claim a
+        // desktop action we cannot run.
+        if (String(act.modality || '').toLowerCase() !== 'browser') {
+            result = { ok: false, error: 'Browser extension cannot execute non-browser actions.' };
+        } else {
+            try { result = await executeCuAction(act); }
+            catch (e) { result = { ok: false, error: String(e?.message || e) }; }
         }
-        await mcpCall('liveweave_complete_command', {
-            commandId: cmd.commandId,
+        await mcpCall('cu_complete_action', {
+            actionId: act.actionId,
             ok: !!result.ok,
-            resultJson: result.ok ? JSON.stringify(result) : null,
-            error: result.ok ? null : (result.error || 'LiveWeave command failed.'),
+            resultJson: result.ok ? JSON.stringify(result.result ?? result) : null,
+            error: result.ok ? null : (result.error || 'Browser-use action failed.'),
         });
     }
 }
@@ -251,7 +170,7 @@ async function refresh() {
     connected = await checkHealth();
     lastMcpError = null;
     lastStatus = connected ? await mcpCall('foreman_status') : null;
-    await pollLiveWeave();
+    await pollCu();
     // The inbox is scoped to THIS extension's harness ("browser-extension") by the token — it only ever shows
     // prompts Foreman routed to us, never a sibling's. Empty until orchestration routes work to the browser.
     const asks = connected && cfg.token ? await mcpCall('list_ask_harness_requests', { includeAnswered: false, limit: 10 }) : null;
@@ -274,7 +193,7 @@ chrome.runtime.onConnect.addListener((port) => {
     refresh();                   // …then pull fresh status + inbox (the SW may have been suspended)
     port.onMessage.addListener(async (msg) => {
         if (msg?.kind === 'pair') {
-            const r = await pair(msg.code, msg.harnessId, msg.liveweaveDriver);
+            const r = await pair(msg.code);
             safePost({ kind: 'pair-result', ...r });
         } else if (msg?.kind === 'refresh') {
             mcpSession = null;
@@ -296,7 +215,6 @@ function broadcast() {
         verified: !!cfg.token && connected && !!lastStatus,
         base: base(),
         harnessId: cfg.harnessId,
-        liveweaveDriver: cfg.liveweaveDriver || '',
         status: lastStatus,
         asks: lastAsks,
         mcpError: lastMcpError,
@@ -316,7 +234,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }); } catch { /* Chrome < 114 */ }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.kind === 'pair') { pair(msg.code, msg.harnessId, msg.liveweaveDriver).then(sendResponse); return true; }
+    if (msg?.kind === 'pair') { pair(msg.code).then(sendResponse); return true; }
     return false;
 });
 

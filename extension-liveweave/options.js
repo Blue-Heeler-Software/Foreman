@@ -2,10 +2,17 @@ const $ = (id) => document.getElementById(id);
 
 function setMsg(text, cls) { const m = $('msg'); m.textContent = text; m.className = cls || ''; }
 
+async function loadOptions() {
+    const s = await chrome.storage.local.get({ liveweaveDriver: '' });
+    $('driver').value = s.liveweaveDriver || '';
+}
+
 $('pair').addEventListener('click', () => {
     const code = $('code').value;
+    const liveweaveDriver = $('driver').value.trim().toLowerCase();
+    chrome.storage.local.set({ harnessId: 'liveweave', liveweaveDriver });
     setMsg('Pairing…');
-    chrome.runtime.sendMessage({ kind: 'pair', code }, (r) => {
+    chrome.runtime.sendMessage({ kind: 'pair', code, liveweaveDriver }, (r) => {
         if (chrome.runtime.lastError) { setMsg(chrome.runtime.lastError.message, 'err'); return; }
         if (r?.ok) setMsg('✓ Paired. Click Close, then open the side panel.', 'ok');
         else setMsg(r?.error || 'Pairing failed.', 'err');
@@ -30,3 +37,4 @@ function closePane() {
 }
 $('close').addEventListener('click', closePane);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePane(); });
+loadOptions();

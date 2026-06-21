@@ -4,9 +4,13 @@ A Manifest V3 extension that links your browser to the **local** Foreman desktop
 closed-loop, on-device design in [`../docs/closed-loop-spec.md`](../docs/closed-loop-spec.md). Nothing it does
 ever touches the network: it talks only to `http://127.0.0.1:54321`.
 
-> **Status: pairing + status + inbox + on-device Nano working** (alpha). Pairing, `/health` liveness,
-> `foreman_status`, the Ask-Harness inbox, and on-device Gemini Nano are implemented. Attestation (signed-release
-> hash verification at pairing) and icons are the remaining items. Reload the unpacked extension after pulling.
+> **Status: pairing + status + inbox + on-device Nano + bounded browser use** (alpha). Pairing, `/health`
+> liveness, `foreman_status`, the Ask-Harness inbox, on-device Gemini Nano, and the executor for Foreman's
+> audited `cu_*` browser-use broker (bounded: navigate + read tab metadata) are implemented. Attestation
+> (signed-release hash verification at pairing), icons, and broad browser-use mode are the remaining items.
+> Reload the unpacked extension after pulling.
+>
+> **LiveWeave** (the local page builder) has moved to its own extension — `../extension-liveweave/`.
 
 ## What it does
 
@@ -21,10 +25,14 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 - **On-device AI (Gemini Nano)**: optional, never required. When Chrome's built-in model is present it can draft
   a reply or summarise the status entirely on-device (nothing leaves the machine). Absent/sub-spec browsers show
   `unavailable` and everything else still works (Pillar 1: Nano is the fast lane, not the gate).
-- **LiveWeave mode**: pair the same extension as the `liveweave` harness to poll Foreman's `liveweave_*`
-  broker tools and render edits into `liveweave.html`, a local extension-owned canvas. It does not drive
-  arbitrary tabs. A selected driver harness is required before non-operator agents can enqueue commands;
-  an empty driver means operator-token only, and `any` is the explicit all-harness mode.
+- **Browser use (BU)**: the executor for Foreman's **audited** computer-use broker. It polls `cu_poll_actions`
+  for actions Foreman has already audited (and an operator approved, when held), runs them, and reports via
+  `cu_complete_action`. **Bounded mode** (current): `navigate` (open a tab) and `read` (active-tab url/title)
+  only, which need nothing beyond the existing `tabs` permission. `click`/`type`/`scroll`/`screenshot` need
+  `scripting` + host permissions (a future broad-mode operator opt-in) and return a clear error until then.
+  Foreman audits, holds, and can panic-halt every action; this extension never decides on its own. The executor
+  polls every 5s while paired+connected and runs already-approved actions automatically (so up to ~5s latency
+  before an approved action starts); a per-operator pause toggle is a planned refinement.
 
 ## Load it
 
@@ -42,6 +50,9 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
   the request **Host** is loopback (DNS-rebinding defence) and the **Origin** is this paired extension.
 - The bearer token lives in `chrome.storage.local` (extension-scoped). It is a local secret, as safe as the
   profile holding it.
+- Browser use stays bounded by design: Foreman gates -> audits -> (holds for operator) -> approves each action
+  before it reaches the extension, and the panic halt empties the poll. The extension adds no broad page
+  permissions until broad mode is explicitly opted into.
 
 ## Files
 
@@ -49,8 +60,7 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 |---|---|
 | `manifest.json` | MV3 manifest (loopback host_permissions, side panel, options) |
 | `mcp-client.js` | streamable-HTTP MCP client (`initialize` → `notifications/initialized` → `tools/call`) |
-| `background.js` | service worker: pairing, health poll, MCP session, inbox fetch/reply, side-panel port |
-| `liveweave.html` / `liveweave.js` | local LiveWeave canvas for Foreman-brokered page edits |
+| `background.js` | service worker: pairing, health poll, MCP session, inbox fetch/reply, `cu_*` browser-use executor, side-panel port |
 | `nano.js` | on-device Gemini Nano adapter (availability detection + a constrained `prompt` turn) |
 | `settings.js` | `chrome.storage.local` helpers |
 | `options.html` / `options.js` | enter the pairing code |
@@ -58,6 +68,10 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 
 ## TODO (next iterations)
 
+- **Broad browser-use mode** (operator opt-in): add `scripting` + host permissions so `click`/`type`/`read`
+  page content / `screenshot` work on live pages, with a per-origin lease and an in-panel toggle.
+- **Browser-use auto-poll pause toggle** (operator setting): pause/resume `cu_poll_actions` polling without
+  unpairing, for operators who want execution to be explicitly resumed rather than continuous.
 - **Attestation** (closed-loop spec step 4): SignPath-sign the extension, publish `version → hash → signature`,
   and have `Foreman.exe` verify the running extension's hash at pairing. Needs SignPath live (#41).
 - Icons (toolbar + store).

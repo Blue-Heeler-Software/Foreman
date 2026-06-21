@@ -48,10 +48,7 @@ function render(m) {
     else if (m.connected) { badge.textContent = '⚠ Paired — MCP status pending'; badge.className = 'warn'; }
     else { badge.textContent = '⚠ Paired — Foreman offline'; badge.className = 'warn'; }
 
-    const mode = m.harnessId === 'liveweave'
-        ? `LiveWeave mode · driver: ${m.liveweaveDriver || 'operator only'}`
-        : 'Foreman status mode';
-    setHint(`${m.base} · ${mode} · nothing leaves this machine`, '');
+    setHint(`${m.base} · status + browser-use executor (bounded) · nothing leaves this machine`, '');
 
     if (m.status) {
         latestStatus = m.status;
