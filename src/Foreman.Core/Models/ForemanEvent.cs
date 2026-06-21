@@ -101,7 +101,12 @@ public sealed record OrphanDetectedEvent(
     string ProcessName,
     int DeadParentPid,
     string DeadParentName,
-    int UptimeMinutes
+    int UptimeMinutes,
+    // The harness tree this orphan belongs to (orphan alerts are scoped to harness lineage). Nullable for
+    // backward-compatible deserialization of events logged before attribution existed.
+    int? HarnessPid = null,
+    string? HarnessType = null,
+    string? HarnessName = null
 ) : ForemanEvent(Timestamp, ForemanSeverity.Medium, Source, Message);
 
 public sealed record PermissionViolationEvent(

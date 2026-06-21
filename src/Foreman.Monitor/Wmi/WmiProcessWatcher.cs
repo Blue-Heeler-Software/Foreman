@@ -291,19 +291,28 @@ public sealed class WmiProcessWatcher : IDisposable
             // a moment — that's normal teardown, not an abandoned orphan. Skip orphan events for its children.
             var deadParentIsLocalModelHost = KnownHarnesses.IsLocalModelHost(deleted?.HarnessType);
 
-            // publish orphan events for any children that survived
+            // publish orphan events for any children that survived — but ONLY for orphans that belong to a harness
+            // tree. A re-parented Windows process (e.g. SIHClient.exe when its upfc.exe launcher exits) has no
+            // harness lineage and is OS churn, not an "orphaned harness child"; attributing it would be a false
+            // positive. When a harness IS found, name it on the alert.
             foreach (var orphan in orphans)
             {
                 if (deadParentIsLocalModelHost) continue;
+                var harness = _tree.AttributeOrphanHarness(orphan, deleted);
+                if (harness is null) continue;   // not part of a harness tree — ignore (Windows process churn)
                 _bus.Publish(new OrphanDetectedEvent(
                     DateTimeOffset.UtcNow,
                     "Foreman.Monitor",
-                    $"{orphan.Name} (pid {orphan.Pid}) is orphaned — parent {name} (pid {pid}) exited",
+                    $"{orphan.Name} (pid {orphan.Pid}) is orphaned — parent {name} (pid {pid}) exited " +
+                    $"[harness: {harness.HarnessType ?? harness.Name}]",
                     orphan.Pid,
                     orphan.Name,
                     pid,
                     name,
-                    orphan.UptimeMinutes
+                    orphan.UptimeMinutes,
+                    harness.Pid,
+                    harness.HarnessType,
+                    harness.Name
                 ) { ProcessStartTime = orphan.StartTime });
             }
 

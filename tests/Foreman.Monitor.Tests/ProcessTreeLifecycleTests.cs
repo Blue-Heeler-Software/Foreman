@@ -183,4 +183,46 @@ public sealed class ProcessTreeLifecycleTests
         Assert.Contains(harness.Pid, pids);
         Assert.Contains(child.Pid, pids);
     }
+
+    [Fact]
+    public void AttributeOrphanHarness_HarnessParent_AttributesToParent()
+    {
+        var tree = new ProcessTreeTracker();
+        var parent = Rec(940_001, 0, "codex.exe", isHarness: true, harnessType: "codex");
+        var child = Rec(940_002, parent.Pid, "python.exe");
+        Assert.Same(parent, tree.AttributeOrphanHarness(child, parent));
+    }
+
+    [Fact]
+    public void AttributeOrphanHarness_NonHarnessTree_ReturnsNull()
+    {
+        // The real-world false positive: SIHClient.exe whose upfc.exe launcher exits — neither is a harness, so
+        // no orphan alert should be raised (and there is no harness to attribute it to).
+        var tree = new ProcessTreeTracker();
+        var parent = Rec(940_011, 940_010, "upfc.exe");
+        var child = Rec(940_012, parent.Pid, "SIHClient.exe");
+        Assert.Null(tree.AttributeOrphanHarness(child, parent));
+    }
+
+    [Fact]
+    public void AttributeOrphanHarness_HarnessGrandparent_AttributesUpTheChain()
+    {
+        // Dead parent is a plain shell (no HarnessType) but its OWN parent is the harness node, still tracked.
+        var tree = new ProcessTreeTracker();
+        var harness = Rec(940_021, 0, "claude.exe", isHarness: true, harnessType: "claude-code");
+        tree.OnProcessCreated(harness);
+        var shell = Rec(940_022, harness.Pid, "powershell.exe");
+        var child = Rec(940_023, shell.Pid, "node.exe");
+        Assert.Same(harness, tree.AttributeOrphanHarness(child, shell));
+    }
+
+    [Fact]
+    public void AttributeOrphanHarness_ChildIsItselfHarness_AttributesToChild()
+    {
+        // The harness node itself orphaned because its plain (non-harness) launcher exited.
+        var tree = new ProcessTreeTracker();
+        var launcher = Rec(940_031, 940_030, "cmd.exe");
+        var child = Rec(940_032, launcher.Pid, "codex.exe", isHarness: true, harnessType: "codex");
+        Assert.Same(child, tree.AttributeOrphanHarness(child, launcher));
+    }
 }

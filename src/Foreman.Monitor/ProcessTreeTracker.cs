@@ -217,6 +217,27 @@ public sealed class ProcessTreeTracker
     public ProcessRecord? FindHarnessTypeAncestor(int pid) => WalkAncestors(pid, static r => r.HarnessType is not null);
 
     /// <summary>
+    /// The harness an orphaned <paramref name="child"/> belongs to, or null if it is not part of any harness
+    /// tree. Used to SCOPE orphan alerts to harness subtrees — a re-parented Windows process (e.g. SIHClient.exe
+    /// whose upfc.exe launcher exits) has no harness lineage and returns null, so it is ignored rather than
+    /// flagged as an "orphaned harness child" — and to ATTRIBUTE the orphans that do matter.
+    ///
+    /// <paramref name="deadParent"/> is the just-exited parent record (already removed from the tree by
+    /// <see cref="OnProcessDeleted"/>, or evicted by <see cref="Prune"/>) — we still hold the object, and the
+    /// chain ABOVE it stays in the tree, so resolve in order: the parent itself if it is harness-typed; else the
+    /// parent's nearest harness-typed ANCESTOR (walked from the grandparent, since the parent is gone); else the
+    /// child itself if IT is a harness node whose plain (non-harness) launcher just died. Fails toward silence
+    /// (returns null, no false attribution) when no harness is provable — like <see cref="WalkAncestors"/>.
+    /// </summary>
+    public ProcessRecord? AttributeOrphanHarness(ProcessRecord child, ProcessRecord? deadParent)
+    {
+        if (deadParent?.HarnessType is not null) return deadParent;
+        if (deadParent is not null && FindHarnessTypeAncestor(deadParent.ParentPid) is { } ancestor) return ancestor;
+        if (child.HarnessType is not null) return child;
+        return null;
+    }
+
+    /// <summary>
     /// Nearest ancestor (including the process itself) with a matched permission profile.
     /// </summary>
     public ProcessRecord? FindProfileAncestor(int pid) => WalkAncestors(pid, static r => r.ProfileName is not null);

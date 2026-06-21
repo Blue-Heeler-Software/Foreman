@@ -416,9 +416,9 @@ public partial class AlertDetailWindow : Window
             "This process has gone silent. Is it still doing useful work, or is it stuck/abandoned? " +
             "If it's stuck or no longer needed, abort it (Ctrl+C) or reap the child; otherwise explain " +
             "what it's waiting on. If this is a false alarm you may acknowledge the alert.",
-        OrphanDetectedEvent =>
-            "This child process outlived its parent. Is that intentional? If not, terminate it; if it " +
-            "is, explain why — you may acknowledge the alert once accounted for.",
+        OrphanDetectedEvent orphan =>
+            $"A {orphan.HarnessType ?? "harness"} child process outlived its parent. Is that intentional? If not, " +
+            "terminate it; if it is, explain why — you may acknowledge the alert once accounted for.",
         NonzeroExitEvent =>
             "A process you launched exited non-zero. Explain what failed and whether you've handled it. " +
             "You may acknowledge the alert if this is expected.",
@@ -579,6 +579,8 @@ public partial class AlertDetailWindow : Window
                 sb.AppendLine();
                 sb.AppendLine("Orphan details");
                 sb.AppendLine($"- Dead parent: {orphan.DeadParentName} (pid {orphan.DeadParentPid})");
+                if (orphan.HarnessType is not null)
+                    sb.AppendLine($"- Owning harness: {orphan.HarnessType}{(orphan.HarnessPid is int ohp ? $" (pid {ohp})" : "")}");
                 sb.AppendLine($"- Orphan uptime minutes: {orphan.UptimeMinutes}");
                 break;
 
@@ -720,7 +722,7 @@ public partial class AlertDetailWindow : Window
             hang.ParentHarnessType,
             hang.ParentHarnessPid is int hp ? ResolveHarnessFromProcess(hp) : null,
             ResolveHarnessFromProcess(hang.ProcessId)),
-        OrphanDetectedEvent orphan => ResolveHarnessFromProcess(orphan.ProcessId),
+        OrphanDetectedEvent orphan => FirstNonBlank(orphan.HarnessType, ResolveHarnessFromProcess(orphan.ProcessId)),
         PermissionViolationEvent perm => ResolveHarnessFromProcess(perm.ProcessId),
         NonzeroExitEvent exit => FirstNonBlank(
             exit.ParentHarnessPid is int hp ? ResolveHarnessFromProcess(hp) : null,
@@ -984,16 +986,19 @@ public sealed class AlertDetailVm
 
             case OrphanDetectedEvent orphan:
                 EventTypeLabel = "Orphaned Process";
+                var orphanHarness = orphan.HarnessType is not null
+                    ? $"the {orphan.HarnessType} harness tree{(orphan.HarnessPid is int ohpid ? $" (pid {ohpid})" : "")}"
+                    : "a harness tree";
                 WhyDangerous =
                     $"\"{orphan.ProcessName}\" (pid {orphan.ProcessId}) is still running even though " +
                     $"its parent \"{orphan.DeadParentName}\" (pid {orphan.DeadParentPid}) has exited.\n\n" +
-                    $"The orphan has been running for {orphan.UptimeMinutes} minutes unsupervised. " +
-                    $"Orphaned harness children can continue executing tasks, mutating files, or making " +
-                    $"network requests without the parent harness to oversee them.";
+                    $"It belongs to {orphanHarness}, and has been running for {orphan.UptimeMinutes} minutes " +
+                    $"unsupervised. Orphaned harness children can continue executing tasks, mutating files, or " +
+                    $"making network requests without the parent harness to oversee them.";
                 RecommendedAction =
                     "1. If this process is expected (e.g. a deliberate background daemon), you can safely ignore this alert.\n" +
                     $"2. Otherwise, terminate pid {orphan.ProcessId} from Task Manager.\n" +
-                    "3. Review what task the harness was running when it exited to understand what the orphan may be doing.";
+                    $"3. Review what {(orphan.HarnessType ?? "the harness")} was running when it exited to understand what the orphan may be doing.";
                 break;
 
             case PermissionViolationEvent perm:

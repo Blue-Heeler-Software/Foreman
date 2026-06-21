@@ -88,11 +88,14 @@ public sealed class IoPoller : IDisposable
             foreach (var o in outcome.Orphans)
             {
                 if (KnownHarnesses.IsLocalModelHost(o.Parent.HarnessType)) continue;
+                var harness = _tree.AttributeOrphanHarness(o.Child, o.Parent);
+                if (harness is null) continue;   // not part of a harness tree — ignore (Windows process churn)
                 _bus.Publish(new OrphanDetectedEvent(
                     DateTimeOffset.UtcNow, "Foreman.Monitor",
                     $"{o.Child.Name} (pid {o.Child.Pid}) is orphaned — parent {o.Parent.Name} (pid {o.Parent.Pid}) " +
-                    "exited (its termination event was missed; caught by reconciliation)",
-                    o.Child.Pid, o.Child.Name, o.Parent.Pid, o.Parent.Name, o.Child.UptimeMinutes)
+                    $"exited (its termination event was missed; caught by reconciliation) [harness: {harness.HarnessType ?? harness.Name}]",
+                    o.Child.Pid, o.Child.Name, o.Parent.Pid, o.Parent.Name, o.Child.UptimeMinutes,
+                    harness.Pid, harness.HarnessType, harness.Name)
                     { ProcessStartTime = o.Child.StartTime });
             }
 
