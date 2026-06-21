@@ -240,10 +240,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
+const KEEPALIVE_ALARM = 'foreman-keepalive';
+
 async function bootstrap() {
     try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
+    // MV3 service workers sleep after ~30s idle, which stops the poll loop — so an APPROVED browser-use action
+    // would sit unclaimed unless the side panel is open. A periodic alarm wakes the worker (~1 min) to poll
+    // cu_poll_actions / status / inbox even when nothing else fires; the 5s interval still drives the awake bursts.
+    try { chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 1 }); } catch { /* alarms unavailable */ }
     startPolling();
 }
+// Registered at top level so the alarm can WAKE a suspended worker; it then reloads cfg + resumes polling.
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === KEEPALIVE_ALARM) bootstrap(); });
 onSettingsChanged(async () => {
     try {
         cfg = { ...cfg, ...(await loadSettings()) };
