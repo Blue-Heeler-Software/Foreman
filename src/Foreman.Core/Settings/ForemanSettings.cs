@@ -29,6 +29,7 @@ public sealed class ForemanSettings
     public bool NotifyOnHang { get; set; } = true;
     public bool NotifyOnOrphan { get; set; } = true;
     public bool NotifyOnCriticalCommand { get; set; } = true;
+    public bool NotifyOnWarning { get; set; } = true;       // medium-severity "warning" toasts; false = mute the yellow popups (still logged + shown)
     public bool MonitorAllProcesses { get; set; } = false; // false = harness children only
 
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>

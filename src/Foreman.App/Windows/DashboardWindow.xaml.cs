@@ -91,6 +91,9 @@ public partial class DashboardWindow : Window, IEventSink
     /// <summary>Opens the "Connect agent" guide window.</summary>
     public Action? OpenConnectAgentRequested { get; set; }
 
+    /// <summary>Mute/unmute yellow (medium) warning notification toasts; wired by TrayController. true = muted.</summary>
+    public Action<bool>? SetWarningsMuted { get; set; }
+
     public DashboardWindow(Func<IEnumerable<BehaviorProfile>> getProfiles)
     {
         _getProfiles = getProfiles;
@@ -100,6 +103,9 @@ public partial class DashboardWindow : Window, IEventSink
 
         Refresh();
         EventBus.Instance.Subscribe(this);
+
+        // Reflect the persisted mute state on the button once the tray has wired GetSettings (Loaded fires after Show).
+        Loaded += (_, _) => RefreshMuteButton();
 
         // Periodic refresh so relative time labels stay accurate
         // 5s so harness tiles / stat counts feel live (the alert feed only rebuilds on change — see _lastAlertSig).
@@ -443,6 +449,24 @@ public partial class DashboardWindow : Window, IEventSink
 
     private void ConnectAgentClick(object sender, RoutedEventArgs e) =>
         OpenConnectAgentRequested?.Invoke();
+
+    // Mute/unmute the yellow warning toasts. Reads current state from settings, flips it, persists via the tray.
+    private void MuteWarningsClick(object sender, RoutedEventArgs e)
+    {
+        var muted = GetSettings?.Invoke() is { } s && !s.NotifyOnWarning;
+        SetWarningsMuted?.Invoke(!muted);
+        RefreshMuteButton();
+    }
+
+    private void RefreshMuteButton()
+    {
+        if (MuteWarningsButton is null) return;
+        var muted = GetSettings?.Invoke() is { } s && !s.NotifyOnWarning;
+        MuteWarningsButton.Content = muted ? "Unmute warnings" : "Mute warnings";
+        MuteWarningsButton.ToolTip = muted
+            ? "Warning (yellow) toasts are OFF. Alerts still log and show in the dashboard. Click to re-enable them."
+            : "Mute warning (yellow) alert toasts so they don't spam. Alerts still log and show in the dashboard.";
+    }
 
     // ── Metric tile clicks ────────────────────────────────────────────────────
     // Each tile deep-links to the most useful view for that number.

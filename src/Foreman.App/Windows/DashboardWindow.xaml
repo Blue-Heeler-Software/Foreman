@@ -650,6 +650,8 @@
                 Padding="12,8">
             <Grid>
                 <StackPanel Orientation="Horizontal">
+                    <Button x:Name="MuteWarningsButton" Content="Mute warnings" Click="MuteWarningsClick" Margin="0,0,8,0"
+                            ToolTip="Mute warning (yellow) alert toasts so they don't spam. Alerts still log and show in the dashboard." />
                     <Button Content="Connect agent" Click="ConnectAgentClick" Margin="0,0,8,0" />
                     <Button Content="Settings" Click="OpenSettingsClick" />
                 </StackPanel>

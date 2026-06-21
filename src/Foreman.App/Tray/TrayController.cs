@@ -334,8 +334,10 @@ public sealed class TrayController : IEventSink, IDisposable
                 evt.Message + "\n(Click for details)",
                 H.NotifyIcon.Core.NotificationIcon.Error);
         }
-        else if (evt.Severity == ForemanSeverity.Medium)
+        else if (evt.Severity == ForemanSeverity.Medium && _settings.NotifyOnWarning)
         {
+            // Operator muted the yellow warning toasts (dashboard "Mute warnings"): skip the popup only — the
+            // event is still logged, counted, shown in the dashboard, and escalated. Notification spam off.
             _lastBalloonEvent = evt;
             TryShowNotification("warning alert", "Foreman Agent Safety - Warning",
                 evt.Message + "\n(Click for details)",
@@ -514,6 +516,9 @@ public sealed class TrayController : IEventSink, IDisposable
             var w = new DashboardWindow(GetBehaviorProfiles ?? (() => []));
             w.OpenSettingsRequested = () => OpenSettingsWindow();
             w.OpenConnectAgentRequested = () => OpenConnectAgentWindow();
+            // Mute/unmute yellow (medium) warning toasts so they don't spam — notifications only; alerts still
+            // log, count, and show in the dashboard. Persisted so it survives restarts.
+            w.SetWarningsMuted = muted => { _settings.NotifyOnWarning = !muted; SettingsStore.Save(_settings); };
             w.GetMcpClientCount = GetMcpClientCount;
             w.GetNetCaptureConnected = GetNetCaptureActive;
             w.GetConnectedClients = GetConnectedClients;
