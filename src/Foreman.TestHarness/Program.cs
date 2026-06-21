@@ -39,6 +39,9 @@ internal static class Program
         if (probe)
             return await ProbeAsync(harness, port, limit, Arg(args, "token", ""), ct: default);
 
+        if (args.ContainsKey("cu"))
+            return await RunCuAsync(args, port, ct: default);
+
         // Token: an explicit --token wins; otherwise mint a scoped per-harness token from the install secret.
         string token; string scope;
         var explicitToken = Arg(args, "token", "");
@@ -169,6 +172,71 @@ internal static class Program
             }.ToJsonString());
             return 2;
         }
+    }
+
+    /// <summary>
+    /// Drives the mediated computer-use broker end to end: submits ONE cu_* action as the OPERATOR (the only
+    /// scope allowed to drive until a CU-driver-set path exists), then polls cu_action_status until the action
+    /// reaches a terminal state. The paired browser extension claims + executes APPROVED browser actions on its
+    /// own ~5s poll, so an approved navigate opens a real tab. Authenticates with the install (operator) token,
+    /// read internally from mcp.token — never handled by the caller.
+    /// Flags: --cu &lt;verb&gt; (navigate|read|click|type|…), --modality browser|desktop (default browser),
+    /// plus verb args via --url / --text / --selector / --key / --value.
+    /// </summary>
+    private static async Task<int> RunCuAsync(Dictionary<string, string> args, int port, CancellationToken ct)
+    {
+        var verb = Arg(args, "cu", "navigate").Trim().ToLowerInvariant();
+        var modality = Arg(args, "modality", "browser").Trim().ToLowerInvariant();
+
+        var argObj = new JsonObject();
+        foreach (var k in new[] { "url", "text", "selector", "key", "value" })
+        {
+            var v = Arg(args, k, "");
+            if (!string.IsNullOrEmpty(v)) argObj[k] = v;
+        }
+        var argsJson = argObj.ToJsonString();
+
+        // Operator scope: read the install token from mcp.token internally (the same file the app + harness use),
+        // so the operator/agent never handles it. cu_submit's driver gate only admits the operator today (no
+        // CU-driver-set path yet), so this is the scope a test driver must use.
+        var token = new McpAuthToken().Value;
+        var url = $"http://localhost:{port}/mcp";
+        var transport = new HttpClientTransport(new HttpClientTransportOptions
+        {
+            Endpoint = new Uri(url),
+            Name = "cu-test",
+            ConnectionTimeout = TimeSpan.FromSeconds(10),
+            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" },
+        }, null);
+
+        McpClient client;
+        try { client = await McpClient.CreateAsync(transport, new McpClientOptions { ClientInfo = new Implementation { Name = "cu-test", Version = "test", Title = "CU test" } }, null, ct); }
+        catch (Exception ex) { Log("ERR", $"Couldn't connect to Foreman at {url}: {ex.Message}"); return 1; }
+
+        await using (client)
+        {
+            Log("CU", $"cu_submit  modality={modality}  verb={verb}  args={argsJson}");
+            var sub = await Call(client, "cu_submit", new() { ["modality"] = modality, ["verb"] = verb, ["argsJson"] = argsJson }, ct);
+            if (sub is null) { Log("CU", "no response from cu_submit (is cu_* present — i.e. the new build?)"); return 1; }
+
+            var actionId = Str(sub, "actionId");
+            Log("CU", $"  -> state={Str(sub, "state")}  decision={Str(sub, "decision")}  actionId={actionId}");
+            if (Str(sub, "reason") is { Length: > 0 } why) Log("CU", $"     reason: {why}");
+            if (string.IsNullOrEmpty(actionId)) return 0;
+
+            for (int i = 0; i < 15; i++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                var st = await Call(client, "cu_action_status", new() { ["actionId"] = actionId }, ct);
+                var s = Str(st, "state") ?? "?";
+                var extra = "";
+                if (Str(st, "error") is { Length: > 0 } err) extra += $"  error={err}";
+                if (st?["result"] is { } r) extra += $"  result={r.ToJsonString()}";
+                Log("CU", $"  status[{i + 1}] {s}{extra}");
+                if (s is "completed" or "failed" or "rejected" or "blocked") break;
+            }
+        }
+        return 0;
     }
 
     // ---- the loop ----------------------------------------------------------
