@@ -454,6 +454,10 @@ public sealed class TrayController : IEventSink, IDisposable
     private void TrySetContextMenu()
     {
         if (_tray is null) return;
+        // NEVER swap the ContextMenu object while it's OPEN — WPF wedges the live popup (the user sees the
+        // right-click menu "hang"). Under alert churn this rebuild fires often, so the race is easy to hit. Skip
+        // it; the next refresh after the menu closes rebuilds it with current counts.
+        if (_tray.ContextMenu?.IsOpen == true) return;
         try { _tray.ContextMenu = BuildMenu(); }
         catch (Exception ex) { CrashLog.Note("tray context menu update", ex); }
     }
@@ -615,6 +619,7 @@ public sealed class TrayController : IEventSink, IDisposable
     public void RefreshMenu()
     {
         if (_tray is null) return;
+        if (_tray.ContextMenu?.IsOpen == true) return;   // don't swap the menu out from under an open popup
         try { _tray.ContextMenu = BuildMenu(); } catch { /* transient WPF/COM hiccup — next event rebuilds */ }
     }
 
