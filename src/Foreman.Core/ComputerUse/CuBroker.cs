@@ -193,7 +193,10 @@ public sealed class CuBroker
 
             var executing = deliver with { State = CuActionState.Executing, UpdatedAt = DateTimeOffset.UtcNow };
             if (_items.TryUpdate(item.ActionId, executing, item))   // CAS against the original Approved item
+            {
                 batch.Add(executing);
+                try { OnExecuting?.Invoke(executing); } catch { /* HUD is best-effort; never break delivery */ }
+            }
         }
         return batch;
     }
@@ -298,6 +301,10 @@ public sealed class CuBroker
     /// <summary>Operator opt-in (from settings.CuTabOverride): when true, an off-focus state change may PROCEED
     /// instead of being held — but ONLY if it carries a justification. Default false (off-focus changes are held).</summary>
     public bool AllowTabOverride { get; set; }
+
+    /// <summary>Fired when an action is handed to the executor (moves to Executing). The App raises the operator
+    /// HUD overlay ("CLAUDE DRIVING THRU FOREMAN") from it. Invoked on the poll thread — marshal to the UI thread.</summary>
+    public Action<CuBrokerItem>? OnExecuting { get; set; }
 
     // The off-focus verdict for a state-changing action, or null when there is no excursion (on-focus / read-only /
     // no pin). With tab-override opted in AND a justification present -> Allow (proceeds, surfaced); otherwise Hold.

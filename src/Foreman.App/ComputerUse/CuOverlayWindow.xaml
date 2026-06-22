@@ -1,0 +1,26 @@
+<Window x:Class="Foreman.App.ComputerUse.CuOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Foreman CU overlay"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight" WindowStartupLocation="Manual"
+        TextOptions.TextFormattingMode="Display">
+    <!-- The operator HUD: a small, topmost, click-through banner that announces AI piloting. The attention
+         "fireworks" is a LOCALISED border-glow pulse (just this banner, ~2 Hz — well clear of the 12-30 Hz
+         photosensitive danger band) plus a brief shake. Deliberately small so it can never be a full-field strobe. -->
+    <Border x:Name="Banner" CornerRadius="9" Padding="18,10" Margin="14"
+            Background="#E60D0F12" BorderThickness="4">
+        <Border.BorderBrush>
+            <SolidColorBrush x:Name="GlowBrush" Color="#E53935" />
+        </Border.BorderBrush>
+        <Border.RenderTransform>
+            <TranslateTransform x:Name="Shake" />
+        </Border.RenderTransform>
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="▶" Foreground="#E53935" FontSize="18" FontWeight="Bold" Margin="0,0,12,0" VerticalAlignment="Center" />
+            <TextBlock x:Name="Label" Text="CLAUDE DRIVING THRU FOREMAN" Foreground="#F2F4F8"
+                       FontSize="16" FontWeight="Bold" FontFamily="Segoe UI, Arial" VerticalAlignment="Center" />
+        </StackPanel>
+    </Border>
+</Window>

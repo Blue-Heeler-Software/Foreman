@@ -261,6 +261,14 @@ public partial class App : Application
             try { SettingsStore.Save(settings); } catch { /* in-memory driver still applies this session */ }
         };
         cuBroker.AllowTabOverride = settings.CuTabOverride;   // opt-in: off-focus changes may proceed if justified
+        // Operator HUD overlay: announce AI piloting (localised safe flash + shake) when a CU action starts running.
+        // Held by the broker's OnExecuting closure, so it lives for the app lifetime; marshalled to the UI thread.
+        var cuOverlay = new Foreman.App.ComputerUse.CuOverlayWindow();
+        cuBroker.OnExecuting = item => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try { cuOverlay.ShowDriving($"{item.Action.Modality.ToString().ToLowerInvariant()}: {item.Action.Verb}"); }
+            catch { /* HUD is best-effort; never disturb the broker */ }
+        }));
         _mcpHost.State.Cu = cuBroker;
         // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
