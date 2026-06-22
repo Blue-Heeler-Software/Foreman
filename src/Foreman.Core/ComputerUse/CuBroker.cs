@@ -25,7 +25,10 @@ public sealed record CuBrokerItem(
     DateTimeOffset CreatedAt,
     object? Result = null,
     string? Error = null,
-    DateTimeOffset? UpdatedAt = null);
+    DateTimeOffset? UpdatedAt = null,
+    // True once the OPERATOR has explicitly approved this action out of Held. The delivery-time focus re-gate
+    // skips operator-approved items so an excursion the operator already OK'd isn't re-held into a loop.
+    bool OperatorApproved = false);
 
 /// <summary>
 /// The mediated computer-use command broker — the Phase 0.5 replacement for LiveWeave's immediate command queue.
@@ -99,13 +102,11 @@ public sealed class CuBroker
         // even when the auditor allowed them, so the driver can never silently leave the agreed tab. Only ever
         // downgrades Allow -> Held; never relaxes a Block/Held.
         if (state == CuActionState.Approved
-            && IsOffPinExcursion(action, out var excTarget, out var justification)
-            && IsStateChanging(action.Verb))
+            && CuVerbs.IsStateChanging(action.Verb)
+            && IsOffPinExcursion(action, out var excTarget, out var justification))
         {
             state = CuActionState.Held;
-            verdict = CuVerdict.Hold("broker",
-                $"Off-focus change held for operator (pinned tab {_attentionTab}; action targets {excTarget})" +
-                (string.IsNullOrWhiteSpace(justification) ? " — no justification given." : $": {justification}"));
+            verdict = ExcursionHold(excTarget, justification, "for operator");
         }
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow);
@@ -120,7 +121,8 @@ public sealed class CuBroker
     {
         if (!_items.TryGetValue(actionId, out var item)) return (false, "Unknown action id.");
         if (item.State != CuActionState.Held) return (false, $"Action is {item.State}, not Held.");
-        _items[actionId] = item with { State = CuActionState.Approved, UpdatedAt = DateTimeOffset.UtcNow };
+        // OperatorApproved=true so the delivery-time focus re-gate (Claim) won't re-hold this excursion.
+        _items[actionId] = item with { State = CuActionState.Approved, OperatorApproved = true, UpdatedAt = DateTimeOffset.UtcNow };
         return (true, "Approved.");
     }
 
@@ -161,8 +163,37 @@ public sealed class CuBroker
                 };
                 continue;
             }
-            var executing = item with { State = CuActionState.Executing, UpdatedAt = DateTimeOffset.UtcNow };
-            if (_items.TryUpdate(item.ActionId, executing, item))   // CAS guards against a double-claim
+
+            // Re-evaluate the pinned-focus gate against the LIVE pin at DELIVERY, not just at submit (unless the
+            // operator already approved this out of Held). Closes the submit-before-pin / move-pin-after-approve
+            // TOCTOU: an action that became an off-focus state change since it was approved is re-held here.
+            if (!item.OperatorApproved && CuVerbs.IsStateChanging(item.Action.Verb)
+                && IsOffPinExcursion(item.Action, out var excTarget, out var just))
+            {
+                _items[item.ActionId] = item with
+                {
+                    State = CuActionState.Held,
+                    Verdict = ExcursionHold(excTarget, just, "at delivery"),
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                };
+                continue;
+            }
+
+            // On-focus state change with NO explicit tab: STAMP the live pin into the action the executor receives,
+            // so the executor cannot fall back to the (possibly different) active tab. The broker is authoritative
+            // for the target; a stale extension-side pin can no longer divert a no-tabId action off the focus.
+            var deliver = item;
+            if (_attentionTab is { Length: > 0 } pin
+                && CuVerbs.IsStateChanging(item.Action.Verb)
+                && !string.Equals(item.Action.Verb, "navigate", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrEmpty(item.Action.Arg("tabId")))
+            {
+                var stamped = new Dictionary<string, string>(item.Action.Args, StringComparer.Ordinal) { ["tabId"] = pin };
+                deliver = item with { Action = item.Action with { Args = stamped } };
+            }
+
+            var executing = deliver with { State = CuActionState.Executing, UpdatedAt = DateTimeOffset.UtcNow };
+            if (_items.TryUpdate(item.ActionId, executing, item))   // CAS against the original Approved item
                 batch.Add(executing);
         }
         return batch;
@@ -245,17 +276,25 @@ public sealed class CuBroker
     // tab-acting verb -> the executor runs it IN the pinned tab, so that is on-focus, not an excursion.
     private bool IsOffPinExcursion(CuAction action, out string? target, out string? justification)
     {
-        justification = action.Args.TryGetValue("justification", out var j) ? j?.Trim() : null;
-        target = action.Args.TryGetValue("tabId", out var t) ? t?.Trim() : null;
+        justification = action.Arg("justification") is { Length: > 0 } j ? j : null;
+        target = action.Arg("tabId") is { Length: > 0 } t ? t : null;
         if (string.IsNullOrEmpty(_attentionTab)) return false;
-        if (string.Equals(action.Verb, "navigate", StringComparison.OrdinalIgnoreCase)) { target ??= "a new tab"; return true; }
-        return !string.IsNullOrEmpty(target) && !string.Equals(_attentionTab, target, StringComparison.OrdinalIgnoreCase);
+        // 'navigate' opens a NEW tab, which always leaves the pinned focus.
+        if (string.Equals(action.Verb?.Trim(), "navigate", StringComparison.OrdinalIgnoreCase)) { target ??= "a new tab"; return true; }
+        if (string.IsNullOrEmpty(target)) return false;   // no explicit tab -> runs in the pinned tab (stamped at delivery)
+        return !TabsMatch(target, _attentionTab);
     }
 
-    // Read-only verbs never change page/desktop state, so off-focus reads are allowed (and surfaced). Everything
-    // else (navigate/goto/click/type/scroll/back/forward/...) is a state change that must be held when off-focus.
-    private static bool IsStateChanging(string verb) =>
-        verb is not ("read" or "list_tabs" or "tabs" or "status");
+    // Canonical integer compare for tab ids: parse both sides so "042"/" 42 " match "42", and a NON-integer tabId
+    // (which the executor resolves differently, or rejects) is treated as off-focus (conservative). The verb
+    // classifier is the shared CuVerbs.IsStateChanging so the pin gate and the audit pipeline never diverge.
+    private static bool TabsMatch(string? a, string? b) =>
+        long.TryParse(a, out var ai) && long.TryParse(b, out var bi) && ai == bi;
+
+    private CuVerdict ExcursionHold(string? target, string? justification, string when) =>
+        CuVerdict.Hold("broker",
+            $"Off-focus change held {when} (pinned tab {_attentionTab}; action targets {target})" +
+            (string.IsNullOrWhiteSpace(justification) ? " — no justification given." : $": {justification}"));
 
     private void Prune()
     {

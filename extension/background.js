@@ -26,7 +26,12 @@ let sidePanelPort = null;
 let pollTimer = null;
 let mcpSession = null;
 let pinnedTab = null;           // operator's shared-attention pin (tab id) set by pressing the toolbar icon; null = none
+let lastReportedPin = null;     // last pin value pushed to Foreman, so we re-report changes (incl. clears) exactly once
 const POLL_MS = 5000;
+
+// Persist the pin to session storage so a service-worker restart reloads it (in bootstrap) instead of dropping to
+// null — otherwise the broker would keep a stale pin while we resolved actions against the active tab.
+function persistPin() { try { chrome.storage.session.set({ pinnedTab }); } catch { /* session storage unavailable */ } }
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
 const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
@@ -120,8 +125,11 @@ async function replyAsk(requestId, response) {
 async function resolveTargetTab(args) {
     const explicit = args.tabId;
     if (explicit !== undefined && explicit !== null && String(explicit) !== '') {
-        const id = parseInt(explicit, 10);
-        if (!Number.isNaN(id)) return id;
+        const s = String(explicit).trim();
+        // Only a clean base-10 integer names a tab, matching the broker's canonical parse. Reject 0x2A / 1e3 /
+        // trailing-garbage so the executor never acts on a tab the broker reasoned about differently.
+        if (!/^\d+$/.test(s)) return null;
+        return parseInt(s, 10);
     }
     if (pinnedTab != null) return pinnedTab;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -229,8 +237,12 @@ async function refresh() {
     connected = await checkHealth();
     lastMcpError = null;
     lastStatus = connected ? await mcpCall('foreman_status') : null;
-    // Re-assert an active pin each cycle so it survives a Foreman restart (idempotent; skipped when nothing pinned).
-    if (connected && pinnedTab != null) await reportAttention();
+    // Re-assert the pin each cycle so it survives a Foreman restart, and push a CLEAR exactly once when it goes to
+    // null, so a restarted worker (or an unpin) always reconciles the broker to our true state before pollCu runs.
+    if (connected && (pinnedTab != null || lastReportedPin != null)) {
+        await reportAttention();
+        lastReportedPin = pinnedTab;
+    }
     await pollCu();
     // The inbox is scoped to THIS extension's harness ("browser-extension") by the token — it only ever shows
     // prompts Foreman routed to us, never a sibling's. Empty until orchestration routes work to the browser.
@@ -296,7 +308,9 @@ function safePost(message) {
 chrome.action.onClicked.addListener(async (tab) => {
     if (tab?.id !== undefined && tab.id !== chrome.tabs.TAB_ID_NONE) {
         pinnedTab = (pinnedTab === tab.id) ? null : tab.id;
+        persistPin();
         await reportAttention();
+        lastReportedPin = pinnedTab;
         broadcast();
     }
     if (tab?.windowId !== undefined) { try { await chrome.sidePanel.open({ windowId: tab.windowId }); } catch { /* ok */ } }
@@ -305,7 +319,7 @@ try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); } ca
 
 // If the pinned tab closes, drop the pin (and tell Foreman) so a stale id can't linger as the "focus".
 chrome.tabs.onRemoved.addListener((tabId) => {
-    if (pinnedTab === tabId) { pinnedTab = null; reportAttention(); broadcast(); }
+    if (pinnedTab === tabId) { pinnedTab = null; persistPin(); reportAttention().then(() => { lastReportedPin = null; }); broadcast(); }
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -319,6 +333,10 @@ const KEEPALIVE_ALARM = 'foreman-keepalive';
 
 async function bootstrap() {
     try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
+    // Reload the shared-attention pin a prior worker instance saved, so a service-worker restart doesn't silently
+    // drop the focus to null (which would let no-tabId actions resolve to the active tab). refresh() then reconciles
+    // it to the broker. lastReportedPin stays null so the first refresh re-pushes the reloaded pin.
+    try { const s = await chrome.storage.session.get('pinnedTab'); if (s && typeof s.pinnedTab === 'number') pinnedTab = s.pinnedTab; } catch { /* no session storage */ }
     // MV3 service workers sleep after ~30s idle, which stops the poll loop — so an APPROVED browser-use action
     // would sit unclaimed unless the side panel is open. A periodic alarm wakes the worker (~1 min) to poll
     // cu_poll_actions / status / inbox even when nothing else fires; the 5s interval still drives the awake bursts.

@@ -29,8 +29,10 @@ public static class CuVerbs
 {
     private static readonly HashSet<string> ReadOnly = new(StringComparer.OrdinalIgnoreCase)
     {
-        "read", "screenshot", "scroll", "move", "status", "snapshot", "get_text",
+        "read", "screenshot", "scroll", "move", "status", "snapshot", "get_text", "list_tabs", "tabs",
     };
 
-    public static bool IsStateChanging(string? verb) => !ReadOnly.Contains(verb ?? string.Empty);
+    // Trim + case-insensitive so the classification is correct regardless of which path constructs the action
+    // (the MCP submit path normalizes, but a future desktop sidecar / direct caller might not).
+    public static bool IsStateChanging(string? verb) => !ReadOnly.Contains((verb ?? string.Empty).Trim());
 }

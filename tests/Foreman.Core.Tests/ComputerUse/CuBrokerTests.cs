@@ -237,4 +237,63 @@ public sealed class CuBrokerTests
         var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x" }), new CuContext());
         Assert.Equal(CuActionState.Approved, item.State);   // no pin -> no excursion concept
     }
+
+    [Fact]
+    public async Task Claim_ReGatesWhenPinMovesAfterApprove()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "100", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);   // on-pin at submit
+        b.SetAttention("200");                               // operator moves the pin (TOCTOU)
+        Assert.Empty(b.Claim(10));                           // delivery re-gate holds it...
+        Assert.Equal(CuActionState.Held, b.Get(item.ActionId)!.State);   // ...instead of running off-focus
+    }
+
+    [Fact]
+    public async Task Claim_SubmitBeforePin_ReGatedAtDelivery()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "500", ["url"] = "https://evil" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);   // no pin yet -> approved
+        b.SetAttention("742");                               // operator pins a different tab afterwards
+        Assert.Empty(b.Claim(10));
+        Assert.Equal(CuActionState.Held, b.Get(item.ActionId)!.State);   // off-focus change caught at delivery
+    }
+
+    [Fact]
+    public async Task Claim_DoesNotReHoldOperatorApprovedExcursion()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Held, item.State);        // off-pin -> held at submit
+        Assert.True(b.ApproveHeld(item.ActionId).Ok);        // operator approves the excursion
+        var claimed = b.Claim(10);
+        Assert.Single(claimed);                              // delivered, NOT re-held into a loop
+        Assert.Equal(CuActionState.Executing, claimed[0].State);
+    }
+
+    [Fact]
+    public async Task Claim_StampsPinnedTabForNoTabIdStateChange()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);
+        var claimed = b.Claim(10);
+        Assert.Single(claimed);
+        Assert.Equal("100", claimed[0].Action.Arg("tabId"));   // pin stamped so the executor can't divert to active
+    }
+
+    [Fact]
+    public async Task Pin_TabId_CanonicalMatch_OnPin_NonInteger_Held()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var onPin = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "0100", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, onPin.State);     // "0100" == 100 canonically -> on-pin
+        var garbage = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "0x64", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Held, garbage.State);       // non-integer tabId -> off-focus (conservative)
+    }
 }
