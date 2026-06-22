@@ -18,6 +18,9 @@ public sealed class CuBrokerTests
     private static CuAction Act(string verb = "click", string? byHarness = "operator") =>
         new(CuModality.Browser, verb, new Dictionary<string, string>(), ByHarness: byHarness);
 
+    private static CuAction ActWith(string verb, Dictionary<string, string> args) =>
+        new(CuModality.Browser, verb, args, ByHarness: "operator");
+
     [Fact]
     public async Task Submit_Allow_BecomesApproved()
     {
@@ -178,5 +181,60 @@ public sealed class CuBrokerTests
         b.DriverPersister = d => seen = d;
         b.SetDrivers(["Claude-Code", "CODEX"]);          // case-insensitive normalization
         Assert.Equal("claude-code,codex", seen);
+    }
+
+    // ── Pinned shared-attention excursion gate ───────────────────────────────────
+
+    [Fact]
+    public async Task Pin_OffTabStateChange_HeldEvenWhenAuditAllows()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Held, item.State);   // off-focus change is held for the operator
+    }
+
+    [Fact]
+    public async Task Pin_OffTabRead_Approved()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("read", new() { ["tabId"] = "200" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);   // read-only peek proceeds
+    }
+
+    [Fact]
+    public async Task Pin_OnPinTab_Approved()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "100", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);
+    }
+
+    [Fact]
+    public async Task Pin_NoTabId_Approved_RunsInPinnedTab()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);   // no explicit tab -> executor runs it in the pin
+    }
+
+    [Fact]
+    public async Task Pin_Navigate_HeldAsNewTabExcursion()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("navigate", new() { ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Held, item.State);   // navigate opens a NEW tab = leaving the focus
+    }
+
+    [Fact]
+    public async Task NoPin_OffTabAction_Approved()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);   // no pin -> no excursion concept
     }
 }

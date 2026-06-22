@@ -25,6 +25,7 @@ let lastMcpError = null;
 let sidePanelPort = null;
 let pollTimer = null;
 let mcpSession = null;
+let pinnedTab = null;           // operator's shared-attention pin (tab id) set by pressing the toolbar icon; null = none
 const POLL_MS = 5000;
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
@@ -114,6 +115,19 @@ async function replyAsk(requestId, response) {
 // click/type/scroll/screenshot need `scripting` + host permissions (a future broad-mode operator opt-in) and
 // return a clear error until then.
 
+// Resolve which tab an action acts on: an explicit args.tabId wins; else the operator's pinned focus; else the
+// active tab. So when a tab is pinned, an action with NO tabId runs IN the pinned tab and can never silently drift.
+async function resolveTargetTab(args) {
+    const explicit = args.tabId;
+    if (explicit !== undefined && explicit !== null && String(explicit) !== '') {
+        const id = parseInt(explicit, 10);
+        if (!Number.isNaN(id)) return id;
+    }
+    if (pinnedTab != null) return pinnedTab;
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab?.id ?? null;
+}
+
 async function executeCuAction(act) {
     const verb = String(act.verb || '').toLowerCase();
     const args = act.args || {};
@@ -127,30 +141,50 @@ async function executeCuAction(act) {
             const tab = await chrome.tabs.create({ url, active: true });
             return { ok: true, result: { tabId: tab.id ?? null, url } };
         }
+        case 'list_tabs':
+        case 'tabs': {
+            // Enumerate every window / group / tab so the driver can target one by name ("use my Gmail tab").
+            const wins = await chrome.windows.getAll({ populate: true });
+            let groups = [];
+            try { groups = await chrome.tabGroups.query({}); } catch { /* tabGroups perm absent */ }
+            const groupName = (gid) => groups.find((g) => g.id === gid)?.title ?? null;
+            const tabs = [];
+            for (const w of wins) for (const t of (w.tabs || [])) {
+                tabs.push({
+                    tabId: t.id, windowId: w.id, title: t.title ?? '', url: t.url ?? '',
+                    active: !!t.active, pinned: !!t.pinned,
+                    group: (t.groupId != null && t.groupId > -1) ? (groupName(t.groupId) || `group ${t.groupId}`) : null,
+                    isAttentionPin: t.id === pinnedTab,
+                });
+            }
+            return { ok: true, result: { tabs, pinnedTab, windowCount: wins.length } };
+        }
         case 'read': {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab) return { ok: false, error: 'No active tab to read.' };
+            const tabId = await resolveTargetTab(args);
+            if (tabId == null) return { ok: false, error: 'No tab to read.' };
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            if (!tab) return { ok: false, error: `Tab ${tabId} not found.` };
             // Bounded: tab metadata only. Page CONTENT (DOM/text) needs scripting (broad mode).
-            return { ok: true, result: { url: tab.url ?? '', title: tab.title ?? '' } };
+            return { ok: true, result: { tabId, url: tab.url ?? '', title: tab.title ?? '' } };
         }
         case 'goto': {
-            // Navigate the CURRENT tab (vs 'navigate', which opens a new one). tabs.update only — no scripting.
+            // Navigate the TARGET tab (explicit/pinned/active) in place, vs 'navigate' which opens a new one.
             const url = String(args.url || '');
             if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'goto requires an http(s) url.' };
             try { new URL(url); } catch { return { ok: false, error: 'goto requires a valid url.' }; }
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab?.id) return { ok: false, error: 'No active tab to navigate.' };
-            const updated = await chrome.tabs.update(tab.id, { url });
-            return { ok: true, result: { tabId: updated?.id ?? tab.id, url } };
+            const tabId = await resolveTargetTab(args);
+            if (tabId == null) return { ok: false, error: 'No tab to navigate.' };
+            const updated = await chrome.tabs.update(tabId, { url });
+            return { ok: true, result: { tabId: updated?.id ?? tabId, url } };
         }
         case 'back':
         case 'forward': {
             // Tab history navigation via the tabs API (no scripting). Back from a fresh tab is a no-op (no history).
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab?.id) return { ok: false, error: 'No active tab.' };
-            if (verb === 'back') await chrome.tabs.goBack(tab.id);
-            else await chrome.tabs.goForward(tab.id);
-            return { ok: true, result: { tabId: tab.id, action: verb } };
+            const tabId = await resolveTargetTab(args);
+            if (tabId == null) return { ok: false, error: 'No tab.' };
+            if (verb === 'back') await chrome.tabs.goBack(tabId);
+            else await chrome.tabs.goForward(tabId);
+            return { ok: true, result: { tabId, action: verb } };
         }
         case 'click':
         case 'type':
@@ -186,10 +220,17 @@ async function pollCu() {
     }
 }
 
+// Tell Foreman which tab the operator pinned as shared attention, so the broker holds off-focus state changes.
+async function reportAttention() {
+    await mcpCall('cu_set_attention', { tabId: pinnedTab == null ? '' : String(pinnedTab) });
+}
+
 async function refresh() {
     connected = await checkHealth();
     lastMcpError = null;
     lastStatus = connected ? await mcpCall('foreman_status') : null;
+    // Re-assert an active pin each cycle so it survives a Foreman restart (idempotent; skipped when nothing pinned).
+    if (connected && pinnedTab != null) await reportAttention();
     await pollCu();
     // The inbox is scoped to THIS extension's harness ("browser-extension") by the token — it only ever shows
     // prompts Foreman routed to us, never a sibling's. Empty until orchestration routes work to the browser.
@@ -238,6 +279,7 @@ function broadcast() {
         status: lastStatus,
         asks: lastAsks,
         mcpError: lastMcpError,
+        pinnedTab,                 // shared-attention pin so the panel can show "Claude's attention: this tab"
     });
 }
 
@@ -248,10 +290,23 @@ function safePost(message) {
     finally { try { void chrome.runtime.lastError; } catch { /* ok */ } }
 }
 
+// Pressing the pinned toolbar icon toggles the shared-attention pin on that tab (press again = unpin, press a
+// DIFFERENT tab = move the pin), reports it to Foreman, and opens the side panel. openPanelOnActionClick MUST be
+// false here — otherwise Chrome opens the panel itself and never fires onClicked, so we'd never see the press.
 chrome.action.onClicked.addListener(async (tab) => {
-    if (tab?.windowId !== undefined) await chrome.sidePanel.open({ windowId: tab.windowId });
+    if (tab?.id !== undefined && tab.id !== chrome.tabs.TAB_ID_NONE) {
+        pinnedTab = (pinnedTab === tab.id) ? null : tab.id;
+        await reportAttention();
+        broadcast();
+    }
+    if (tab?.windowId !== undefined) { try { await chrome.sidePanel.open({ windowId: tab.windowId }); } catch { /* ok */ } }
 });
-try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }); } catch { /* Chrome < 114 */ }
+try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); } catch { /* Chrome < 114 */ }
+
+// If the pinned tab closes, drop the pin (and tell Foreman) so a stale id can't linger as the "focus".
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (pinnedTab === tabId) { pinnedTab = null; reportAttention(); broadcast(); }
+});
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.kind === 'pair') { pair(msg.code).then(sendResponse); return true; }

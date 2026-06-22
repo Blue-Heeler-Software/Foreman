@@ -53,6 +53,10 @@ public sealed class CuBroker
     private volatile string[] _drivers = [];
     private const string OperatorMarker = "operator";
 
+    // Operator's pinned shared-attention tab (browser): the locked focus the extension reports when the operator
+    // presses the pinned icon. Null = no pin. Drives the excursion gate in SubmitAsync.
+    private volatile string? _attentionTab;
+
     public CuBroker(IAuditor auditor, Func<bool>? isHalted = null)
     {
         _auditor = auditor ?? throw new ArgumentNullException(nameof(auditor));
@@ -88,6 +92,21 @@ public sealed class CuBroker
             CuDecision.Block => CuActionState.Blocked,
             _                => CuActionState.Held,   // Hold (and any unknown) -> operator decides
         };
+
+        // Pinned-focus excursion gate (browser): when the operator has pinned a shared-attention tab, an action
+        // that leaves it (a different explicit tabId, or 'navigate' which opens a NEW tab) is an "excursion".
+        // Read-only excursions proceed (the peek is surfaced); STATE-CHANGING excursions are held for the operator
+        // even when the auditor allowed them, so the driver can never silently leave the agreed tab. Only ever
+        // downgrades Allow -> Held; never relaxes a Block/Held.
+        if (state == CuActionState.Approved
+            && IsOffPinExcursion(action, out var excTarget, out var justification)
+            && IsStateChanging(action.Verb))
+        {
+            state = CuActionState.Held;
+            verdict = CuVerdict.Hold("broker",
+                $"Off-focus change held for operator (pinned tab {_attentionTab}; action targets {excTarget})" +
+                (string.IsNullOrWhiteSpace(justification) ? " — no justification given." : $": {justification}"));
+        }
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow);
         _items[id] = item;
@@ -212,6 +231,31 @@ public sealed class CuBroker
         if (d.Contains("*")) return true;
         return harnessId is not null && d.Contains(harnessId.Trim().ToLowerInvariant());
     }
+
+    // ── Pinned shared-attention (focus-lock) ─────────────────────────────────────
+
+    /// <summary>The operator's pinned shared-attention tab (the locked focus), or null when nothing is pinned.</summary>
+    public string? AttentionTab => _attentionTab;
+
+    /// <summary>Sets the pinned attention tab (the executor reports the operator's pinned-icon choice). Blank clears it.</summary>
+    public void SetAttention(string? tabId) => _attentionTab = string.IsNullOrWhiteSpace(tabId) ? null : tabId.Trim();
+
+    // True when a pin is set AND the action leaves it: either an explicit args["tabId"] != pin, or a 'navigate'
+    // (which opens a NEW tab, always off the pinned focus). No pin set -> never an excursion. No explicit tabId on a
+    // tab-acting verb -> the executor runs it IN the pinned tab, so that is on-focus, not an excursion.
+    private bool IsOffPinExcursion(CuAction action, out string? target, out string? justification)
+    {
+        justification = action.Args.TryGetValue("justification", out var j) ? j?.Trim() : null;
+        target = action.Args.TryGetValue("tabId", out var t) ? t?.Trim() : null;
+        if (string.IsNullOrEmpty(_attentionTab)) return false;
+        if (string.Equals(action.Verb, "navigate", StringComparison.OrdinalIgnoreCase)) { target ??= "a new tab"; return true; }
+        return !string.IsNullOrEmpty(target) && !string.Equals(_attentionTab, target, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Read-only verbs never change page/desktop state, so off-focus reads are allowed (and surfaced). Everything
+    // else (navigate/goto/click/type/scroll/back/forward/...) is a state change that must be held when off-focus.
+    private static bool IsStateChanging(string verb) =>
+        verb is not ("read" or "list_tabs" or "tabs" or "status");
 
     private void Prune()
     {

@@ -1283,9 +1283,29 @@ public static class ForemanMcpTools
             available = true,
             halted = state.Panic?.IsHalted ?? false,
             driver = state.Cu.Driver,
+            attentionTab = state.Cu.AttentionTab,   // operator's pinned shared-attention tab (null = no pin)
             heldCount = held.Count,
             held = held.Select(i => new { actionId = i.ActionId, modality = i.Action.Modality.ToString().ToLowerInvariant(), verb = i.Action.Verb, reason = i.Verdict?.Reason }).ToArray(),
         };
+    }
+
+    [McpServerTool, Description(
+        "CU executor only: report the operator's pinned shared-attention tab (the locked browser focus set by " +
+        "pressing the pinned extension icon). Once pinned, state-changing actions aimed at any OTHER tab are held " +
+        "for operator approval; read-only peeks proceed. Pass an empty tabId to clear the pin.")]
+    public static object CuSetAttention(
+        [Description("The pinned tab id, or empty/null to clear the pin")] string? tabId = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { accepted = false, reason = "Mediated computer use is not available." };
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate) return new { accepted = false, reason = "Refused: token/process identity mismatch." };
+        // Mirrors cu_poll/cu_complete: only the browser-extension executor (or the operator) reports the pin.
+        if (!caller.IsOperator && !string.Equals(caller.HarnessId, "browser-extension", StringComparison.OrdinalIgnoreCase))
+            return new { accepted = false, reason = "Only the browser-extension executor (or operator) may set the attention pin." };
+        state.Cu.SetAttention(tabId);
+        return new { accepted = true, pinnedTab = state.Cu.AttentionTab };
     }
 
     [McpServerTool, Description(
