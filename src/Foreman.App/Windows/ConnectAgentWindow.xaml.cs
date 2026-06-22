@@ -44,41 +44,65 @@ public partial class ConnectAgentWindow : Window
         Loaded += (_, _) => RefreshCuDriver();
     }
 
-    // The driver picker's "operator only" choice maps to an empty driver id (no harness may drive).
-    private const string OperatorOnlyLabel = "(operator only)";
-
-    // Operator chooses which harness may DRIVE browser use (cu_*). Applied in-process via the CuBroker — no token.
-    private void SetCuDriverClick(object sender, RoutedEventArgs e)
+    // One row in the Browser-use driver checklist. Plain mutable CLR object: the CheckBox TwoWay binding writes
+    // IsChecked back on toggle; to reflect changes made in code we rebuild the list (reassign ItemsSource).
+    private sealed class DriverChoice
     {
-        var choice = (CuDriverInput.SelectedItem as string) ?? "";
-        SetCuDriver?.Invoke(choice == OperatorOnlyLabel ? "" : choice.Trim());
-        RefreshCuDriver();
+        public string Name { get; init; } = "";
+        public bool IsChecked { get; set; }
     }
 
-    // Fills the driver ComboBox with the operator-only / any sentinels plus the known and currently-running
-    // harness ids, so the operator picks from a list instead of typing a raw id.
-    private void PopulateCuDriverChoices()
+    // Candidate driver ids offered in the checklist ("any" = all harnesses), plus whatever Foreman sees running.
+    private List<string> CuDriverCandidates()
     {
-        CuDriverInput.Items.Clear();
-        foreach (var id in new[] { OperatorOnlyLabel, "any", "claude-code", "codex", "cursor",
-                                   "opencode", "github-copilot", "gemini-cli", "lm-studio", "t3-code" })
-            CuDriverInput.Items.Add(id);
+        var ids = new List<string> { "any", "claude-code", "codex", "cursor",
+                                     "opencode", "github-copilot", "gemini-cli", "lm-studio", "t3-code" };
         foreach (var id in _getRunningHarnessIds?.Invoke() ?? [])
-            if (!string.IsNullOrWhiteSpace(id) && !CuDriverInput.Items.Contains(id))
-                CuDriverInput.Items.Add(id);
+            if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id, StringComparer.OrdinalIgnoreCase))
+                ids.Add(id.Trim().ToLowerInvariant());
+        return ids;
+    }
+
+    // Parse the broker's driver string (null = operator-only, "*" = any, else comma-joined) into a checked set.
+    private static HashSet<string> ParseDriverSet(string? driver)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(driver)) return set;
+        if (driver == "*") { set.Add("any"); return set; }
+        foreach (var id in driver.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            set.Add(id);
+        return set;
+    }
+
+    private void PopulateCuDriverChoices() => RefreshCuDriver();
+
+    // Apply the ticked harnesses as the driver set. Joining with commas and reusing the single-string SetCuDriver
+    // wire keeps the App/tray/MCP plumbing unchanged (CuBroker.SetDriver splits the list back out).
+    private void SetCuDriverClick(object sender, RoutedEventArgs e)
+    {
+        var chosen = (CuDriverList.ItemsSource as IEnumerable<DriverChoice> ?? [])
+            .Where(c => c.IsChecked).Select(c => c.Name).ToList();
+        SetCuDriver?.Invoke(string.Join(",", chosen));
+        RefreshCuDriver();
     }
 
     private void RefreshCuDriver()
     {
         if (CuDriverStatus is null) return;
         var d = GetCuDriver?.Invoke();
-        var label = string.IsNullOrEmpty(d) ? OperatorOnlyLabel : (d == "*" ? "any" : d);
-        if (!CuDriverInput.Items.Contains(label)) CuDriverInput.Items.Add(label);   // surface a custom id too
-        CuDriverInput.SelectedItem = label;
+        var authorized = ParseDriverSet(d);
+        // Show every candidate, plus any authorized custom id not in the seed list; tick per current state.
+        var names = CuDriverCandidates();
+        foreach (var a in authorized)
+            if (!names.Contains(a, StringComparer.OrdinalIgnoreCase)) names.Add(a);
+        CuDriverList.ItemsSource = names
+            .Select(n => new DriverChoice { Name = n, IsChecked = authorized.Contains(n) })
+            .ToList();
+
         CuDriverStatus.Text = string.IsNullOrEmpty(d)
             ? "Current: operator only — no harness can drive browser use yet."
             : d == "*" ? "Current: ANY connected harness may drive browser use."
-            : $"Current: '{d}' may drive browser use.";
+            : $"Current: {d.Replace(",", ", ")} may drive browser use.";
     }
 
     // Each agent gets a scoped, per-harness token so it can only see/act on itself.

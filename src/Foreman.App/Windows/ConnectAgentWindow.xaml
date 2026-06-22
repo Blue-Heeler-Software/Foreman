@@ -91,13 +91,21 @@
                         <Border Background="#FF15181D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="6" Padding="10" Margin="0,12,0,0">
                             <StackPanel>
-                                <TextBlock Text="Browser-use driver" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBlock Text="Browser-use driver(s)" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
                                 <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,7"
-                                           Text="Which harness may submit browser-use (cu_*) actions. Pick (operator only) for none, a harness id (e.g. claude-code, codex) for just that one, or any for every connected harness. Actions are still audited, held when risky, and panic-haltable." />
-                                <StackPanel Orientation="Horizontal">
-                                    <ComboBox x:Name="CuDriverInput" Width="220" VerticalContentAlignment="Center" />
-                                    <Button Content="Set driver" Click="SetCuDriverClick" Margin="8,0,0,0" />
-                                </StackPanel>
+                                           Text="Tick which harness(es) may submit browser-use (cu_*) actions. None ticked = operator only; tick 'any' for every connected harness. Tick a specific set (e.g. claude-code + codex) to allow just those. Actions are still audited, held when risky, and panic-haltable." />
+                                <ItemsControl x:Name="CuDriverList">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox Content="{Binding Name}" IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                                      Foreground="{StaticResource TextPrimaryBrush}" Margin="0,2,16,2" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Content="Set drivers" Click="SetCuDriverClick" HorizontalAlignment="Left" Margin="0,6,0,0" />
                                 <TextBlock x:Name="CuDriverStatus" Style="{StaticResource Muted}" Margin="0,6,0,0" />
                             </StackPanel>
                         </Border>

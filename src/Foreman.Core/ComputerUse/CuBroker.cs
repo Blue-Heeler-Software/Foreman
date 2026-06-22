@@ -47,8 +47,10 @@ public sealed class CuBroker
     private readonly Func<bool> _isHalted;
     private const int MaxItems = 200;
 
-    // Operator-chosen driver, mirroring LiveWeaveBroker: null = operator only, "*" = any harness, else a harness id.
-    private volatile string? _driver;
+    // Operator-chosen driver SET: empty = operator only, ["*"] = any harness, else the specific harness ids that
+    // may drive. Volatile reference; SetDrivers swaps the whole array atomically. (Was a single string; now a set
+    // so the operator can authorize e.g. {claude-code, codex} without opening it to every harness.)
+    private volatile string[] _drivers = [];
     private const string OperatorMarker = "operator";
 
     public CuBroker(IAuditor auditor, Func<bool>? isHalted = null)
@@ -170,31 +172,45 @@ public sealed class CuBroker
 
     // ── Driver gating (ported from LiveWeaveBroker) ──────────────────────────────
 
-    public string? Driver => _driver;
+    /// <summary>The authorized driver set, normalized: empty = operator-only, ["*"] = any harness, else harness ids.</summary>
+    public IReadOnlyList<string> Drivers => _drivers;
 
-    /// <summary>Optional sink invoked whenever the driver changes, so the host can persist it across restarts.
-    /// Receives the NORMALIZED driver ("*" = any, null = operator-only, else a harness id). Wire it AFTER the
-    /// startup seed (call <see cref="SetDriver"/> with the saved value first) so restoring doesn't re-save.</summary>
+    /// <summary>Back-compat single-string view: null = operator-only, "*" = any, else the ids joined by commas.</summary>
+    public string? Driver => _drivers.Length == 0 ? null : string.Join(",", _drivers);
+
+    /// <summary>Optional sink invoked whenever the driver set changes, so the host can persist it across restarts.
+    /// Receives the NORMALIZED <see cref="Driver"/> string ("*" = any, null = operator-only, else comma-joined ids).
+    /// Wire it AFTER the startup seed (call <see cref="SetDriver"/> with the saved value first) so restoring doesn't re-save.</summary>
     public Action<string?>? DriverPersister { get; set; }
 
-    public void SetDriver(string? harnessId)
+    /// <summary>Back-compat single setter: accepts one id, "any", blank (operator-only), OR a comma-separated list
+    /// (so a persisted "a,b" round-trips). Delegates to <see cref="SetDrivers"/>.</summary>
+    public void SetDriver(string? harnessId) =>
+        SetDrivers(string.IsNullOrWhiteSpace(harnessId)
+            ? null
+            : harnessId.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    /// <summary>Sets the full authorized driver set. Each id is normalized (trim/lower-case, "any" -> "*"); if "*"
+    /// is present it supersedes the specifics and collapses to ["*"] (any harness). Empty -> operator-only.</summary>
+    public void SetDrivers(IEnumerable<string>? harnessIds)
     {
-        if (string.IsNullOrWhiteSpace(harnessId)) _driver = null;
-        else
-        {
-            var n = harnessId.Trim().ToLowerInvariant();
-            _driver = string.Equals(n, "any", StringComparison.OrdinalIgnoreCase) ? "*" : n;
-        }
-        DriverPersister?.Invoke(_driver);
+        var set = (harnessIds ?? [])
+            .Select(h => (h ?? string.Empty).Trim().ToLowerInvariant())
+            .Where(h => h.Length > 0)
+            .Select(h => string.Equals(h, "any", StringComparison.OrdinalIgnoreCase) ? "*" : h)
+            .Distinct()
+            .ToArray();
+        _drivers = set.Contains("*") ? ["*"] : set;
+        DriverPersister?.Invoke(Driver);
     }
 
     public bool CanDrive(string? harnessId, bool isOperator)
     {
         if (isOperator || string.Equals(harnessId, OperatorMarker, StringComparison.OrdinalIgnoreCase)) return true;
-        var d = _driver;
-        if (string.IsNullOrEmpty(d)) return false;
-        if (string.Equals(d, "*", StringComparison.Ordinal)) return true;
-        return harnessId is not null && string.Equals(harnessId, d, StringComparison.OrdinalIgnoreCase);
+        var d = _drivers;
+        if (d.Length == 0) return false;
+        if (d.Contains("*")) return true;
+        return harnessId is not null && d.Contains(harnessId.Trim().ToLowerInvariant());
     }
 
     private void Prune()

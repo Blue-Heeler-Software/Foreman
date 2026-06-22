@@ -124,4 +124,59 @@ public sealed class CuBrokerTests
         Assert.Single(claimed);
         Assert.Equal(CuActionState.Executing, claimed[0].State);
     }
+
+    [Fact]
+    public void SetDrivers_AuthorizesEachInTheSet_NotOthers()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        b.SetDrivers(["claude-code", "codex"]);
+        Assert.Equal("claude-code,codex", b.Driver);
+        Assert.True(b.CanDrive("claude-code", false));
+        Assert.True(b.CanDrive("codex", false));
+        Assert.False(b.CanDrive("gemini-cli", false));
+        Assert.False(b.CanDrive(null, false));
+    }
+
+    [Fact]
+    public void SetDriver_CommaList_RoundTripsThroughDriver()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        b.SetDrivers(["claude-code", "codex"]);
+        var persisted = b.Driver;                       // "claude-code,codex" (what gets saved to settings)
+        var restored = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        restored.SetDriver(persisted);                  // restore via the single-string startup-seed path
+        Assert.True(restored.CanDrive("claude-code", false));
+        Assert.True(restored.CanDrive("codex", false));
+        Assert.False(restored.CanDrive("cursor", false));
+    }
+
+    [Fact]
+    public void SetDrivers_AnyCollapsesToWildcard()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        b.SetDrivers(["claude-code", "any"]);
+        Assert.Equal("*", b.Driver);
+        Assert.True(b.CanDrive("anything-at-all", false));
+    }
+
+    [Fact]
+    public void SetDrivers_Empty_IsOperatorOnly()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        b.SetDrivers(["claude-code"]);
+        b.SetDrivers(null);
+        Assert.Null(b.Driver);
+        Assert.False(b.CanDrive("claude-code", false));
+        Assert.True(b.CanDrive("claude-code", true));   // operator is always allowed
+    }
+
+    [Fact]
+    public void DriverPersister_ReceivesNormalizedJoinedString()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        string? seen = "unset";
+        b.DriverPersister = d => seen = d;
+        b.SetDrivers(["Claude-Code", "CODEX"]);          // case-insensitive normalization
+        Assert.Equal("claude-code,codex", seen);
+    }
 }
