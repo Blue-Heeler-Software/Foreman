@@ -33,6 +33,18 @@ const POLL_MS = 5000;
 // null — otherwise the broker would keep a stale pin while we resolved actions against the active tab.
 function persistPin() { try { chrome.storage.session.set({ pinnedTab }); } catch { /* session storage unavailable */ } }
 
+// Visible pin indicator on the toolbar icon (per-tab badge), so pressing the icon gives instant feedback even
+// before the Foreman round-trip: a badge on the pinned tab, cleared on the previously-pinned one.
+function updatePinBadge(prevTab, newTab) {
+    try {
+        if (prevTab != null && prevTab !== newTab) chrome.action.setBadgeText({ tabId: prevTab, text: '' });
+        if (newTab != null) {
+            chrome.action.setBadgeText({ tabId: newTab, text: '📌' });   // 📌
+            try { chrome.action.setBadgeBackgroundColor({ tabId: newTab, color: '#C8A24B' }); } catch { /* ok */ }
+        }
+    } catch { /* action badge unavailable */ }
+}
+
 const base = () => `http://${cfg.host}:${cfg.port}`;
 const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
 
@@ -305,15 +317,19 @@ function safePost(message) {
 // Pressing the pinned toolbar icon toggles the shared-attention pin on that tab (press again = unpin, press a
 // DIFFERENT tab = move the pin), reports it to Foreman, and opens the side panel. openPanelOnActionClick MUST be
 // false here — otherwise Chrome opens the panel itself and never fires onClicked, so we'd never see the press.
-chrome.action.onClicked.addListener(async (tab) => {
+chrome.action.onClicked.addListener((tab) => {
+    // sidePanel.open() MUST run synchronously in the click's user-gesture turn. Calling it after an `await`
+    // (e.g. reportAttention) makes Chrome reject it ("may only be called in response to a user gesture") and the
+    // click looks dead. So open the panel FIRST, then do the pin toggle + async report fire-and-forget.
+    if (tab?.windowId !== undefined) { try { chrome.sidePanel.open({ windowId: tab.windowId }); } catch { /* ok */ } }
     if (tab?.id !== undefined && tab.id !== chrome.tabs.TAB_ID_NONE) {
+        const prev = pinnedTab;
         pinnedTab = (pinnedTab === tab.id) ? null : tab.id;
         persistPin();
-        await reportAttention();
-        lastReportedPin = pinnedTab;
+        updatePinBadge(prev, pinnedTab);   // instant visible feedback on the icon, independent of the round-trip
+        reportAttention().then(() => { lastReportedPin = pinnedTab; });
         broadcast();
     }
-    if (tab?.windowId !== undefined) { try { await chrome.sidePanel.open({ windowId: tab.windowId }); } catch { /* ok */ } }
 });
 try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); } catch { /* Chrome < 114 */ }
 
@@ -337,6 +353,7 @@ async function bootstrap() {
     // drop the focus to null (which would let no-tabId actions resolve to the active tab). refresh() then reconciles
     // it to the broker. lastReportedPin stays null so the first refresh re-pushes the reloaded pin.
     try { const s = await chrome.storage.session.get('pinnedTab'); if (s && typeof s.pinnedTab === 'number') pinnedTab = s.pinnedTab; } catch { /* no session storage */ }
+    if (pinnedTab != null) updatePinBadge(null, pinnedTab);   // re-show the pin badge after a worker restart
     // MV3 service workers sleep after ~30s idle, which stops the poll loop — so an APPROVED browser-use action
     // would sit unclaimed unless the side panel is open. A periodic alarm wakes the worker (~1 min) to poll
     // cu_poll_actions / status / inbox even when nothing else fires; the 5s interval still drives the awake bursts.
