@@ -189,7 +189,7 @@ internal static class Program
         var modality = Arg(args, "modality", "browser").Trim().ToLowerInvariant();
 
         var argObj = new JsonObject();
-        foreach (var k in new[] { "url", "text", "selector", "key", "value" })
+        foreach (var k in new[] { "url", "text", "selector", "key", "value", "tabId", "justification" })
         {
             var v = Arg(args, k, "");
             if (!string.IsNullOrEmpty(v)) argObj[k] = v;
