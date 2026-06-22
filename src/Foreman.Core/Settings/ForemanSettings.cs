@@ -32,6 +32,11 @@ public sealed class ForemanSettings
     public bool NotifyOnWarning { get; set; } = true;       // medium-severity "warning" toasts; false = mute the yellow popups (still logged + shown)
     public bool MonitorAllProcesses { get; set; } = false; // false = harness children only
 
+    /// <summary>Persisted mediated browser-use (cu_*) driver: which harness may drive. Normalized form:
+    /// null/empty = operator-only, "*" = any harness, else a harness id. Restored into the CuBroker on startup
+    /// so the operator doesn't have to re-pick it after every relaunch.</summary>
+    public string? CuDriver { get; set; }
+
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
 

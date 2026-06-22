@@ -44,18 +44,37 @@ public partial class ConnectAgentWindow : Window
         Loaded += (_, _) => RefreshCuDriver();
     }
 
+    // The driver picker's "operator only" choice maps to an empty driver id (no harness may drive).
+    private const string OperatorOnlyLabel = "(operator only)";
+
     // Operator chooses which harness may DRIVE browser use (cu_*). Applied in-process via the CuBroker — no token.
     private void SetCuDriverClick(object sender, RoutedEventArgs e)
     {
-        SetCuDriver?.Invoke(CuDriverInput.Text);
+        var choice = (CuDriverInput.SelectedItem as string) ?? "";
+        SetCuDriver?.Invoke(choice == OperatorOnlyLabel ? "" : choice.Trim());
         RefreshCuDriver();
+    }
+
+    // Fills the driver ComboBox with the operator-only / any sentinels plus the known and currently-running
+    // harness ids, so the operator picks from a list instead of typing a raw id.
+    private void PopulateCuDriverChoices()
+    {
+        CuDriverInput.Items.Clear();
+        foreach (var id in new[] { OperatorOnlyLabel, "any", "claude-code", "codex", "cursor",
+                                   "opencode", "github-copilot", "gemini-cli", "lm-studio", "t3-code" })
+            CuDriverInput.Items.Add(id);
+        foreach (var id in _getRunningHarnessIds?.Invoke() ?? [])
+            if (!string.IsNullOrWhiteSpace(id) && !CuDriverInput.Items.Contains(id))
+                CuDriverInput.Items.Add(id);
     }
 
     private void RefreshCuDriver()
     {
         if (CuDriverStatus is null) return;
         var d = GetCuDriver?.Invoke();
-        CuDriverInput.Text = d == "*" ? "any" : (d ?? "");
+        var label = string.IsNullOrEmpty(d) ? OperatorOnlyLabel : (d == "*" ? "any" : d);
+        if (!CuDriverInput.Items.Contains(label)) CuDriverInput.Items.Add(label);   // surface a custom id too
+        CuDriverInput.SelectedItem = label;
         CuDriverStatus.Text = string.IsNullOrEmpty(d)
             ? "Current: operator only — no harness can drive browser use yet."
             : d == "*" ? "Current: ANY connected harness may drive browser use."
@@ -91,17 +110,27 @@ public partial class ConnectAgentWindow : Window
             "Claude Code and Codex each get their own scoped token (they can only see themselves in Foreman). " +
             "The generic config above uses your full-access install token at %LocalAppData%\\Foreman\\mcp.token — " +
             "keep it private. /health is open; /mcp requires a token.";
+        PopulateCuDriverChoices();
         RefreshConnected();
     }
 
     private void RefreshConnected()
     {
         var clients = _getClients?.Invoke() ?? [];
+        // Collapse identical clients to ONE line: MCP clients (notably the browser extension) use short-lived
+        // per-request sessions, so the raw list can carry dozens of duplicate entries for a single agent. Group
+        // by identity and show a (×N) session count, so the count stays visible without flooding the header.
         ConnectedText.Text = clients.Count == 0
             ? "No agents are connected to Foreman Agent Safety yet. Connect one below, then restart it."
-            : "Connected now:\n" + string.Join("\n", clients.Select(c =>
-                $"  • {c.Name}{(string.IsNullOrWhiteSpace(c.Version) ? "" : $" v{c.Version}")} — " +
-                $"sampling: {(c.Sampling ? "yes" : "no")}"));
+            : "Connected now:\n" + string.Join("\n", clients
+                .GroupBy(c => (c.Name, c.Version, c.Sampling))
+                .OrderBy(g => g.Key.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
+                {
+                    var ver = string.IsNullOrWhiteSpace(g.Key.Version) ? "" : $" v{g.Key.Version}";
+                    var count = g.Count() > 1 ? $"  (×{g.Count()} sessions)" : "";
+                    return $"  • {g.Key.Name}{ver} — sampling: {(g.Key.Sampling ? "yes" : "no")}{count}";
+                }));
 
         RefreshLiveWeaveStatus();
     }

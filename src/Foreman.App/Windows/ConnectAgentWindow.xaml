@@ -57,21 +57,52 @@
                        Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
             <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0"
                        Text="Foreman Agent Safety runs a local MCP server your AI agent connects to. That connection is how Foreman reports status to the agent, how the agent can pre-flight a command, and how 'Ask Harness' reaches it. Pick your agent below, then restart it." />
+            <!-- Connected list lives in the fixed header, so cap it with its own scroll: a flood of entries
+                 must never inflate the header and push the agent cards (Row 1) off-screen. -->
             <Border Margin="0,10,0,0" CornerRadius="6" Padding="10,7"
                     Background="{StaticResource SurfaceRaisedBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                <TextBlock x:Name="ConnectedText" TextWrapping="Wrap" FontSize="12"
-                           Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
+                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="ConnectedText" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
+                </ScrollViewer>
             </Border>
             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                 <Button Content="Connect all agents" Click="ConnectAllClick"
                         Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
-                <TextBlock Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="10,0,0,0"
-                           Text="Writes a fresh-token &quot;foreman&quot; entry for every agent that's running, configured, or installed — connects new agents and repairs stale tokens in one click. Restart each agent afterward." />
+                <TextBlock Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="10,0,0,0" MaxWidth="540"
+                           Text="Re-deploys a fresh per-agent scoped &quot;foreman&quot; key (MCP token) into the config of each agent that's running, configured, or installed: Claude Code, Codex, Cursor, OpenCode, Copilot, Gemini, LM Studio, T3. Connects new agents and repairs stale keys in one pass; the confirmation names exactly which were written. Restart each agent afterward." />
             </StackPanel>
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel>
+
+                <!-- Foreman browser extension + browser-use driver. Hoisted to the top: the driver gate is the
+                     primary browser-use control, so it sits directly under "Connect all agents" instead of last. -->
+                <Border CornerRadius="8" Padding="14" Margin="0,0,0,12"
+                        Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="🔒 Foreman browser extension (on-device)" Style="{StaticResource CardTitle}" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
+                                   Text="Links your browser to THIS machine only — nothing leaves the box. Click Pair, then enter the shown code in the extension's Options within 2 minutes. The code never crosses the wire; the extension proves it over a loopback challenge/response." />
+                        <Button Content="Pair…" Click="PairExtensionClick" HorizontalAlignment="Left"
+                                Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
+
+                        <Border Background="#FF15181D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="10" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Browser-use driver" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,7"
+                                           Text="Which harness may submit browser-use (cu_*) actions. Pick (operator only) for none, a harness id (e.g. claude-code, codex) for just that one, or any for every connected harness. Actions are still audited, held when risky, and panic-haltable." />
+                                <StackPanel Orientation="Horizontal">
+                                    <ComboBox x:Name="CuDriverInput" Width="220" VerticalContentAlignment="Center" />
+                                    <Button Content="Set driver" Click="SetCuDriverClick" Margin="8,0,0,0" />
+                                </StackPanel>
+                                <TextBlock x:Name="CuDriverStatus" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
 
                 <!-- Claude Code -->
                 <Border CornerRadius="8" Padding="14" Margin="0,0,0,12"
@@ -228,36 +259,6 @@
                         <TextBox x:Name="GenericBox" Style="{StaticResource Mono}" Height="150" />
                         <Button Content="Copy" Click="CopyGenericClick" HorizontalAlignment="Left" Margin="0,6,0,0" />
                         <TextBlock x:Name="TokenNote" Style="{StaticResource Muted}" Margin="0,10,0,0" />
-                    </StackPanel>
-                </Border>
-
-                <!-- Foreman browser extension (on-device, paired) -->
-                <Border CornerRadius="8" Padding="14" Margin="0,12,0,0"
-                        Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                    <StackPanel>
-                        <TextBlock Text="🔒 Foreman browser extension (on-device)" Style="{StaticResource CardTitle}" />
-                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
-                                   Text="Links your browser to THIS machine only — nothing leaves the box. Click Pair, then enter the shown code in the extension's Options within 2 minutes. The code never crosses the wire; the extension proves it over a loopback challenge/response." />
-                        <Button Content="Pair…" Click="PairExtensionClick" HorizontalAlignment="Left"
-                                Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
-
-                        <!-- Browser-use (cu_*) driver: which harness Foreman lets DRIVE audited browser actions. Set
-                             in-process by the operator (this window IS the operator) — no token needed. -->
-                        <Border Background="#FF15181D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                CornerRadius="6" Padding="10" Margin="0,12,0,0">
-                            <StackPanel>
-                                <TextBlock Text="Browser-use driver" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
-                                <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,7"
-                                           Text="Which harness may submit browser-use (cu_*) actions. Blank = operator only; a harness id (e.g. claude-code, codex) = just that one; 'any' = every connected harness. Actions are still audited, held when risky, and panic-haltable." />
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBox x:Name="CuDriverInput" Width="200" Padding="8,5" VerticalContentAlignment="Center"
-                                             Background="{StaticResource SurfaceBrush}" Foreground="{StaticResource TextPrimaryBrush}"
-                                             BorderBrush="{StaticResource BorderBrush}" />
-                                    <Button Content="Set driver" Click="SetCuDriverClick" Margin="8,0,0,0" />
-                                </StackPanel>
-                                <TextBlock x:Name="CuDriverStatus" Style="{StaticResource Muted}" Margin="0,6,0,0" />
-                            </StackPanel>
-                        </Border>
                     </StackPanel>
                 </Border>
 

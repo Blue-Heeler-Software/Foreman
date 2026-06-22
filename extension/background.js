@@ -109,9 +109,10 @@ async function replyAsk(requestId, response) {
 
 // ── Browser use (BU) — executor for Foreman's audited cu_* broker ───────────────
 // Foreman AUDITS every action (and holds risky ones for operator approval) BEFORE it reaches here; this
-// extension is only the executor for actions Foreman already APPROVED. Bounded mode: navigate + read tab
-// metadata, which need nothing beyond the existing "tabs" permission. click/type/scroll/screenshot need
-// `scripting` + host permissions (a future broad-mode operator opt-in) and return a clear error until then.
+// extension is only the executor for actions Foreman already APPROVED. Bounded mode (tabs API only, no
+// scripting/host perms): navigate (new tab), goto (same tab), back/forward (tab history), read (tab metadata).
+// click/type/scroll/screenshot need `scripting` + host permissions (a future broad-mode operator opt-in) and
+// return a clear error until then.
 
 async function executeCuAction(act) {
     const verb = String(act.verb || '').toLowerCase();
@@ -131,6 +132,25 @@ async function executeCuAction(act) {
             if (!tab) return { ok: false, error: 'No active tab to read.' };
             // Bounded: tab metadata only. Page CONTENT (DOM/text) needs scripting (broad mode).
             return { ok: true, result: { url: tab.url ?? '', title: tab.title ?? '' } };
+        }
+        case 'goto': {
+            // Navigate the CURRENT tab (vs 'navigate', which opens a new one). tabs.update only — no scripting.
+            const url = String(args.url || '');
+            if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'goto requires an http(s) url.' };
+            try { new URL(url); } catch { return { ok: false, error: 'goto requires a valid url.' }; }
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab?.id) return { ok: false, error: 'No active tab to navigate.' };
+            const updated = await chrome.tabs.update(tab.id, { url });
+            return { ok: true, result: { tabId: updated?.id ?? tab.id, url } };
+        }
+        case 'back':
+        case 'forward': {
+            // Tab history navigation via the tabs API (no scripting). Back from a fresh tab is a no-op (no history).
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab?.id) return { ok: false, error: 'No active tab.' };
+            if (verb === 'back') await chrome.tabs.goBack(tab.id);
+            else await chrome.tabs.goForward(tab.id);
+            return { ok: true, result: { tabId: tab.id, action: verb } };
         }
         case 'click':
         case 'type':

@@ -172,11 +172,20 @@ public sealed class CuBroker
 
     public string? Driver => _driver;
 
+    /// <summary>Optional sink invoked whenever the driver changes, so the host can persist it across restarts.
+    /// Receives the NORMALIZED driver ("*" = any, null = operator-only, else a harness id). Wire it AFTER the
+    /// startup seed (call <see cref="SetDriver"/> with the saved value first) so restoring doesn't re-save.</summary>
+    public Action<string?>? DriverPersister { get; set; }
+
     public void SetDriver(string? harnessId)
     {
-        if (string.IsNullOrWhiteSpace(harnessId)) { _driver = null; return; }
-        var n = harnessId.Trim().ToLowerInvariant();
-        _driver = string.Equals(n, "any", StringComparison.OrdinalIgnoreCase) ? "*" : n;
+        if (string.IsNullOrWhiteSpace(harnessId)) _driver = null;
+        else
+        {
+            var n = harnessId.Trim().ToLowerInvariant();
+            _driver = string.Equals(n, "any", StringComparison.OrdinalIgnoreCase) ? "*" : n;
+        }
+        DriverPersister?.Invoke(_driver);
     }
 
     public bool CanDrive(string? harnessId, bool isOperator)

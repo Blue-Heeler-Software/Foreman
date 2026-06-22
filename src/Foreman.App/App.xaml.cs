@@ -249,9 +249,18 @@ public partial class App : Application
         // Mediated computer-use broker (Phase 0.5): every CU action is audited (local fast-path; the cloud deep judge
         // stays OFF until the operator enables it) before it can execute, and the panic halt empties it. Reachable
         // via the cu_* MCP tools.
-        _mcpHost.State.Cu = new Foreman.Core.ComputerUse.CuBroker(
+        var cuBroker = new Foreman.Core.ComputerUse.CuBroker(
             new Foreman.Core.ComputerUse.AuditPipeline(new Foreman.Core.ComputerUse.FastPathAuditor()),
             () => panicState.IsHalted);
+        // Restore the persisted CU driver, THEN wire the persister, so the startup seed doesn't re-save. After
+        // this, any driver change (the picker OR the cu_set_driver MCP tool) sticks across relaunches.
+        cuBroker.SetDriver(settings.CuDriver);
+        cuBroker.DriverPersister = d =>
+        {
+            settings.CuDriver = d;
+            try { SettingsStore.Save(settings); } catch { /* in-memory driver still applies this session */ }
+        };
+        _mcpHost.State.Cu = cuBroker;
         // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
         _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);

@@ -196,25 +196,36 @@ internal static class Program
         }
         var argsJson = argObj.ToJsonString();
 
-        // Operator scope: read the install token from mcp.token internally (the same file the app + harness use),
-        // so the operator/agent never handles it. cu_submit's driver gate only admits the operator today (no
-        // CU-driver-set path yet), so this is the scope a test driver must use.
-        var token = new McpAuthToken().Value;
+        // Scope: mint a per-harness token for --harness (default "claude-code") from the install secret, read
+        // internally from mcp.token so the caller never handles a token. cu_submit's driver gate admits the
+        // operator OR the harness the operator authorized as the driver (via cu_set_driver / the Browser-use
+        // driver picker). The operator token is peer-bound to its first user and gets 401'd from a separate
+        // process, so a per-harness token is what a driver must present from here.
+        var harness = Arg(args, "harness", "claude-code").Trim().ToLowerInvariant();
+        // An explicit --token wins (e.g. a token Foreman minted for this harness via Connect Agent, which the
+        // running instance honors even when its live secret has diverged from the on-disk mcp.token). Otherwise
+        // mint a per-harness token from the install secret on disk.
+        var explicitToken = Arg(args, "token", "").Trim();
+        var token = explicitToken.Length > 0 ? explicitToken : new McpAuthToken().MintHarnessToken(harness);
         var url = $"http://localhost:{port}/mcp";
         var transport = new HttpClientTransport(new HttpClientTransportOptions
         {
             Endpoint = new Uri(url),
-            Name = "cu-test",
+            Name = harness,
             ConnectionTimeout = TimeSpan.FromSeconds(10),
             AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" },
         }, null);
 
         McpClient client;
-        try { client = await McpClient.CreateAsync(transport, new McpClientOptions { ClientInfo = new Implementation { Name = "cu-test", Version = "test", Title = "CU test" } }, null, ct); }
+        try { client = await McpClient.CreateAsync(transport, new McpClientOptions { ClientInfo = new Implementation { Name = harness, Version = "test", Title = $"CU driver ({harness})" } }, null, ct); }
         catch (Exception ex) { Log("ERR", $"Couldn't connect to Foreman at {url}: {ex.Message}"); return 1; }
 
         await using (client)
         {
+            // Report the current CU driver first, so a "no driver selected" refusal is self-explanatory.
+            var cuStatus = await Call(client, "cu_status", new(), ct);
+            if (cuStatus is not null) Log("CU", $"cu_status -> {cuStatus.ToJsonString()}  (connected as '{harness}')");
+
             Log("CU", $"cu_submit  modality={modality}  verb={verb}  args={argsJson}");
             var sub = await Call(client, "cu_submit", new() { ["modality"] = modality, ["verb"] = verb, ["argsJson"] = argsJson }, ct);
             if (sub is null) { Log("CU", "no response from cu_submit (is cu_* present — i.e. the new build?)"); return 1; }
