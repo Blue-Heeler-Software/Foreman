@@ -37,6 +37,12 @@ public sealed class ForemanSettings
     /// so the operator doesn't have to re-pick it after every relaunch.</summary>
     public string? CuDriver { get; set; }
 
+    /// <summary>Opt-in: let the browser-use driver act in a tab OTHER than the pinned focus WITHOUT waiting for
+    /// operator approval — but only when the action carries a justification (the implicit-auth assumption is always
+    /// explained + logged). Off by default: off-focus state changes are HELD for the operator. A justification is
+    /// mandatory to ever proceed off-focus, opt-in or not.</summary>
+    public bool CuTabOverride { get; set; }
+
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
 

@@ -101,12 +101,10 @@ public sealed class CuBroker
         // Read-only excursions proceed (the peek is surfaced); STATE-CHANGING excursions are held for the operator
         // even when the auditor allowed them, so the driver can never silently leave the agreed tab. Only ever
         // downgrades Allow -> Held; never relaxes a Block/Held.
-        if (state == CuActionState.Approved
-            && CuVerbs.IsStateChanging(action.Verb)
-            && IsOffPinExcursion(action, out var excTarget, out var justification))
+        if (state == CuActionState.Approved && EvaluateExcursion(action, "for operator") is { } exVerdict)
         {
-            state = CuActionState.Held;
-            verdict = ExcursionHold(excTarget, justification, "for operator");
+            verdict = exVerdict;
+            if (exVerdict.Decision != CuDecision.Allow) state = CuActionState.Held;
         }
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow);
@@ -166,14 +164,15 @@ public sealed class CuBroker
 
             // Re-evaluate the pinned-focus gate against the LIVE pin at DELIVERY, not just at submit (unless the
             // operator already approved this out of Held). Closes the submit-before-pin / move-pin-after-approve
-            // TOCTOU: an action that became an off-focus state change since it was approved is re-held here.
-            if (!item.OperatorApproved && CuVerbs.IsStateChanging(item.Action.Verb)
-                && IsOffPinExcursion(item.Action, out var excTarget, out var just))
+            // TOCTOU: an action that became an off-focus state change since it was approved is re-held here. An
+            // operator-opted-in override with a justification still passes (EvaluateExcursion returns Allow).
+            if (!item.OperatorApproved && EvaluateExcursion(item.Action, "at delivery") is { } exV
+                && exV.Decision != CuDecision.Allow)
             {
                 _items[item.ActionId] = item with
                 {
                     State = CuActionState.Held,
-                    Verdict = ExcursionHold(excTarget, just, "at delivery"),
+                    Verdict = exV,
                     UpdatedAt = DateTimeOffset.UtcNow,
                 };
                 continue;
@@ -295,6 +294,22 @@ public sealed class CuBroker
         CuVerdict.Hold("broker",
             $"Off-focus change held {when} (pinned tab {_attentionTab}; action targets {target})" +
             (string.IsNullOrWhiteSpace(justification) ? " — no justification given." : $": {justification}"));
+
+    /// <summary>Operator opt-in (from settings.CuTabOverride): when true, an off-focus state change may PROCEED
+    /// instead of being held — but ONLY if it carries a justification. Default false (off-focus changes are held).</summary>
+    public bool AllowTabOverride { get; set; }
+
+    // The off-focus verdict for a state-changing action, or null when there is no excursion (on-focus / read-only /
+    // no pin). With tab-override opted in AND a justification present -> Allow (proceeds, surfaced); otherwise Hold.
+    // A justification is mandatory to ever proceed off-focus, so the implicit-auth assumption is always explained.
+    private CuVerdict? EvaluateExcursion(CuAction action, string when)
+    {
+        if (!CuVerbs.IsStateChanging(action.Verb)) return null;
+        if (!IsOffPinExcursion(action, out var target, out var just)) return null;
+        if (AllowTabOverride && !string.IsNullOrWhiteSpace(just))
+            return CuVerdict.Allow("broker", $"Off-focus override (operator opt-in) {when} (targets {target}): {just}");
+        return ExcursionHold(target, just, AllowTabOverride ? $"{when} — override needs a justification" : when);
+    }
 
     private void Prune()
     {

@@ -296,4 +296,32 @@ public sealed class CuBrokerTests
         var garbage = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "0x64", ["url"] = "https://x" }), new CuContext());
         Assert.Equal(CuActionState.Held, garbage.State);       // non-integer tabId -> off-focus (conservative)
     }
+
+    [Fact]
+    public async Task TabOverride_On_OffPinWithJustification_Proceeds()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok"))) { AllowTabOverride = true };
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x", ["justification"] = "checking docs, will return" }), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);
+        Assert.Single(b.Claim(10));   // delivery re-gate honors the justified override too
+    }
+
+    [Fact]
+    public async Task TabOverride_On_OffPinNoJustification_StillHeld()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok"))) { AllowTabOverride = true };
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x" }), new CuContext());
+        Assert.Equal(CuActionState.Held, item.State);   // justification is mandatory even with override on
+    }
+
+    [Fact]
+    public async Task TabOverride_Off_OffPinWithJustification_StillHeld()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("ok")));   // override off (default)
+        b.SetAttention("100");
+        var item = await b.SubmitAsync(ActWith("goto", new() { ["tabId"] = "200", ["url"] = "https://x", ["justification"] = "whatever" }), new CuContext());
+        Assert.Equal(CuActionState.Held, item.State);   // override off -> always held, justification or not
+    }
 }

@@ -260,6 +260,7 @@ public partial class App : Application
             settings.CuDriver = d;
             try { SettingsStore.Save(settings); } catch { /* in-memory driver still applies this session */ }
         };
+        cuBroker.AllowTabOverride = settings.CuTabOverride;   // opt-in: off-focus changes may proceed if justified
         _mcpHost.State.Cu = cuBroker;
         // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
