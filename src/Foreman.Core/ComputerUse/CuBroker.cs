@@ -28,7 +28,11 @@ public sealed record CuBrokerItem(
     DateTimeOffset? UpdatedAt = null,
     // True once the OPERATOR has explicitly approved this action out of Held. The delivery-time focus re-gate
     // skips operator-approved items so an excursion the operator already OK'd isn't re-held into a loop.
-    bool OperatorApproved = false);
+    bool OperatorApproved = false,
+    // Desktop one-window confinement: the active-window Epoch this item was bound at (null for browser), and the
+    // panic epoch at submit. Claim re-checks both, so a window switch/rebind or a panic since approval invalidates it.
+    long? BoundEpoch = null,
+    long PanicEpoch = 0);
 
 /// <summary>
 /// The mediated computer-use command broker — the Phase 0.5 replacement for LiveWeave's immediate command queue.
@@ -59,6 +63,13 @@ public sealed class CuBroker
     // Operator's pinned shared-attention tab (browser): the locked focus the extension reports when the operator
     // presses the pinned icon. Null = no pin. Drives the excursion gate in SubmitAsync.
     private volatile string? _attentionTab;
+
+    // Desktop one-window-at-a-time confinement (parallel to the browser pin; modality-scoped). The operator binds a
+    // single target window; _windowEpoch bumps on every (re)bind so an action approved against an old binding is
+    // caught at delivery; _panicEpoch bumps on each halt so actions queued before a panic are invalidated.
+    private volatile CuWindowRef? _activeWindow;
+    private long _windowEpoch;
+    private long _panicEpoch;
 
     public CuBroker(IAuditor auditor, Func<bool>? isHalted = null)
     {
@@ -96,18 +107,19 @@ public sealed class CuBroker
             _                => CuActionState.Held,   // Hold (and any unknown) -> operator decides
         };
 
-        // Pinned-focus excursion gate (browser): when the operator has pinned a shared-attention tab, an action
-        // that leaves it (a different explicit tabId, or 'navigate' which opens a NEW tab) is an "excursion".
-        // Read-only excursions proceed (the peek is surfaced); STATE-CHANGING excursions are held for the operator
-        // even when the auditor allowed them, so the driver can never silently leave the agreed tab. Only ever
-        // downgrades Allow -> Held; never relaxes a Block/Held.
-        if (state == CuActionState.Approved && EvaluateExcursion(action, "for operator") is { } exVerdict)
+        // Excursion gate, MODALITY-SCOPED so the browser pin and the desktop one-window gate never cross-fire:
+        //  - Browser: pinned-tab excursion (off-tab state changes held; read-only peeks proceed).
+        //  - Desktop: one-window excursion (off-window state/cursor-move held; no bound window -> held).
+        // Only ever downgrades Allow -> Held; never relaxes a Block/Held.
+        if (state == CuActionState.Approved && EvaluateModalityExcursion(action, "for operator") is { } exVerdict)
         {
             verdict = exVerdict;
             if (exVerdict.Decision != CuDecision.Allow) state = CuActionState.Held;
         }
 
-        var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow);
+        var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
+            BoundEpoch: action.Modality == CuModality.Desktop ? _activeWindow?.Epoch : null,
+            PanicEpoch: Interlocked.Read(ref _panicEpoch));
         _items[id] = item;
         Prune();
         return item;
@@ -162,33 +174,73 @@ public sealed class CuBroker
                 continue;
             }
 
-            // Re-evaluate the pinned-focus gate against the LIVE pin at DELIVERY, not just at submit (unless the
-            // operator already approved this out of Held). Closes the submit-before-pin / move-pin-after-approve
-            // TOCTOU: an action that became an off-focus state change since it was approved is re-held here. An
-            // operator-opted-in override with a justification still passes (EvaluateExcursion returns Allow).
-            if (!item.OperatorApproved && EvaluateExcursion(item.Action, "at delivery") is { } exV
-                && exV.Decision != CuDecision.Allow)
+            // Stale across a panic: an item approved before the latest halt is invalidated, never delivered.
+            if (item.PanicEpoch < Interlocked.Read(ref _panicEpoch))
             {
                 _items[item.ActionId] = item with
                 {
-                    State = CuActionState.Held,
-                    Verdict = exV,
+                    State = CuActionState.Rejected,
+                    Error = "Computer use was halted (panic) after this was approved — re-submit.",
                     UpdatedAt = DateTimeOffset.UtcNow,
                 };
                 continue;
             }
 
-            // On-focus state change with NO explicit tab: STAMP the live pin into the action the executor receives,
-            // so the executor cannot fall back to the (possibly different) active tab. The broker is authoritative
-            // for the target; a stale extension-side pin can no longer divert a no-tabId action off the focus.
             var deliver = item;
-            if (_attentionTab is { Length: > 0 } pin
-                && CuVerbs.IsStateChanging(item.Action.Verb)
-                && !string.Equals(item.Action.Verb, "navigate", StringComparison.OrdinalIgnoreCase)
-                && string.IsNullOrEmpty(item.Action.Arg("tabId")))
+            if (item.Action.Modality == CuModality.Desktop)
             {
-                var stamped = new Dictionary<string, string>(item.Action.Args, StringComparer.Ordinal) { ["tabId"] = pin };
-                deliver = item with { Action = item.Action with { Args = stamped } };
+                // Desktop one-window confinement re-gate at DELIVERY — NO OperatorApproved skip (spec INV-2): even an
+                // operator-approved item re-validates the bound window, so a switch/rebind/recycle since approval is caught.
+                if (EvaluateWindowExcursion(item.Action, "at delivery") is { } wv && wv.Decision != CuDecision.Allow)
+                {
+                    _items[item.ActionId] = item with { State = CuActionState.Held, Verdict = wv, UpdatedAt = DateTimeOffset.UtcNow };
+                    continue;
+                }
+                var aw = _activeWindow;
+                if (item.BoundEpoch is long be && aw is not null && be != aw.Epoch)   // window switched/rebound since approval
+                {
+                    _items[item.ActionId] = item with { State = CuActionState.Held,
+                        Verdict = CuVerdict.Hold("broker", "Bound window switched since approval — re-bind + re-submit."),
+                        UpdatedAt = DateTimeOffset.UtcNow };
+                    continue;
+                }
+                if (aw is not null && WindowProbe is { } probe && !probe.IsAlive(aw))   // recycled-handle / window gone
+                {
+                    _items[item.ActionId] = item with { State = CuActionState.Held,
+                        Verdict = CuVerdict.Hold("broker", "Bound window is no longer alive — re-bind + re-submit."),
+                        UpdatedAt = DateTimeOffset.UtcNow };
+                    continue;
+                }
+                // On-window with no explicit hwnd: STAMP the bound hwnd + epoch so the executor can't pick another window.
+                if (aw is not null && (CuVerbs.IsStateChanging(item.Action.Verb) || CuVerbs.IsCursorMoving(item.Action.Verb))
+                    && string.IsNullOrEmpty(item.Action.Arg("hwnd")))
+                {
+                    var stamped = new Dictionary<string, string>(item.Action.Args, StringComparer.Ordinal)
+                    {
+                        ["hwnd"] = aw.Hwnd.ToInt64().ToString(),
+                        ["epoch"] = aw.Epoch.ToString(),
+                    };
+                    deliver = item with { Action = item.Action with { Args = stamped } };
+                }
+            }
+            else
+            {
+                // Browser: re-evaluate the pinned-tab gate at delivery (operator-approved excursions pass), then stamp
+                // the live pin into a no-tabId state change so the executor cannot divert to the active tab.
+                if (!item.OperatorApproved && EvaluateExcursion(item.Action, "at delivery") is { } exV
+                    && exV.Decision != CuDecision.Allow)
+                {
+                    _items[item.ActionId] = item with { State = CuActionState.Held, Verdict = exV, UpdatedAt = DateTimeOffset.UtcNow };
+                    continue;
+                }
+                if (_attentionTab is { Length: > 0 } pin
+                    && CuVerbs.IsStateChanging(item.Action.Verb)
+                    && !string.Equals(item.Action.Verb, "navigate", StringComparison.OrdinalIgnoreCase)
+                    && string.IsNullOrEmpty(item.Action.Arg("tabId")))
+                {
+                    var stamped = new Dictionary<string, string>(item.Action.Args, StringComparer.Ordinal) { ["tabId"] = pin };
+                    deliver = item with { Action = item.Action with { Args = stamped } };
+                }
             }
 
             var executing = deliver with { State = CuActionState.Executing, UpdatedAt = DateTimeOffset.UtcNow };
@@ -317,6 +369,75 @@ public sealed class CuBroker
             return CuVerdict.Allow("broker", $"Off-focus override (operator opt-in) {when} (targets {target}): {just}");
         return ExcursionHold(target, just, AllowTabOverride ? $"{when} — override needs a justification" : when);
     }
+
+    // Modality-scoped dispatch: browser actions hit the pinned-tab gate, desktop actions the one-window gate.
+    private CuVerdict? EvaluateModalityExcursion(CuAction a, string when) =>
+        a.Modality == CuModality.Desktop ? EvaluateWindowExcursion(a, when) : EvaluateExcursion(a, when);
+
+    // ── Desktop one-window confinement (parallel to the pin; modality-scoped) ────
+
+    /// <summary>The operator-bound active CU window (desktop), or null. Switching is explicit and Epoch-bumped.</summary>
+    public CuWindowRef? ActiveWindow => _activeWindow;
+
+    /// <summary>App-supplied probe for liveness checks at delivery (recycled-handle defense); null in tests/headless.</summary>
+    public IDesktopWindowProbe? WindowProbe { get; set; }
+
+    /// <summary>Fired when the bound CU window changes (old, new) — the App announces it via the HUD + audit log.</summary>
+    public Action<CuWindowRef?, CuWindowRef?>? OnWindowSwitch { get; set; }
+
+    /// <summary>Fired when desktop cursor ownership changes (for the Shared-Monopilot cursor in a later slice).</summary>
+    public Action<CuBrokerItem, bool>? OnHandoff { get; set; }
+
+    /// <summary>Binds (or clears, with null) the single active CU window. REFUSES Foreman's own windows. Bumps the
+    /// Epoch so any action approved against a prior binding is re-held at delivery. The caller presence-gates the bind.</summary>
+    public (bool Ok, string Reason) SetActiveWindow(CuWindowRef? w)
+    {
+        if (w is not null && w.OwnerPid == Environment.ProcessId)
+            return (false, "Refused: cannot bind Foreman's own window as a CU target.");
+        var old = _activeWindow;
+        _activeWindow = w is null ? null : w with { Epoch = Interlocked.Increment(ref _windowEpoch) };
+        try { OnWindowSwitch?.Invoke(old, _activeWindow); } catch { /* best-effort announce */ }
+        return (true, w is null ? "Cleared the bound CU window." : $"Bound CU window '{w.TitleAtBind}' (pid {w.OwnerPid}).");
+    }
+
+    /// <summary>Called on a panic HALT: invalidate the desktop queue. Every non-terminal Desktop item is Rejected and
+    /// the panic epoch is bumped, so any in-flight/after Claim refuses items approved before the halt (spec Slice 1).</summary>
+    public void OnPanicHalt()
+    {
+        Interlocked.Increment(ref _panicEpoch);
+        foreach (var item in _items.Values)
+        {
+            if (item.Action.Modality != CuModality.Desktop) continue;
+            if (item.State is CuActionState.Auditing or CuActionState.Held or CuActionState.Approved or CuActionState.Executing)
+                _items[item.ActionId] = item with
+                {
+                    State = CuActionState.Rejected,
+                    Error = "Computer use was halted (panic) — re-submit.",
+                    OperatorApproved = false,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                };
+        }
+    }
+
+    // Desktop one-window gate. Gated verbs = state-changing OR cursor-moving (a move/scroll leaves confinement too).
+    // No window bound -> a gated verb is Held. Bound + the action targets a DIFFERENT hwnd -> Held (off-window). On
+    // the bound window (matching hwnd, or no explicit hwnd -> runs in it) -> null (proceeds; hwnd stamped at delivery).
+    private CuVerdict? EvaluateWindowExcursion(CuAction action, string when)
+    {
+        if (!CuVerbs.IsStateChanging(action.Verb) && !CuVerbs.IsCursorMoving(action.Verb)) return null;
+        var just = action.Arg("justification") is { Length: > 0 } j ? j : null;
+        var target = action.Arg("hwnd") is { Length: > 0 } t ? t : null;
+        var aw = _activeWindow;
+        if (aw is null)
+            return CuVerdict.Hold("broker", $"Desktop action held {when}: no CU window is bound — the operator must bind a target window first.");
+        if (!string.IsNullOrEmpty(target) && !HwndMatches(target, aw.Hwnd))
+            return CuVerdict.Hold("broker",
+                $"Off-window change held {when} (bound HWND {aw.Hwnd} '{aw.TitleAtBind}'; action targets {target})" +
+                (string.IsNullOrWhiteSpace(just) ? "." : $": {just}"));
+        return null;
+    }
+
+    private static bool HwndMatches(string? a, IntPtr b) => long.TryParse(a, out var ai) && ai == b.ToInt64();
 
     private void Prune()
     {
