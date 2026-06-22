@@ -85,6 +85,10 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — true when the LiveWeave extension has checked in recently (broker presence).</summary>
     public Func<bool>?                                        IsLiveWeaveConnected  { get; set; }
 
+    /// <summary>Injected from App — read/set the mediated computer-use (cu_*) driver harness in-process (operator).</summary>
+    public Func<string?>?                                     GetCuDriver           { get; set; }
+    public Action<string?>?                                   SetCuDriver           { get; set; }
+
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
 
@@ -744,6 +748,8 @@ public sealed class TrayController : IEventSink, IDisposable
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray(),
                 IsLiveWeaveConnected);
+            w.GetCuDriver = GetCuDriver;
+            w.SetCuDriver = SetCuDriver;
             w.Closed += (_, _) => _connectWindow = null;
             _connectWindow = w;
             w.Show();

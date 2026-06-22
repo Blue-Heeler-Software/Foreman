@@ -252,6 +252,9 @@ public partial class App : Application
         _mcpHost.State.Cu = new Foreman.Core.ComputerUse.CuBroker(
             new Foreman.Core.ComputerUse.AuditPipeline(new Foreman.Core.ComputerUse.FastPathAuditor()),
             () => panicState.IsHalted);
+        // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
+        _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
+        _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);
         var panicController = new Foreman.App.ComputerUse.PanicController(
             panicState, EventBus.Instance, _osLog, () => _osLogEnabled);
         _tray.Panic = panicController;

@@ -21,6 +21,11 @@ public partial class ConnectAgentWindow : Window
     private readonly Func<IReadOnlyCollection<string>>? _getRunningHarnessIds;   // harness ids Foreman sees running now
     private readonly Func<bool>? _isLiveWeaveConnected;   // true when the LiveWeave extension has checked in recently
 
+    /// <summary>Reads/sets the mediated computer-use (cu_*) driver harness; wired by TrayController to the
+    /// in-process CuBroker after construction. Empty/null = operator only, "*" = any harness.</summary>
+    public Func<string?>? GetCuDriver { get; set; }
+    public Action<string?>? SetCuDriver { get; set; }
+
     public ConnectAgentWindow(int port, string token, Func<IReadOnlyList<McpClientInfo>>? getClients,
                               Func<string, string>? mintToken = null, Func<string>? beginPairing = null,
                               Func<IReadOnlyCollection<string>>? getRunningHarnessIds = null,
@@ -35,6 +40,26 @@ public partial class ConnectAgentWindow : Window
         _isLiveWeaveConnected = isLiveWeaveConnected;
         InitializeComponent();
         Populate();
+        // The CU-driver callbacks are wired by the tray AFTER construction, so reflect the current driver once shown.
+        Loaded += (_, _) => RefreshCuDriver();
+    }
+
+    // Operator chooses which harness may DRIVE browser use (cu_*). Applied in-process via the CuBroker — no token.
+    private void SetCuDriverClick(object sender, RoutedEventArgs e)
+    {
+        SetCuDriver?.Invoke(CuDriverInput.Text);
+        RefreshCuDriver();
+    }
+
+    private void RefreshCuDriver()
+    {
+        if (CuDriverStatus is null) return;
+        var d = GetCuDriver?.Invoke();
+        CuDriverInput.Text = d == "*" ? "any" : (d ?? "");
+        CuDriverStatus.Text = string.IsNullOrEmpty(d)
+            ? "Current: operator only — no harness can drive browser use yet."
+            : d == "*" ? "Current: ANY connected harness may drive browser use."
+            : $"Current: '{d}' may drive browser use.";
     }
 
     // Each agent gets a scoped, per-harness token so it can only see/act on itself.

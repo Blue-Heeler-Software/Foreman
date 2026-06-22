@@ -240,6 +240,24 @@
                                    Text="Links your browser to THIS machine only — nothing leaves the box. Click Pair, then enter the shown code in the extension's Options within 2 minutes. The code never crosses the wire; the extension proves it over a loopback challenge/response." />
                         <Button Content="Pair…" Click="PairExtensionClick" HorizontalAlignment="Left"
                                 Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
+
+                        <!-- Browser-use (cu_*) driver: which harness Foreman lets DRIVE audited browser actions. Set
+                             in-process by the operator (this window IS the operator) — no token needed. -->
+                        <Border Background="#FF15181D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="10" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Browser-use driver" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,7"
+                                           Text="Which harness may submit browser-use (cu_*) actions. Blank = operator only; a harness id (e.g. claude-code, codex) = just that one; 'any' = every connected harness. Actions are still audited, held when risky, and panic-haltable." />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox x:Name="CuDriverInput" Width="200" Padding="8,5" VerticalContentAlignment="Center"
+                                             Background="{StaticResource SurfaceBrush}" Foreground="{StaticResource TextPrimaryBrush}"
+                                             BorderBrush="{StaticResource BorderBrush}" />
+                                    <Button Content="Set driver" Click="SetCuDriverClick" Margin="8,0,0,0" />
+                                </StackPanel>
+                                <TextBlock x:Name="CuDriverStatus" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 
