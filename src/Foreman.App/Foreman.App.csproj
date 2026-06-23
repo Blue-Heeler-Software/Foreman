@@ -20,6 +20,8 @@
     <ProjectReference Include="..\Foreman.EtwSidecar\Foreman.EtwSidecar.csproj" ReferenceOutputAssembly="false" />
     <!-- Same pattern for the opt-in guardian service (separate process, installed on demand). -->
     <ProjectReference Include="..\Foreman.Guardian\Foreman.Guardian.csproj" ReferenceOutputAssembly="false" />
+    <!-- Medium-IL desktop computer-use sidecar (separate process, launched on demand by DesktopCuController). -->
+    <ProjectReference Include="..\Foreman.CuSidecar\Foreman.CuSidecar.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Stage the sidecar under <app>\sidecar so ElevatedSidecarController can launch it. -->
@@ -29,6 +31,16 @@
     </ItemGroup>
     <Copy SourceFiles="@(_SidecarOutput)"
           DestinationFiles="@(_SidecarOutput->'$(OutDir)sidecar\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Stage the desktop CU sidecar under <app>\cu-sidecar so DesktopCuController can launch it. -->
+  <Target Name="CopyCuSidecar" AfterTargets="Build">
+    <ItemGroup>
+      <_CuSidecarOutput Include="$(MSBuildThisFileDirectory)..\Foreman.CuSidecar\bin\$(Configuration)\$(TargetFramework)\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_CuSidecarOutput)"
+          DestinationFiles="@(_CuSidecarOutput->'$(OutDir)cu-sidecar\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 

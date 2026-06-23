@@ -23,6 +23,7 @@ public partial class App : Application
     private static bool _ownsSingleInstance;
     private TrayController? _tray;
     private Foreman.App.ComputerUse.PanicHotkey? _panicHotkey;
+    private Foreman.App.ComputerUse.DesktopCuController? _desktopCu;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -285,6 +286,19 @@ public partial class App : Application
                 "Foreman.ComputerUse",
                 $"Panic hotkey ({Foreman.App.ComputerUse.PanicHotkey.ChordText}) could not be registered (another " +
                 "app may own it). Use the tray STOP item to halt computer use."));
+
+        // Desktop computer-use sidecar (Slice 3: integrity + identity + nonce handshake only; capture/input land in
+        // later slices). OFF by default and never reachable over MCP (INV-7) - the operator opts in via
+        // CuDesktopEnabled. When on, the App launches the medium-IL sidecar, verifies it three ways, and mirrors the
+        // panic halt into the shared flag the sidecar reads, so the same STOP that halts browser CU reaches it too.
+        if (settings.CuDesktopEnabled)
+        {
+            var cuPanicFlag = new Foreman.App.ComputerUse.CuSharedPanicFlag();
+            cuPanicFlag.SetHalted(panicState.IsHalted);
+            panicState.Changed += halted => cuPanicFlag.SetHalted(halted);
+            _desktopCu = new Foreman.App.ComputerUse.DesktopCuController();
+            _desktopCu.Start();
+        }
 
         // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a
         // forgotten one is a compile error). The ORIGINATING PROCESS section, escalation/profile display,

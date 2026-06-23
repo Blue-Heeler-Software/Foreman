@@ -43,6 +43,11 @@ public sealed class ForemanSettings
     /// mandatory to ever proceed off-focus, opt-in or not.</summary>
     public bool CuTabOverride { get; set; }
 
+    /// <summary>Opt-in: enable the medium-IL desktop computer-use sidecar (SendInput + screen capture, confined to
+    /// one bound window). OFF by default and deliberately separate from browser CU - desktop input is operator-driven
+    /// in-process only, never offered over MCP (spec INV-7). When set, the App launches and handshakes the sidecar.</summary>
+    public bool CuDesktopEnabled { get; set; }
+
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
 
