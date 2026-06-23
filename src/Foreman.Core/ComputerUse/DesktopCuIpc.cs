@@ -47,6 +47,10 @@ public static class CuHandshake
         !string.IsNullOrEmpty(presented) &&
         CryptographicOperations.FixedTimeEquals(
             Encoding.ASCII.GetBytes(Hmac(nonce, message)), Encoding.ASCII.GetBytes(presented));
+
+    /// <summary>Domain-separated message for the connection handshake, so the nonce-keyed HMAC used to prove the
+    /// sidecar holds the nonce can never be confused with the per-response MAC (which is tagged "resp|").</summary>
+    public static string HandshakeMessage(string? challenge) => "cu-handshake-v1|" + (challenge ?? string.Empty);
 }
 
 /// <summary>Shared serializer settings so the App and sidecar marshal the same bytes (string-named Kinds for
@@ -58,7 +62,9 @@ public static class CuJson
         Converters = { new JsonStringEnumConverter() },
     };
 
-    /// <summary>The canonical string an HMAC is computed over for a response (binds id+kind+payload together).</summary>
-    public static string ResponseMac(DesktopCuKind kind, string requestId, string? payloadB64) =>
-        $"{requestId}|{kind}|{payloadB64 ?? string.Empty}";
+    /// <summary>The canonical string a response HMAC is computed over. Binds id + kind + the Ok/Error DECISION bits
+    /// + payload (so a pipe peer cannot flip Ok/Error without breaking the MAC - Slice 4 trusts the Ok bit and the
+    /// self-reported result fields), and is domain-separated from the handshake MAC by the leading "resp|" tag.</summary>
+    public static string ResponseMac(DesktopCuKind kind, string requestId, bool ok, string? error, string? payloadB64) =>
+        $"resp|{requestId}|{kind}|{ok}|{error ?? string.Empty}|{payloadB64 ?? string.Empty}";
 }

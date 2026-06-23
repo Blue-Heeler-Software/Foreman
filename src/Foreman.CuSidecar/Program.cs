@@ -40,10 +40,11 @@ static int Run(string[] args)
         using var reader = new StreamReader(pipe, new UTF8Encoding(false));
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true };
 
-        // Handshake: read the App's random challenge, return HMAC(nonce, challenge). We never echo the nonce.
+        // Handshake: read the App's random challenge, return HMAC(nonce, handshake-tagged challenge). We never echo
+        // the nonce, and the handshake tag domain-separates this from per-response MACs.
         var challenge = reader.ReadLine();
         if (string.IsNullOrEmpty(challenge)) return 5;
-        try { writer.WriteLine(CuHandshake.Hmac(nonce, challenge)); }
+        try { writer.WriteLine(CuHandshake.Hmac(nonce, CuHandshake.HandshakeMessage(challenge))); }
         catch { return 5; }
 
         var parent = SafeGetProcess(parentPid);
@@ -84,9 +85,10 @@ static DesktopCuResponse Handle(DesktopCuRequest req) => req.Kind switch
             Error: "Not implemented in Slice 3 (input/capture land in Slices 4-5)."),
 };
 
-// Authenticate the reply with the session nonce so the App can reject any frame it did not get from us.
+// Authenticate the reply with the session nonce so the App can reject any frame it did not get from us. The MAC
+// binds the Ok/Error decision bits too, so a tampered frame cannot flip the result without invalidating it.
 static DesktopCuResponse Sign(DesktopCuResponse r, string nonce) =>
-    r with { Hmac = CuHandshake.Hmac(nonce, CuJson.ResponseMac(r.Kind, r.RequestId, r.PayloadB64)) };
+    r with { Hmac = CuHandshake.Hmac(nonce, CuJson.ResponseMac(r.Kind, r.RequestId, r.Ok, r.Error, r.PayloadB64)) };
 
 static string B64(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
 

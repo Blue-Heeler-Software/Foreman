@@ -53,6 +53,12 @@ internal static class SidecarIntegrity
 
     private static string? SafeVerifiedSigner(string? p) { try { return VerifiedSignerThumbprint(p); } catch { return null; } }
 
+    /// <summary>True if the running Foreman.exe carries a valid Authenticode signature (a release build). When false
+    /// (an unsigned dev build) the signer-match gate is WAIVED, so a caller that grants real authority off the back of
+    /// a verified sidecar must apply an additional safeguard (the desktop CU path holds an at-rest write/delete lock on
+    /// its sidecar binary for exactly this reason).</summary>
+    public static bool SelfIsSigned() => SafeVerifiedSigner(Environment.ProcessPath) is not null;
+
     /// <summary>Authenticode signer-cert thumbprint IF the file's embedded signature is valid (chains to a trusted root); else null.</summary>
     private static string? VerifiedSignerThumbprint(string? path)
     {

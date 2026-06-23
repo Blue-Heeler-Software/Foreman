@@ -24,6 +24,7 @@ public partial class App : Application
     private TrayController? _tray;
     private Foreman.App.ComputerUse.PanicHotkey? _panicHotkey;
     private Foreman.App.ComputerUse.DesktopCuController? _desktopCu;
+    private System.IO.FileStream? _cuSidecarPin;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -286,6 +287,12 @@ public partial class App : Application
                 "Foreman.ComputerUse",
                 $"Panic hotkey ({Foreman.App.ComputerUse.PanicHotkey.ChordText}) could not be registered (another " +
                 "app may own it). Use the tray STOP item to halt computer use."));
+
+        // Pin the desktop CU sidecar binary write/delete-locked for the app's whole lifetime so a same-user process
+        // cannot swap it AT REST. Done REGARDLESS of CuDesktopEnabled: the at-rest window is exactly when the feature
+        // is off (the file is otherwise unlocked), and on an unsigned dev build this lock - not Authenticode - is the
+        // integrity safeguard for the binary that can later be granted input authority.
+        _cuSidecarPin = Foreman.App.ComputerUse.DesktopCuController.PinBinaryAtRest();
 
         // Desktop computer-use sidecar (Slice 3: integrity + identity + nonce handshake only; capture/input land in
         // later slices). OFF by default and never reachable over MCP (INV-7) - the operator opts in via

@@ -22,15 +22,23 @@ namespace Foreman.App.ComputerUse;
 /// Trust rebuild (spec INV-6): because the sidecar is same-user / same-IL, the elevation test that guards the ETW
 /// pipe does not apply. Instead the connecting client must clear THREE gates before any frame is trusted:
 ///   1. Integrity:   the exe carries Foreman's Authenticode signature, verified under a write/delete-denying handle
-///                   held across verify -> launch (TOCTOU close), and re-verified against the connected image.
-///   2. Identity:    the pipe's client PID equals the PID we launched, its parent is us, and its image is that exe.
-///   3. Knowledge:   challenge-response - we send a random challenge, it returns HMAC(nonce, challenge). A nonce
-///                   scraped from our command line is useless on a new connection because gate 2 pins the PID.
+///                   held across verify -> launch, and re-verified against the connected image. On UNSIGNED dev
+///                   builds the signer match is waived (no trust anchor exists), so the binary is additionally held
+///                   write/delete-locked AT REST for the whole app lifetime (<see cref="PinBinaryAtRest"/>) to stop a
+///                   same-user swap while the (off-by-default) feature is disabled.
+///   2. Identity:    the pipe's client PID equals the PID we launched, its parent is Foreman, and its kernel image
+///                   path (QueryFullProcessImageName, not the flaky module list) is that exe.
+///   3. Knowledge:   challenge-response - we send a random challenge, it returns HMAC(nonce, handshake-tagged
+///                   challenge). A nonce scraped from our command line is useless on a new connection because gate 2
+///                   pins the PID.
 /// Off by default; the App starts it only when <c>CuDesktopEnabled</c> is set. Slice 3 is capture-free / input-free.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class DesktopCuController : IDisposable
 {
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+
     private readonly object _gate = new();
     private CancellationTokenSource? _cts;
     private NamedPipeServerStream? _pipe;
@@ -45,6 +53,28 @@ public sealed class DesktopCuController : IDisposable
 
     /// <summary>Raised High when a process tried to impersonate the sidecar or the integrity check failed.</summary>
     public Action<ForemanSeverity, string>? OnSecurityNotice { get; set; }
+
+    /// <summary>The staged sidecar path (under the app dir, beside Foreman's own binaries).</summary>
+    public static string SidecarPath() => Path.Combine(AppContext.BaseDirectory, "cu-sidecar", "Foreman.CuSidecar.exe");
+
+    /// <summary>
+    /// Hold a write/delete-denying handle on the staged sidecar for the App's WHOLE lifetime so a same-user process
+    /// cannot swap it AT REST. This is the primary integrity safeguard on unsigned/dev builds (where
+    /// <see cref="SidecarIntegrity"/> waives the signer match): without it the sidecar exe sits unlocked whenever the
+    /// off-by-default feature is disabled, and a swapped-in binary would be launched and pass all three handshake
+    /// gates (it would be the PID we launched, parented to us, and the nonce rides its own argv). On signed builds it
+    /// is defense-in-depth. The App calls this ONCE at startup regardless of CuDesktopEnabled and holds the handle
+    /// until exit. Returns null if the sidecar is not installed (or already locked by a prior instance).
+    /// </summary>
+    public static FileStream? PinBinaryAtRest()
+    {
+        try
+        {
+            var exe = SidecarPath();
+            return File.Exists(exe) ? new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read) : null;
+        }
+        catch { return null; }
+    }
 
     public void Start()
     {
@@ -77,11 +107,13 @@ public sealed class DesktopCuController : IDisposable
         var pipeName = "foreman-cu-" + Guid.NewGuid().ToString("N");
         _nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
-        // Hold a write/delete-denying handle on the exe across verify -> launch so it cannot be swapped under us.
+        // A short-lived write/delete lock across verify -> launch (the at-rest lock the App also holds for life is the
+        // primary defense; this one closes the verify->launch window precisely).
         FileStream? exeLock = null;
+        Process? child = null;
         try
         {
-            var exe = Path.Combine(AppContext.BaseDirectory, "cu-sidecar", "Foreman.CuSidecar.exe");
+            var exe = SidecarPath();
             if (!File.Exists(exe)) { Notice(ForemanSeverity.Low, "Desktop CU sidecar is not installed."); return; }
 
             try { exeLock = new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read); }
@@ -94,34 +126,60 @@ public sealed class DesktopCuController : IDisposable
                     $"Refused to launch the desktop CU sidecar - {reason} The binary may have been tampered with.");
                 return;
             }
+            if (!SidecarIntegrity.SelfIsSigned())
+                Notice(ForemanSeverity.Low,
+                    "Desktop CU sidecar Authenticode is NOT enforced on this unsigned (dev) build - the at-rest binary " +
+                    "lock is the active integrity safeguard. Use a signed build for the full guarantee.");
 
             using var server = CreateOwnerOnlyDuplexPipe(pipeName);
             _pipe = server;
 
-            var child = LaunchSidecar(exe, pipeName, _nonce);
+            child = LaunchSidecar(exe, pipeName, _nonce);
             if (child is null) { Notice(ForemanSeverity.Low, "Desktop CU sidecar failed to start."); return; }
 
-            await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
+            // Bound the wait: a sidecar launched then immediately SUSPENDED by a hostile same-user process must not
+            // wedge us forever holding exeLock + the sole pipe instance.
+            using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                connectCts.CancelAfter(ConnectTimeout);
+                try { await server.WaitForConnectionAsync(connectCts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    Notice(ForemanSeverity.Low, "Desktop CU sidecar did not connect in time - abandoning launch.");
+                    return;
+                }
+            }
 
             if (!VerifyClientIdentity(server, child, exe, out var idReason))
             {
                 Notice(ForemanSeverity.High, $"Rejected a process impersonating the desktop CU sidecar ({idReason}).");
-                try { child.Kill(); } catch { }
                 return;
             }
 
             var reader = new StreamReader(server, new UTF8Encoding(false));
             var writer = new StreamWriter(server, new UTF8Encoding(false)) { AutoFlush = true };
 
-            // Challenge-response: prove the client holds the nonce without it ever crossing the wire.
+            // Challenge-response: prove the client holds the nonce without it ever crossing the wire (domain-tagged),
+            // under a deadline so a suspended peer can't stall the handshake forever.
             var challenge = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-            await writer.WriteLineAsync(challenge.AsMemory(), ct).ConfigureAwait(false);
-            var presented = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-            if (!CuHandshake.Verify(_nonce, challenge, presented))
+            using (var hsCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                Notice(ForemanSeverity.High, "Desktop CU sidecar failed the nonce challenge-response - dropped.");
-                try { child.Kill(); } catch { }
-                return;
+                hsCts.CancelAfter(RequestTimeout);
+                try
+                {
+                    await writer.WriteLineAsync(challenge.AsMemory(), hsCts.Token).ConfigureAwait(false);
+                    var presented = await reader.ReadLineAsync(hsCts.Token).ConfigureAwait(false);
+                    if (!CuHandshake.Verify(_nonce, CuHandshake.HandshakeMessage(challenge), presented))
+                    {
+                        Notice(ForemanSeverity.High, "Desktop CU sidecar failed the nonce challenge-response - dropped.");
+                        return;
+                    }
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    Notice(ForemanSeverity.Low, "Desktop CU sidecar did not complete the handshake in time - dropped.");
+                    return;
+                }
             }
 
             _reader = reader;
@@ -137,7 +195,7 @@ public sealed class DesktopCuController : IDisposable
             {
                 await Task.Delay(2000, ct).ConfigureAwait(false);
                 var beat = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.Heartbeat), ct).ConfigureAwait(false);
-                if (beat is not { Ok: true }) break;   // sidecar gone / unauthenticated
+                if (beat is not { Ok: true }) break;   // sidecar gone / unauthenticated / timed out
             }
         }
         catch (OperationCanceledException) { }
@@ -145,12 +203,16 @@ public sealed class DesktopCuController : IDisposable
         finally
         {
             _connected = false;
+            // Reap the child on ANY exit (cancel, timeout, reject, pipe break, normal stop). Its parent (the App) is
+            // still alive, so it would NOT self-exit on parent death - it would orphan as a stranded medium-IL process.
+            try { if (child is { HasExited: false }) child.Kill(); } catch { }
+            try { child?.Dispose(); } catch { }
             try { exeLock?.Dispose(); } catch { }
             lock (_gate) { if (ReferenceEquals(_cts, cts)) IsRunning = false; }
         }
     }
 
-    /// <summary>Send one request and return the sidecar's authenticated response (null on any failure).</summary>
+    /// <summary>Send one request and return the sidecar's authenticated response (null on any failure or timeout).</summary>
     public async Task<DesktopCuResponse?> SendAsync(DesktopCuRequest req, CancellationToken ct = default)
     {
         var reader = _reader;
@@ -158,29 +220,35 @@ public sealed class DesktopCuController : IDisposable
         if (reader is null || writer is null) return null;
 
         await _io.WaitAsync(ct).ConfigureAwait(false);
+        // Per-request deadline so a wedged/suspended peer cannot pin the single _io permit (and every later control
+        // frame) forever. On any failure we mark the channel dead so IsConnected stops lying.
+        using var opCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        opCts.CancelAfter(RequestTimeout);
         try
         {
-            await writer.WriteLineAsync(JsonSerializer.Serialize(req, CuJson.Options).AsMemory(), ct).ConfigureAwait(false);
-            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-            if (line is null) return null;
+            await writer.WriteLineAsync(JsonSerializer.Serialize(req, CuJson.Options).AsMemory(), opCts.Token).ConfigureAwait(false);
+            var line = await reader.ReadLineAsync(opCts.Token).ConfigureAwait(false);
+            if (line is null) { _connected = false; return null; }
 
             var resp = JsonSerializer.Deserialize<DesktopCuResponse>(line, CuJson.Options);
-            if (resp is null) return null;
+            if (resp is null) { _connected = false; return null; }
 
-            // INV-5: authenticate the return channel - a frame whose HMAC does not verify is not from our sidecar.
-            var expectMac = CuJson.ResponseMac(resp.Kind, resp.RequestId, resp.PayloadB64);
+            // INV-5: authenticate the return channel - a frame whose HMAC does not verify (over id+kind+Ok+Error+
+            // payload) is not from our sidecar.
+            var expectMac = CuJson.ResponseMac(resp.Kind, resp.RequestId, resp.Ok, resp.Error, resp.PayloadB64);
             if (resp.RequestId != req.RequestId || !CuHandshake.Verify(_nonce, expectMac, resp.Hmac))
             {
                 Notice(ForemanSeverity.High, "Discarded an unauthenticated desktop CU response frame.");
+                _connected = false;
                 return null;
             }
             return resp;
         }
-        catch { return null; }
+        catch { _connected = false; return null; }   // timeout / pipe break / cancel -> the channel is dead
         finally { _io.Release(); }
     }
 
-    // Identity gate (INV-6 #2): the connected client must BE the child we launched, parented to us, from our exe.
+    // Identity gate (INV-6 #2): the connected client must BE the child we launched, parented to Foreman, from our exe.
     private bool VerifyClientIdentity(NamedPipeServerStream server, Process child, string exe, out string reason)
     {
         reason = string.Empty;
@@ -189,18 +257,27 @@ public sealed class DesktopCuController : IDisposable
 
         if ((int)clientPid != child.Id) { reason = $"client PID {clientPid} != launched {child.Id}"; return false; }
 
+        var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, clientPid);
+        if (h == IntPtr.Zero) { reason = "could not open client process"; return false; }
         try
         {
-            using var p = Process.GetProcessById((int)clientPid);
-            var img = p.MainModule?.FileName;
-            if (string.IsNullOrEmpty(img) || !string.Equals(Path.GetFullPath(img), Path.GetFullPath(exe), StringComparison.OrdinalIgnoreCase))
+            // Image path from the kernel (QueryFullProcessImageName) - NOT Process.MainModule, which can throw/return
+            // null across bitness, during fast startup, or under AV contention and would fail-close a genuine sidecar.
+            var img = QueryImagePath(h);
+            if (string.IsNullOrEmpty(img) ||
+                !string.Equals(Path.GetFullPath(img), Path.GetFullPath(exe), StringComparison.OrdinalIgnoreCase))
             { reason = "client image is not the verified sidecar"; return false; }
+
+            // Parent must be Foreman (spec INV-6) - defense in depth behind the PID pin.
+            if (!TryGetParentPid(h, out var ppid) || ppid != Environment.ProcessId)
+            { reason = $"client parent {ppid} != Foreman {Environment.ProcessId}"; return false; }
 
             // Re-verify the running image's backing file (belt-and-suspenders against a swap between launch and connect).
             var (trusted, why) = SidecarIntegrity.Verify(img);
             if (!trusted) { reason = $"connected image failed integrity: {why}"; return false; }
         }
         catch (Exception ex) { reason = "could not inspect client image: " + ex.Message; return false; }
+        finally { CloseHandle(h); }
 
         return true;
     }
@@ -250,9 +327,54 @@ public sealed class DesktopCuController : IDisposable
 
     private static string NewId() => Guid.NewGuid().ToString("N");
 
+    private static string? QueryImagePath(IntPtr hProcess)
+    {
+        var sb = new StringBuilder(1024);
+        var size = sb.Capacity;
+        return QueryFullProcessImageName(hProcess, 0, sb, ref size) ? sb.ToString() : null;
+    }
+
+    private static bool TryGetParentPid(IntPtr hProcess, out int parentPid)
+    {
+        parentPid = 0;
+        var pbi = default(PROCESS_BASIC_INFORMATION);
+        if (NtQueryInformationProcess(hProcess, 0, ref pbi, Marshal.SizeOf<PROCESS_BASIC_INFORMATION>(), out _) != 0)
+            return false;
+        parentPid = (int)pbi.InheritedFromUniqueProcessId.ToUInt64();
+        return true;
+    }
+
+    private const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeClientProcessId(IntPtr pipe, out uint clientProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(int access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(IntPtr hProcess, int flags, StringBuilder exeName, ref int size);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_BASIC_INFORMATION
+    {
+        public IntPtr ExitStatus;
+        public IntPtr PebBaseAddress;
+        public IntPtr AffinityMask;
+        public IntPtr BasePriority;
+        public UIntPtr UniqueProcessId;
+        public UIntPtr InheritedFromUniqueProcessId;
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(
+        IntPtr handle, int infoClass, ref PROCESS_BASIC_INFORMATION pbi, int size, out int returnLength);
 
     public void Dispose() { Stop(); _io.Dispose(); }
 }

@@ -54,15 +54,29 @@ public sealed class CuHandshakeTests
     }
 
     [Fact]
-    public void ResponseMac_BindsIdKindAndPayload()
+    public void ResponseMac_BindsIdKindOkErrorAndPayload()
     {
-        // Two responses that differ only in payload must produce different MAC material, so an attacker cannot
-        // lift the HMAC from one frame onto another.
-        var m1 = CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-1", "AAAA");
-        var m2 = CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-1", "BBBB");
-        var m3 = CuJson.ResponseMac(DesktopCuKind.Heartbeat,     "req-1", "AAAA");
-        Assert.NotEqual(m1, m2);
-        Assert.NotEqual(m1, m3);
+        // Responses that differ in ANY authenticated field must produce different MAC material, so a pipe peer
+        // cannot lift the HMAC from one frame onto another or flip the Ok/Error decision bits (Slice 4 trusts Ok).
+        var baseMac = CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-1", ok: true, error: null, payloadB64: "AAAA");
+        Assert.NotEqual(baseMac, CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-1", true, null, "BBBB"));   // payload
+        Assert.NotEqual(baseMac, CuJson.ResponseMac(DesktopCuKind.Heartbeat,     "req-1", true, null, "AAAA"));   // kind
+        Assert.NotEqual(baseMac, CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-2", true, null, "AAAA"));   // id
+        Assert.NotEqual(baseMac, CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-1", false, null, "AAAA"));  // Ok flip
+        Assert.NotEqual(baseMac, CuJson.ResponseMac(DesktopCuKind.ExecuteAction, "req-1", true, "boom", "AAAA")); // Error inject
+    }
+
+    [Fact]
+    public void HandshakeMac_IsDomainSeparatedFromResponseMac()
+    {
+        // The same nonce keys both the handshake proof and per-response MACs; the domain tags must keep them from
+        // ever colliding, so a captured handshake reply can't be replayed as a response MAC (or vice versa).
+        const string nonce = "shared-nonce";
+        var challenge = "deadbeef";
+        var handshake = CuHandshake.Hmac(nonce, CuHandshake.HandshakeMessage(challenge));
+        var asResponse = CuHandshake.Hmac(nonce, CuJson.ResponseMac(DesktopCuKind.Hello, challenge, true, null, null));
+        Assert.NotEqual(handshake, asResponse);
+        Assert.StartsWith("cu-handshake-v1|", CuHandshake.HandshakeMessage(challenge));
     }
 
     [Fact]
