@@ -15,6 +15,17 @@ public static class CuHeuristics
         @"^\s*(?:javascript|data|vbscript|file)\s*:",
         RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(50));
 
+    // Desktop (Slice 2): a resolved control label that commits something irreversible/consequential -> Hold for the
+    // operator. Deliberately broad; an over-Hold is safe (operator clears it), an under-Hold lets the AI commit.
+    private static readonly Regex SensitiveControl = new(
+        @"\b(confirm|send|delete|transfer|allow|yes|run\s*anyway|save\s*as|pay|approve|grant|install|uninstall|purchase|buy)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(50));
+
+    // Consent / credential / file surfaces a #32770 dialog hosts that the OPERATOR must drive, never the AI -> Block.
+    private static readonly Regex ConsentText = new(
+        @"(save\s*as|\bopen\b|credential|password|sign\s*in|user\s*name|consent|run\s*as\s*admin)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(50));
+
     public static CuVerdict? Evaluate(CuAction a)
     {
         // An AI typing into a password / credential field is a prohibited action — hold for the operator to do it.
@@ -39,7 +50,43 @@ public static class CuHeuristics
             catch (RegexMatchTimeoutException) { /* treat as no match */ }
         }
 
+        // Desktop (Slice 2 / INV-1): judge the RESOLVED target, never a bare coordinate. An unidentifiable or
+        // sensitive/consent target can never auto-Allow. Applies to state-changing verbs (a read/move is a peek).
+        if (a.Modality == CuModality.Desktop && CuVerbs.IsStateChanging(a.Verb))
+        {
+            var label = a.Arg("targetLabel");
+
+            // UAC / a #32770 dialog hosting Save/Open/credential text -> the operator must do this -> hard Block.
+            if (IsConsentSurface(a.Arg("windowClass"), a.Arg("windowTitle")))
+                return CuVerdict.Block(Src,
+                    $"desktop action targets a consent/credential surface ('{Trim(a.Arg("windowTitle"))}') — the operator must do this, not the AI");
+
+            // A sensitive/consequential control label -> Hold for the operator.
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(label) && SensitiveControl.IsMatch(label))
+                    return CuVerdict.Hold(Src, $"desktop action targets a sensitive control: '{Trim(label)}'");
+            }
+            catch (RegexMatchTimeoutException) { /* fall through */ }
+
+            // No resolved target -> Foreman cannot identify what is being acted on -> Hold (never auto-Allow).
+            if (string.IsNullOrWhiteSpace(label))
+                return CuVerdict.Hold(Src,
+                    "desktop action has no resolved target — cannot identify the control; held for operator review");
+        }
+
         return null;
+    }
+
+    private static bool IsConsentSurface(string windowClass, string windowTitle)
+    {
+        if (windowTitle.Contains("User Account Control", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(windowClass, "#32770", StringComparison.OrdinalIgnoreCase))
+        {
+            try { return ConsentText.IsMatch(windowTitle); }
+            catch (RegexMatchTimeoutException) { return true; }   // fail closed: unparseable title -> treat as consent
+        }
+        return false;
     }
 
     private static string Trim(string s) => s.Length <= 80 ? s : s[..80] + "…";

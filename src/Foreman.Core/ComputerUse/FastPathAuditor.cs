@@ -40,10 +40,13 @@ public sealed class FastPathAuditor : IAuditor
         return best ?? CuVerdict.Allow(Src);
     }
 
-    /// <summary>Project the structured action to a single line the command pattern library can match (URL + typed
-    /// text + selector + key). No synthetic prefix, so the projection can't itself trip a command rule.</summary>
+    /// <summary>Project the structured action to a single line the command pattern library can match. Includes the
+    /// resolved DESKTOP target (label + role + window title) so a coordinate-only click is no longer projected to an
+    /// empty string (the review's empty-projection bug) — the library + heuristics judge what is being clicked, not
+    /// "". No synthetic prefix, so the projection can't itself trip a command rule.</summary>
     public static string Project(CuAction a) =>
-        $"{a.Arg("url")} {a.Arg("text")} {a.Arg("selector")} {a.Arg("key")}".Trim();
+        ($"{a.Arg("url")} {a.Arg("text")} {a.Arg("selector")} {a.Arg("key")} " +
+         $"{a.Arg("targetLabel")} {a.Arg("targetRole")} {a.Arg("windowTitle")}").Trim();
 
     private static string Trim(string s) => s.Length <= 120 ? s : s[..120] + "…";
 }

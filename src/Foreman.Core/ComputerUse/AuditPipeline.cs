@@ -48,7 +48,10 @@ public sealed class AuditPipeline : IAuditor
 
         // Token economy: sample the (paid) deep judge per the operator's cadence. Skipping leaves the fast-path
         // verdict standing (a Hold stays a Hold; a low-confidence Allow proceeds) — it never clears a Block.
-        if (!_cadence.ShouldReview(fast, Interlocked.Increment(ref _reviewable)))
+        // DESKTOP CU never sample-skips a risky target (Slice 2 / Medium #7): only confirmed read-only no-ops may be
+        // skipped, and those already returned above. Browser ambiguous actions still sample per the operator cadence.
+        if (action.Modality != CuModality.Desktop
+            && !_cadence.ShouldReview(fast, Interlocked.Increment(ref _reviewable)))
             return fast;
 
         try

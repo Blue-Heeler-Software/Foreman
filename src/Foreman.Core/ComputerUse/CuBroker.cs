@@ -71,6 +71,13 @@ public sealed class CuBroker
     private long _windowEpoch;
     private long _panicEpoch;
 
+    // Per-harness action rate limit (token bucket): a burst faster than a human could plausibly pilot is Held, not
+    // run (Slice 2 -- approval-fatigue + auditor-flood defense). The operator's own manual actions are exempt.
+    private readonly object _rateLock = new();
+    private readonly Dictionary<string, (double Tokens, long Ticks)> _rate = new();
+    private const double RateBurst = 12;
+    private const double RatePerSecond = 6;
+
     public CuBroker(IAuditor auditor, Func<bool>? isHalted = null)
     {
         _auditor = auditor ?? throw new ArgumentNullException(nameof(auditor));
@@ -92,6 +99,20 @@ public sealed class CuBroker
                 Error: "Computer use is halted.", UpdatedAt: DateTimeOffset.UtcNow);
             _items[id] = halted;
             return halted;
+        }
+
+        // Rate limit (Slice 2): a non-operator harness flooding actions faster than a human could pilot is Held
+        // without even auditing -- defeats approval-fatigue + auditor-flood. The operator's manual actions are exempt.
+        if (!string.Equals(action.ByHarness, OperatorMarker, StringComparison.OrdinalIgnoreCase)
+            && !RateLimitOk(action.ByHarness ?? "?"))
+        {
+            var throttled = new CuBrokerItem(id, action, CuActionState.Held,
+                CuVerdict.Hold("broker", "action rate exceeds plausible pilot speed — held for operator"),
+                DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
+                BoundEpoch: action.Modality == CuModality.Desktop ? _activeWindow?.Epoch : null,
+                PanicEpoch: Interlocked.Read(ref _panicEpoch));
+            _items[id] = throttled;
+            return throttled;
         }
 
         _items[id] = new CuBrokerItem(id, action, CuActionState.Auditing, null, DateTimeOffset.UtcNow);
@@ -438,6 +459,22 @@ public sealed class CuBroker
     }
 
     private static bool HwndMatches(string? a, IntPtr b) => long.TryParse(a, out var ai) && ai == b.ToInt64();
+
+    // Token-bucket rate limit per harness: refill RatePerSecond up to RateBurst; consume 1 per submit. Empty -> false
+    // (the submit is Held). Locked because submit is not a hot path and correctness beats lock-free here.
+    private bool RateLimitOk(string harness)
+    {
+        lock (_rateLock)
+        {
+            var now = DateTimeOffset.UtcNow.Ticks;
+            if (!_rate.TryGetValue(harness, out var cur)) { _rate[harness] = (RateBurst - 1, now); return true; }
+            var elapsedSec = (now - cur.Ticks) / (double)TimeSpan.TicksPerSecond;
+            var tokens = Math.Min(RateBurst, cur.Tokens + elapsedSec * RatePerSecond);
+            if (tokens >= 1) { _rate[harness] = (tokens - 1, now); return true; }
+            _rate[harness] = (tokens, now);
+            return false;
+        }
+    }
 
     private void Prune()
     {
