@@ -366,13 +366,11 @@ public sealed class DesktopCuController : IDisposable
             var snap = JsonSerializer.Deserialize<PanicSnapshot>(
                 Encoding.UTF8.GetString(Convert.FromBase64String(resp.PayloadB64)), CuJson.Options);
             if (snap is null || PanicFlag is null) return;
-            var appPanic = PanicFlag.IsHalted ? 1 : 0;
-            var appHwnd = PanicFlag.BoundHwnd;
-            var appEpoch = PanicFlag.Epoch;
-            if (snap.Panic != appPanic || snap.BoundHwnd != appHwnd || snap.Epoch != appEpoch)
+            var app = PanicFlag.Snapshot();   // one consistent App tuple (no self-tear across three getters)
+            if (snap.Panic != app.Panic || snap.BoundHwnd != app.BoundHwnd || snap.Epoch != app.Epoch)
                 Notice(ForemanSeverity.Low,
                     $"Desktop CU sidecar {phase} snapshot (panic={snap.Panic},hwnd={snap.BoundHwnd},epoch={snap.Epoch}) " +
-                    $"differs from the App's (panic={appPanic},hwnd={appHwnd},epoch={appEpoch}) - may be read timing. " +
+                    $"differs from the App's (panic={app.Panic},hwnd={app.BoundHwnd},epoch={app.Epoch}) - may be read timing. " +
                     "Note: this self-report is NOT trusted as verification; Slice 4b verifies independently (INV-5) + enforces with epochs.");
         }
         catch { /* a bad snapshot frame is not itself a security event in Slice 4a */ }

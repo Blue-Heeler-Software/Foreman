@@ -20,10 +20,11 @@ namespace Foreman.App.ComputerUse;
 /// and not fixable by a memory map. INV-3's HARD floor is therefore the App-side TerminateProcess(sidecar) + BlockInput
 /// (Slice 4b), which does NOT depend on this byte; this map is the fast in-sidecar abort, not the floor.
 ///
-/// Layout (little-endian): [0]=panic byte, [8]=bound HWND (long), [16]=epoch (long). Each writer commits the field(s)
-/// then a release barrier then the epoch LAST, so a reader's seqlock (epoch read-fields-read, retry on mismatch) gets
-/// a tear-free snapshot. The canary records the App's expected panic/hwnd/epoch and flags ANY divergence. The App
-/// mirrors <c>CuPanicState.Changed</c> into this.
+/// Layout (little-endian): [0]=panic byte, [8]=bound HWND (long), [16]=epoch/version (long). A TRUE seqlock: the
+/// writer publishes an ODD version, fences, writes the field(s), fences, publishes the next EVEN version; a reader
+/// rejects an odd version and retries if the version changes across its read - so it can never pair new field data
+/// with a stale version. Published versions are always even and monotonic. The canary records the App's expected
+/// panic/hwnd/epoch and flags ANY divergence. The App mirrors <c>CuPanicState.Changed</c> into this.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
@@ -51,18 +52,27 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
         _view.Write(OffEpoch, 0L);   // Flush is unnecessary for a memory-backed map (shared pages are coherent)
     }
 
+    // The App is the only writer and always reads under _lock (serialized with its own writes), so its own getters
+    // never observe a mid-write odd version; the cross-process sidecar uses the seqlock retry instead.
     public bool IsHalted { get { lock (_lock) return _view.ReadByte(OffPanic) != 0; } }
     public long BoundHwnd { get { lock (_lock) return _view.ReadInt64(OffHwnd); } }
     public long Epoch { get { lock (_lock) return _view.ReadInt64(OffEpoch); } }
+
+    /// <summary>One consistent App-side {panic, hwnd, epoch} tuple under a single lock - so the cross-check compares a
+    /// coherent App snapshot to the sidecar's coherent seqlock snapshot (no self-tear from three separate getters).</summary>
+    public PanicSnapshot Snapshot()
+    {
+        lock (_lock) return new PanicSnapshot(_view.ReadByte(OffPanic), _view.ReadInt64(OffHwnd), _view.ReadInt64(OffEpoch));
+    }
 
     public void SetHalted(bool halted)
     {
         lock (_lock)
         {
             var b = (byte)(halted ? 1 : 0);
+            BeginWrite();
             _view.Write(OffPanic, b);
-            Thread.MemoryBarrier();             // release: the field commits before the epoch that publishes it
-            _view.Write(OffEpoch, ++_epoch);    // epoch LAST (seqlock)
+            EndWrite();
             _expectedPanic = b; _expectedEpoch = _epoch;
         }
     }
@@ -71,11 +81,28 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
     {
         lock (_lock)
         {
+            BeginWrite();
             _view.Write(OffHwnd, hwnd);
-            Thread.MemoryBarrier();             // release: the field commits before the epoch that publishes it
-            _view.Write(OffEpoch, ++_epoch);    // epoch LAST
+            EndWrite();
             _expectedHwnd = hwnd; _expectedEpoch = _epoch;
         }
+    }
+
+    // True seqlock writer: publish an ODD in-progress version, fence, write the field(s), fence, publish the next EVEN
+    // version. A cross-process reader rejects an odd version and any version change across its read, so it can never
+    // pair new field data with a stale version (the trailing-only-epoch hole the re-review found). Published versions
+    // are therefore always even and monotonically increasing.
+    private void BeginWrite()
+    {
+        _view.Write(OffEpoch, _epoch + 1);   // odd = write in progress
+        Thread.MemoryBarrier();
+    }
+
+    private void EndWrite()
+    {
+        Thread.MemoryBarrier();
+        _epoch += 2;                          // back to even = published
+        _view.Write(OffEpoch, _epoch);
     }
 
     /// <summary>

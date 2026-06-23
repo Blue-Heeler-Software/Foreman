@@ -109,14 +109,17 @@ static IntPtr MapPanicView(long handle, int capacity)
 
 // Seqlock read: the App writes the epoch LAST, so reading epoch -> fields -> epoch and retrying on a mismatch yields a
 // consistent {panic, boundHwnd, epoch} even under a concurrent write. Aligned 8-byte reads are atomic on x64.
+// Read the shared panic/bind state through the App's TRUE seqlock (odd version = write in progress). FAIL CLOSED: an
+// unmapped view, an in-progress write that never settles, or a torn read all report HALTED (panic=1) stamped with an
+// OUT-OF-BAND version (long.MinValue, which a valid even seqlock version can never be) so the Slice-4b gate refuses to
+// inject AND can tell "could not read" from a real map value (a planted -1 no longer mimics the failure signal).
 static PanicSnapshot ReadPanic(IntPtr view)
 {
-    // Fail CLOSED everywhere: an unmapped view or a read that never stabilises reports HALTED (panic=1, epoch=-1) so
-    // the Slice 4b input gate refuses to inject when it cannot trust the panic/bind state.
-    if (view == IntPtr.Zero) return new PanicSnapshot(1, 0, -1);
-    for (var attempt = 0; attempt < 8; attempt++)
+    if (view == IntPtr.Zero) return new PanicSnapshot(1, 0, long.MinValue);
+    for (var attempt = 0; attempt < 16; attempt++)
     {
         var e1 = Marshal.ReadInt64(view, 16);
+        if ((e1 & 1L) != 0) continue;            // odd = write in progress, retry
         Thread.MemoryBarrier();
         var panic = Marshal.ReadByte(view, 0);
         var hwnd = Marshal.ReadInt64(view, 8);
@@ -124,7 +127,7 @@ static PanicSnapshot ReadPanic(IntPtr view)
         var e2 = Marshal.ReadInt64(view, 16);
         if (e1 == e2) return new PanicSnapshot(panic, hwnd, e2);
     }
-    return new PanicSnapshot(1, 0, -1);   // persistent contention -> treat as halted, never hand back a torn snapshot
+    return new PanicSnapshot(1, 0, long.MinValue);   // contention/torn -> halted, never a torn snapshot
 }
 
 // Authenticate the reply with the session nonce so the App can reject any frame it did not get from us. The MAC binds
