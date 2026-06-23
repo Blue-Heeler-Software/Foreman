@@ -59,6 +59,15 @@ public sealed class CuToolsTests
     }
 
     [Fact]
+    public async Task CuSubmit_DesktopOverMcp_Rejected()
+    {
+        // Desktop CU is operator-driven in-process only (INV-7 / Codex review #2) — never over MCP.
+        StateWith(CuVerdict.Allow("test"));
+        using var doc = Json(await ForemanMcpTools.CuSubmit("desktop", "click", "{}"));
+        Assert.False(doc.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
     public async Task CuSubmit_Hold_OperatorApprove_PollExecute_Complete()
     {
         StateWith(CuVerdict.Hold("test", "uncertain"));
@@ -146,10 +155,11 @@ public sealed class CuToolsTests
     [Fact]
     public async Task CuSetDriver_GatesWhoMaySubmit()
     {
-        StateWith(CuVerdict.Allow("test"));   // desktop modality skips the browser-use policy, isolating the driver gate
+        StateWith(CuVerdict.Allow("test"));   // browser (desktop is MCP-rejected now); default browser policy = Allow,
+                                              // so this isolates the DRIVER gate.
 
         // Default: no driver -> a harness cannot submit (operator-only).
-        using var noDrv = Json(await ForemanMcpTools.CuSubmit("desktop", "move", "{}", AsHarness("codex")));
+        using var noDrv = Json(await ForemanMcpTools.CuSubmit("browser", "read", "{}", AsHarness("codex")));
         Assert.False(noDrv.RootElement.GetProperty("accepted").GetBoolean());
 
         // Operator designates codex as the driver.
@@ -157,12 +167,12 @@ public sealed class CuToolsTests
         Assert.True(set.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("codex", set.RootElement.GetProperty("driver").GetString());
 
-        // codex may now submit…
-        using var codexOk = Json(await ForemanMcpTools.CuSubmit("desktop", "move", "{}", AsHarness("codex")));
+        // codex may now submit...
+        using var codexOk = Json(await ForemanMcpTools.CuSubmit("browser", "read", "{}", AsHarness("codex")));
         Assert.True(codexOk.RootElement.GetProperty("accepted").GetBoolean());
 
-        // …a different harness still may not.
-        using var claudeNo = Json(await ForemanMcpTools.CuSubmit("desktop", "move", "{}", AsHarness("claude-code")));
+        // ...a different harness still may not.
+        using var claudeNo = Json(await ForemanMcpTools.CuSubmit("browser", "read", "{}", AsHarness("claude-code")));
         Assert.False(claudeNo.RootElement.GetProperty("accepted").GetBoolean());
     }
 

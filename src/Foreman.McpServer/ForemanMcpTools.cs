@@ -1331,6 +1331,12 @@ public static class ForemanMcpTools
         if (!Enum.TryParse<Foreman.Core.ComputerUse.CuModality>(modality?.Trim(), ignoreCase: true, out var mod))
             return new { accepted = false, reason = "modality must be 'browser' or 'desktop'." };
 
+        // Desktop CU is OPERATOR-DRIVEN IN-PROCESS ONLY (spec INV-7, Codex review #2): never over MCP. A harness
+        // cannot submit or drain desktop actions through this tool, and a "*" driver never extends to desktop. The
+        // App's in-process desktop pump is the only path that submits Desktop actions to the broker.
+        if (mod == Foreman.Core.ComputerUse.CuModality.Desktop)
+            return new { accepted = false, reason = "Desktop computer-use is operator-driven in-process only — not available over MCP." };
+
         var who = caller.IsOperator ? "operator" : caller.HarnessId;
 
         // Browser actions also honour the per-harness browser-use capability policy (Allow/AskFirst/Block).
