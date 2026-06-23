@@ -31,6 +31,16 @@ public sealed record ExecuteActionArgs(string ActionId, string Verb, IReadOnlyDi
 public sealed record ExecuteActionResult(bool Ok, string? Error = null,
     long FinalHwnd = 0, int CursorX = 0, int CursorY = 0, bool HaltedMidStream = false);
 
+/// <summary>Hello payload (App -> sidecar): hands the sidecar the read-only DUPLICATED handle of the shared panic/bind
+/// memory map (valid in the SIDECAR's handle table) so it can map and read panic/boundHwnd itself before every input
+/// (INV-2/INV-3) - never trusting either from the pipe payload alone. The map is unnamed, so no other same-user
+/// process can open it; the sidecar's handle is read-only, so it cannot forge the halt or move the bound window.</summary>
+public sealed record HelloArgs(long PanicMapHandle, int MapCapacity);
+
+/// <summary>What the sidecar reports it actually read from the shared MMF (in Hello/Heartbeat results), so the App can
+/// confirm the sidecar sees the SAME panic/bind state the App wrote (INV-5 cross-check). Panic is 0/1.</summary>
+public sealed record PanicSnapshot(int Panic, long BoundHwnd, long Epoch);
+
 /// <summary>Shared HMAC for the handshake (challenge-response) and response authentication. The nonce (a per-launch
 /// secret passed to the sidecar) is the key; a scraped nonce replayed on a NEW connection still fails because the
 /// App also pins the connecting PID to the one it launched.</summary>

@@ -303,7 +303,7 @@ public partial class App : Application
             var cuPanicFlag = new Foreman.App.ComputerUse.CuSharedPanicFlag();
             cuPanicFlag.SetHalted(panicState.IsHalted);
             panicState.Changed += halted => cuPanicFlag.SetHalted(halted);
-            _desktopCu = new Foreman.App.ComputerUse.DesktopCuController();
+            _desktopCu = new Foreman.App.ComputerUse.DesktopCuController { PanicFlag = cuPanicFlag };
             _desktopCu.Start();
         }
 

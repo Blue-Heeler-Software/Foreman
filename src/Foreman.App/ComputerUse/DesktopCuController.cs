@@ -54,6 +54,10 @@ public sealed class DesktopCuController : IDisposable
     /// <summary>Raised High when a process tried to impersonate the sidecar or the integrity check failed.</summary>
     public Action<ForemanSeverity, string>? OnSecurityNotice { get; set; }
 
+    /// <summary>The shared panic/bind map the App owns and the sidecar reads (read-only). REQUIRED to run desktop CU -
+    /// the App hands the sidecar a read-only duplicated handle to it after the handshake. Set by the App at wiring.</summary>
+    public CuSharedPanicFlag? PanicFlag { get; set; }
+
     /// <summary>The staged sidecar path (under the app dir, beside Foreman's own binaries).</summary>
     public static string SidecarPath() => Path.Combine(AppContext.BaseDirectory, "cu-sidecar", "Foreman.CuSidecar.exe");
 
@@ -186,16 +190,37 @@ public sealed class DesktopCuController : IDisposable
             _writer = writer;
             _connected = true;
 
-            // Slice 3: confirm the channel is alive, then idle. Input/capture loops arrive in Slices 4-5.
-            var hello = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.Hello), ct).ConfigureAwait(false);
+            // Hand the sidecar a READ-ONLY duplicated handle to the shared panic/bind map (INV-2/INV-3): it reads
+            // panic/boundHwnd itself before every input (Slice 4b). The map is unnamed, so ONLY this duplicated
+            // read-only handle can reach it - no same-user process can open it, and the sidecar cannot write it.
+            if (PanicFlag is null)
+            { Notice(ForemanSeverity.High, "No shared panic map wired - refusing to run desktop CU."); return; }
+
+            long panicHandle;
+            try { panicHandle = PanicFlag.DuplicateReadOnlyHandleInto(child.Handle); } catch { panicHandle = 0; }
+            if (panicHandle == 0)
+            { Notice(ForemanSeverity.High, "Could not hand the sidecar its read-only panic map - dropping the channel."); return; }
+
+            var helloPayload = B64(JsonSerializer.Serialize(new HelloArgs(panicHandle, PanicFlag.MapCapacity), CuJson.Options));
+            var hello = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.Hello, helloPayload), ct).ConfigureAwait(false);
             if (hello is not { Ok: true })
-                Notice(ForemanSeverity.Low, "Desktop CU sidecar connected but did not acknowledge Hello.");
+            { Notice(ForemanSeverity.High, "Desktop CU sidecar could not map the shared panic view - dropping the channel."); return; }
+            CrossCheckSnapshot(hello, "hello");   // confirm it reads what we wrote (INV-5 substrate)
 
             while (!ct.IsCancellationRequested && server.IsConnected)
             {
                 await Task.Delay(2000, ct).ConfigureAwait(false);
                 var beat = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.Heartbeat), ct).ConfigureAwait(false);
                 if (beat is not { Ok: true }) break;   // sidecar gone / unauthenticated / timed out
+
+                // Tamper canary: the App's own panic byte must never change except when the App writes it.
+                if (PanicFlag.DetectTamper())
+                {
+                    Notice(ForemanSeverity.Critical,
+                        "Shared panic map tampered (the App's own byte changed by another writer) - killing the desktop CU sidecar.");
+                    break;
+                }
+                CrossCheckSnapshot(beat, "heartbeat");
             }
         }
         catch (OperationCanceledException) { }
@@ -326,6 +351,29 @@ public sealed class DesktopCuController : IDisposable
     }
 
     private static string NewId() => Guid.NewGuid().ToString("N");
+
+    private static string B64(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
+
+    // INV-5 substrate check: confirm the sidecar reads the SAME panic byte the App wrote through the read-only map.
+    // In Slice 4a this is informational (no input to stop yet, and a single-frame skew can be read timing); Slice 4b
+    // enforces it with panic-epoch reasoning. A persistent "App halted but sidecar still sees running" is the case to
+    // watch. DetectTamper (the App's own byte changing) is the hard, unambiguous failure and is handled by the caller.
+    private void CrossCheckSnapshot(DesktopCuResponse resp, string phase)
+    {
+        try
+        {
+            if (resp.PayloadB64 is null) return;
+            var snap = JsonSerializer.Deserialize<PanicSnapshot>(
+                Encoding.UTF8.GetString(Convert.FromBase64String(resp.PayloadB64)), CuJson.Options);
+            if (snap is null) return;
+            var appPanic = (PanicFlag?.IsHalted ?? false) ? 1 : 0;
+            if (snap.Panic != appPanic)
+                Notice(ForemanSeverity.Low,
+                    $"Desktop CU sidecar {phase} reports panic={snap.Panic} while the App's is {appPanic} " +
+                    "(may be read timing; Slice 4b enforces with epochs).");
+        }
+        catch { /* a bad snapshot frame is not itself a security event in Slice 4a */ }
+    }
 
     private static string? QueryImagePath(IntPtr hProcess)
     {
