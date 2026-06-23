@@ -303,9 +303,19 @@ public sealed class DesktopCuController : IDisposable
     public async Task<ExecuteActionResult?> ExecuteAsync(ExecuteActionArgs args, CancellationToken ct = default)
     {
         if (!_connected) return null;
+        var bound = PanicFlag?.BoundHwnd ?? 0;
         var payload = B64(JsonSerializer.Serialize(args, CuJson.Options));
         var resp = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.ExecuteAction, payload), ct).ConfigureAwait(false);
-        if (resp is null) return null;
+
+        // A null result means the App stopped waiting (timeout / dead channel) while the sidecar may STILL be injecting
+        // the rest of the gesture - exactly when the hard floor must fire. Do not silently leave a live injector.
+        if (resp is null)
+        {
+            Notice(ForemanSeverity.High, "Desktop CU action did not return in time - hard-killing the sidecar and halting (INV-5).");
+            KillSidecarNow();
+            try { OnVerificationFailure?.Invoke(); } catch { }
+            return null;
+        }
 
         ExecuteActionResult? result;
         try
@@ -317,25 +327,31 @@ public sealed class DesktopCuController : IDisposable
         catch { result = null; }
         if (result is null) return new ExecuteActionResult(false, "no ExecuteAction result payload");
 
-        // INV-5: never trust the sidecar's self-report. If it claims success, what it reports must match what the App
-        // independently observes; otherwise it acted somewhere it should not have (or the foreground moved).
+        // INV-5: independently verify against the AUTHORITATIVE bound window - never the sidecar's self-reported value,
+        // and never merely "whatever the foreground happens to be". On a claimed success the foreground the App reads
+        // ITSELF must be the bound window AND the sidecar's FinalHwnd must agree. (A legit refusal, Ok=false, is left as
+        // a refusal - it has not landed harmful input; the compromised-injector inject-then-Ok=false case is closed by
+        // the floor + the 4b-3 foreground-lock, not by killing every refusal.)
         if (result.Ok)
         {
             var fg = GetForegroundWindow().ToInt64();
             GetCursorPos(out var pt);
-            var cursorOff = Math.Abs(result.CursorX - pt.X) > CursorTolerance || Math.Abs(result.CursorY - pt.Y) > CursorTolerance;
-            if (result.FinalHwnd != fg)
+            if (bound == 0 || fg != bound || result.FinalHwnd != bound)
             {
                 Notice(ForemanSeverity.High,
-                    $"Desktop CU result FAILED independent verification: sidecar said foreground={result.FinalHwnd}, " +
-                    $"App sees {fg} - hard-killing the sidecar and halting (INV-5).");
+                    $"Desktop CU result FAILED independent verification (bound={bound}, sidecar FinalHwnd={result.FinalHwnd}, " +
+                    $"App foreground={fg}) - hard-killing the sidecar and halting (INV-5).");
                 KillSidecarNow();
                 try { OnVerificationFailure?.Invoke(); } catch { }
                 return new ExecuteActionResult(false, "result failed independent verification (INV-5)");
             }
-            if (cursorOff)
+            if (Math.Abs(result.CursorX - pt.X) > CursorTolerance || Math.Abs(result.CursorY - pt.Y) > CursorTolerance)
                 Notice(ForemanSeverity.Medium,
                     $"Desktop CU cursor self-report ({result.CursorX},{result.CursorY}) drifted from observed ({pt.X},{pt.Y}).");
+        }
+        else if (result.HaltedMidStream)
+        {
+            Notice(ForemanSeverity.Low, "Desktop CU action aborted mid-stream by panic (sidecar honored the halt).");
         }
         return result;
     }

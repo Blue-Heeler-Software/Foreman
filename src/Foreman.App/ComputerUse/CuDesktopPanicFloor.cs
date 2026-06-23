@@ -1,5 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
+using Foreman.Core.Events;
+using Foreman.Core.Models;
 
 namespace Foreman.App.ComputerUse;
 
@@ -35,24 +38,33 @@ public sealed class CuDesktopPanicFloor
     {
         lock (_gate)
         {
-            // (1) Independent watchdog FIRST: even if everything below throws or wedges, input is restored.
-            var done = new CancellationTokenSource();
-            _ = Task.Run(async () =>
+            // (1) Independent watchdog FIRST, on a DEDICATED foreground thread (NOT the ThreadPool, which a wedged App
+            // could starve - amendment #5 wants a truly independent un-shield). It always restores input after the
+            // ceiling (or sooner once the clean path signals); BlockInput(false) is idempotent so calling it twice is fine.
+            var done = new ManualResetEventSlim(false);
+            new Thread(() =>
             {
-                try { await Task.Delay(ShieldCeiling, done.Token).ConfigureAwait(false); } catch { /* cancelled = clean path won */ }
+                try { done.Wait(ShieldCeiling); } catch { }
                 try { BlockInput(false); } catch { }
-            });
+            }) { IsBackground = true, Name = "cu-panic-unshield" }.Start();
 
             try
             {
-                try { BlockInput(true); } catch { }   // (2) bounded shield
-                ReleaseHeldInput();                    // (3) drop modifiers + buttons
+                // (2) bounded shield - check the BOOL: BlockInput(true) returns false if another input block is already
+                // held, which would silently void the shield. Release-all + kill below are the genuine stops regardless.
+                bool blocked; try { blocked = BlockInput(true); } catch { blocked = false; }
+                if (!blocked)
+                    try { EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Medium,
+                        "Foreman.CuSidecar", "Panic input shield degraded: BlockInput(true) returned false (another block held). Proceeding to release-all + kill.")); }
+                    catch { }
+
+                ReleaseHeldInput();                    // (3) drop modifiers + buttons (the injector also releases its own per-turn holds)
                 try { _killSidecar(); } catch { }      // (4) hard kill the injector
             }
             finally
             {
-                try { BlockInput(false); } catch { }   // (5) primary un-shield (watchdog is the backstop)
-                try { done.Cancel(); } catch { }
+                try { BlockInput(false); } catch { }   // (5) primary un-shield (the watchdog thread is the backstop)
+                try { done.Set(); } catch { }
             }
         }
     }
@@ -62,7 +74,11 @@ public sealed class CuDesktopPanicFloor
     // do not fight the operator's own physically-held keys more than necessary.
     private static void ReleaseHeldInput()
     {
-        ushort[] modifiers = { VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN };
+        ushort[] modifiers =
+        {
+            VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN,
+            VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU,   // L/R-specific too
+        };
         var inputs = new List<INPUT>();
         foreach (var vk in modifiers) inputs.Add(KeyUp(vk));
         inputs.Add(MouseUp(MOUSEEVENTF_LEFTUP));
@@ -85,6 +101,7 @@ public sealed class CuDesktopPanicFloor
 
     // ── Win32 interop ────────────────────────────────────────────────────────────────────────────────
     private const ushort VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_LWIN = 0x5B, VK_RWIN = 0x5C;
+    private const ushort VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3, VK_LMENU = 0xA4, VK_RMENU = 0xA5;
     private const uint INPUT_MOUSE = 0, INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004, MOUSEEVENTF_RIGHTUP = 0x0010, MOUSEEVENTF_MIDDLEUP = 0x0040;

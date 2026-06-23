@@ -26,8 +26,10 @@ public sealed record DesktopCuResponse(string RequestId, DesktopCuKind Kind, boo
 public sealed record ExecuteActionArgs(string ActionId, string Verb, IReadOnlyDictionary<string, string> Args,
     long BoundHwnd, bool DryRun = false);
 
-/// <summary>ExecuteAction result. The App re-checks FinalHwnd/CursorX/CursorY against GetForegroundWindow/GetCursorPos
-/// and HaltedMidStream against the panic epoch before trusting it (INV-5).</summary>
+/// <summary>ExecuteAction result. The App independently verifies a claimed success against the AUTHORITATIVE bound
+/// window (GetForegroundWindow == bound AND FinalHwnd == bound) and cross-checks the cursor (INV-5); HaltedMidStream is
+/// surfaced as an honored-halt signal. Full result-vs-panic-epoch reconciliation is a Slice-4b-3 item (the App does not
+/// yet stamp a per-gesture epoch); the hard floor (TerminateProcess + BlockInput) is the actual halt-race protection.</summary>
 public sealed record ExecuteActionResult(bool Ok, string? Error = null,
     long FinalHwnd = 0, int CursorX = 0, int CursorY = 0, bool HaltedMidStream = false);
 

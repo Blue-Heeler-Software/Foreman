@@ -35,25 +35,39 @@ internal static class CuInputInjector
         // Best-effort bring the bound window forward; the per-step confine check is what actually gates (no blind inject).
         try { SetForegroundWindow(bound); } catch { }
 
-        foreach (var step in steps)
+        // UPs owed for DOWNs already emitted. Flushed on ANY early return so a panic OR a confine-fail (which does NOT
+        // run the App-side floor) can never strand a key/button held - the injector knows exactly what it pressed.
+        var owed = new List<INPUT>();
+        foreach (var (inp, owe, pays) in steps)
         {
             var snap = panicNow();
-            if (snap.Panic != 0) return Halted();
-            if (snap.BoundHwnd != args.BoundHwnd) return Fail("bound window changed mid-gesture (INV-2)");
-            if (!Confined(bound, foremanPid, out var why)) return Fail("not confined: " + why);
+            if (snap.Panic != 0) { Flush(owed, args.DryRun); return Halted(); }
+            if (snap.BoundHwnd != args.BoundHwnd) { Flush(owed, args.DryRun); return Fail("bound window changed mid-gesture (INV-2)"); }
+            if (!Confined(bound, foremanPid, out var why)) { Flush(owed, args.DryRun); return Fail("not confined: " + why); }
 
             if (!args.DryRun)
             {
-                var one = new[] { step };
-                if (SendInput(1, one, Marshal.SizeOf<INPUT>()) != 1) return Fail("SendInput rejected");
+                if (SendInput(1, new[] { inp }, Marshal.SizeOf<INPUT>()) != 1) { Flush(owed, args.DryRun); return Fail("SendInput rejected"); }
+                if (owe is INPUT up) owed.Add(up);                                  // a DOWN: owe its UP
+                else if (pays && owed.Count > 0) owed.RemoveAt(owed.Count - 1);     // the UP: paid (LIFO - pairs are adjacent)
             }
 
-            if (!Confined(bound, foremanPid, out var why2)) return Fail("foreground changed during input: " + why2);
+            if (!Confined(bound, foremanPid, out var why2)) { Flush(owed, args.DryRun); return Fail("foreground changed during input: " + why2); }
         }
 
         GetCursorPos(out var pt);
         var finalFg = GetForegroundWindow();
         return new ExecuteActionResult(Ok: true, Error: null, FinalHwnd: finalFg.ToInt64(), CursorX: pt.X, CursorY: pt.Y, HaltedMidStream: false);
+    }
+
+    // Force-release everything we still hold, on ANY early exit. Sent ungated: releasing a key/button is always safe
+    // (a key-up for a key not down elsewhere is a harmless no-op).
+    private static void Flush(List<INPUT> owed, bool dryRun)
+    {
+        if (!dryRun)
+            for (var i = owed.Count - 1; i >= 0; i--)
+                try { SendInput(1, new[] { owed[i] }, Marshal.SizeOf<INPUT>()); } catch { }
+        owed.Clear();
     }
 
     // Foreground confinement + INV-9. The foreground must be exactly the bound window; reject Foreman's own windows and
@@ -72,45 +86,64 @@ internal static class CuInputInjector
         return true;
     }
 
-    private static List<INPUT>? BuildSteps(ExecuteActionArgs args, IntPtr bound, out string err)
+    // A step is (the INPUT to send, the UP it owes if it is a DOWN else null, whether it is the UP that pays a prior owe).
+    private const int MaxStepsPerGesture = 120;   // one ExecuteAction must fit the request budget; the pump splits longer
+
+    private static List<(INPUT inp, INPUT? owe, bool pays)>? BuildSteps(ExecuteActionArgs args, IntPtr bound, out string err)
     {
         err = string.Empty;
+        var steps = new List<(INPUT, INPUT?, bool)>();
         var verb = (args.Verb ?? string.Empty).Trim().ToLowerInvariant();
         switch (verb)
         {
             case "move":
-                return TryClientPoint(args, bound, out var mp, out err) ? new() { MouseMove(mp) } : null;
-            case "left_click":
-                return TryClientPoint(args, bound, out var lp, out err)
-                    ? new() { MouseMove(lp), MouseBtn(MOUSEEVENTF_LEFTDOWN), MouseBtn(MOUSEEVENTF_LEFTUP) } : null;
-            case "right_click":
-                return TryClientPoint(args, bound, out var rp, out err)
-                    ? new() { MouseMove(rp), MouseBtn(MOUSEEVENTF_RIGHTDOWN), MouseBtn(MOUSEEVENTF_RIGHTUP) } : null;
-            case "middle_click":
-                return TryClientPoint(args, bound, out var cp, out err)
-                    ? new() { MouseMove(cp), MouseBtn(MOUSEEVENTF_MIDDLEDOWN), MouseBtn(MOUSEEVENTF_MIDDLEUP) } : null;
-            case "scroll":
+                if (!TryClientPoint(args, bound, out var mp, out err)) return null;
+                steps.Add((MouseMove(mp), null, false));
+                break;
+            case "left_click": case "right_click": case "middle_click":
             {
-                if (!int.TryParse(Arg(args, "amount"), out var amt)) { err = "scroll needs an integer 'amount'"; return null; }
-                return new() { Wheel(amt) };
+                if (!TryClientPoint(args, bound, out var cp, out err)) return null;
+                var (dn, up) = verb switch
+                {
+                    "right_click" => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+                    "middle_click" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+                    _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+                };
+                steps.Add((MouseMove(cp), null, false));
+                steps.Add((MouseBtn(dn), MouseBtn(up), false));   // DOWN owes its UP
+                steps.Add((MouseBtn(up), null, true));            // UP pays
+                break;
             }
+            case "scroll":
+                if (!int.TryParse(Arg(args, "amount"), out var amt)) { err = "scroll needs an integer 'amount'"; return null; }
+                steps.Add((Wheel(amt), null, false));
+                break;
             case "key":
             {
                 if (!ushort.TryParse(Arg(args, "vk"), out var vk)) { err = "key needs a numeric 'vk'"; return null; }
-                return new() { KeyVk(vk, down: true), KeyVk(vk, down: false) };
+                steps.Add((KeyVk(vk, true), KeyVk(vk, false), false));
+                steps.Add((KeyVk(vk, false), null, true));
+                break;
             }
             case "type":
             {
                 var text = Arg(args, "text");
                 if (string.IsNullOrEmpty(text)) { err = "type needs non-empty 'text'"; return null; }
-                var steps = new List<INPUT>();
-                foreach (var ch in text) { steps.Add(KeyUnicode(ch, down: true)); steps.Add(KeyUnicode(ch, down: false)); }
-                return steps;
+                foreach (var ch in text)
+                {
+                    if (char.IsSurrogate(ch)) { err = "type does not support non-BMP characters (emoji / surrogate pairs)"; return null; }
+                    steps.Add((KeyUnicode(ch, true), KeyUnicode(ch, false), false));
+                    steps.Add((KeyUnicode(ch, false), null, true));
+                }
+                break;
             }
             default:
                 err = $"unsupported verb '{verb}'";
                 return null;
         }
+
+        if (steps.Count > MaxStepsPerGesture) { err = $"gesture too long ({steps.Count} inputs > {MaxStepsPerGesture}); split it"; return null; }
+        return steps;
     }
 
     // A move/click point is the bound window's CLIENT coordinates; it must lie inside the client rect (no bare absolute
@@ -121,7 +154,8 @@ internal static class CuInputInjector
         if (!int.TryParse(Arg(args, "x"), out var cx) || !int.TryParse(Arg(args, "y"), out var cy))
         { err = "move/click needs integer client 'x'/'y'"; return false; }
         if (!GetClientRect(bound, out var rc)) { err = "could not read bound client rect"; return false; }
-        if (cx < 0 || cy < 0 || cx > rc.Right || cy > rc.Bottom) { err = "point is outside the bound client rect"; return false; }
+        // rc.Right/Bottom are width/height (one past the last valid pixel), so the valid range is [0, Right) x [0, Bottom).
+        if (cx < 0 || cy < 0 || cx >= rc.Right || cy >= rc.Bottom) { err = "point is outside the bound client rect"; return false; }
         var p = new POINT { X = cx, Y = cy };
         if (!ClientToScreen(bound, ref p)) { err = "ClientToScreen failed"; return false; }
         screenAbs = p;
@@ -136,15 +170,17 @@ internal static class CuInputInjector
         // Normalise to the VIRTUAL desktop 0..65535 and use ABSOLUTE | VIRTUALDESK so multi-monitor maps correctly.
         var vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
         var vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        var vw = Math.Max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
-        var vh = Math.Max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+        // The kernel reverse-maps ABSOLUTE|VIRTUALDESK across (extent - 1) steps, so normalise by width-1 / height-1.
+        var vw = Math.Max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1);
+        var vh = Math.Max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1);
         var nx = (int)Math.Round((screen.X - vx) * 65535.0 / vw);
         var ny = (int)Math.Round((screen.Y - vy) * 65535.0 / vh);
         return Mouse(nx, ny, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK);
     }
 
     private static INPUT MouseBtn(uint flags) => Mouse(0, 0, 0, flags);
-    private static INPUT Wheel(int amount) => Mouse(0, 0, (uint)amount, MOUSEEVENTF_WHEEL);
+    // MOUSEEVENTF_WHEEL takes mouseData in signed WHEEL_DELTA (120) units; preserve the sign through the uint field.
+    private static INPUT Wheel(int amount) => Mouse(0, 0, unchecked((uint)(amount * WHEEL_DELTA)), MOUSEEVENTF_WHEEL);
 
     private static INPUT Mouse(int dx, int dy, uint data, uint flags) => new()
     {
@@ -181,6 +217,7 @@ internal static class CuInputInjector
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008, MOUSEEVENTF_RIGHTUP = 0x0010;
     private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020, MOUSEEVENTF_MIDDLEUP = 0x0040;
     private const int SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79;
+    private const int WHEEL_DELTA = 120;
 
     [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public InputUnion U; }
     [StructLayout(LayoutKind.Explicit)] private struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
