@@ -312,6 +312,10 @@ public partial class App : Application
                 cuPanicFlag.SetHalted(halted);   // fast in-sidecar abort
                 if (halted) cuFloor.Trigger();   // hard floor (kill + BlockInput + release-all)
             };
+            // INV-5: a result that fails the App's independent foreground check escalates to a full halt (the sidecar
+            // is already locally killed by the controller before this fires).
+            _desktopCu.OnVerificationFailure = () =>
+                panicController.Halt("desktop CU result failed independent verification (INV-5)");
             _desktopCu.Start();
         }
 

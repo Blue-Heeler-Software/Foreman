@@ -59,6 +59,10 @@ public sealed class DesktopCuController : IDisposable
     /// the App hands the sidecar a read-only duplicated handle to it after the handshake. Set by the App at wiring.</summary>
     public CuSharedPanicFlag? PanicFlag { get; set; }
 
+    /// <summary>Raised when an ExecuteAction result FAILED independent verification (INV-5) - the App should escalate to
+    /// a full panic halt. The controller already hard-kills the offending sidecar locally before raising this.</summary>
+    public Action? OnVerificationFailure { get; set; }
+
     /// <summary>The staged sidecar path (under the app dir, beside Foreman's own binaries).</summary>
     public static string SidecarPath() => Path.Combine(AppContext.BaseDirectory, "cu-sidecar", "Foreman.CuSidecar.exe");
 
@@ -289,6 +293,53 @@ public sealed class DesktopCuController : IDisposable
         finally { _io.Release(); }
     }
 
+    private const int CursorTolerance = 8;   // px slack for the cursor cross-check (operator may nudge it mid round-trip)
+
+    /// <summary>Execute one desktop gesture through the sidecar and INDEPENDENTLY verify the result (INV-5). The App
+    /// re-reads GetForegroundWindow itself: the sidecar's self-reported FinalHwnd must match what the App observes, or
+    /// the input did not land where the sidecar claims (or the foreground changed) - either way the result is rejected,
+    /// the offending sidecar is hard-killed, and OnVerificationFailure fires so the App escalates to a full halt. The
+    /// cursor position is cross-checked with tolerance (soft). Returns null if desktop CU is unavailable.</summary>
+    public async Task<ExecuteActionResult?> ExecuteAsync(ExecuteActionArgs args, CancellationToken ct = default)
+    {
+        if (!_connected) return null;
+        var payload = B64(JsonSerializer.Serialize(args, CuJson.Options));
+        var resp = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.ExecuteAction, payload), ct).ConfigureAwait(false);
+        if (resp is null) return null;
+
+        ExecuteActionResult? result;
+        try
+        {
+            result = resp.PayloadB64 is null ? null
+                : JsonSerializer.Deserialize<ExecuteActionResult>(
+                    Encoding.UTF8.GetString(Convert.FromBase64String(resp.PayloadB64)), CuJson.Options);
+        }
+        catch { result = null; }
+        if (result is null) return new ExecuteActionResult(false, "no ExecuteAction result payload");
+
+        // INV-5: never trust the sidecar's self-report. If it claims success, what it reports must match what the App
+        // independently observes; otherwise it acted somewhere it should not have (or the foreground moved).
+        if (result.Ok)
+        {
+            var fg = GetForegroundWindow().ToInt64();
+            GetCursorPos(out var pt);
+            var cursorOff = Math.Abs(result.CursorX - pt.X) > CursorTolerance || Math.Abs(result.CursorY - pt.Y) > CursorTolerance;
+            if (result.FinalHwnd != fg)
+            {
+                Notice(ForemanSeverity.High,
+                    $"Desktop CU result FAILED independent verification: sidecar said foreground={result.FinalHwnd}, " +
+                    $"App sees {fg} - hard-killing the sidecar and halting (INV-5).");
+                KillSidecarNow();
+                try { OnVerificationFailure?.Invoke(); } catch { }
+                return new ExecuteActionResult(false, "result failed independent verification (INV-5)");
+            }
+            if (cursorOff)
+                Notice(ForemanSeverity.Medium,
+                    $"Desktop CU cursor self-report ({result.CursorX},{result.CursorY}) drifted from observed ({pt.X},{pt.Y}).");
+        }
+        return result;
+    }
+
     // Identity gate (INV-6 #2): the connected client must BE the child we launched, parented to Foreman, from our exe.
     private bool VerifyClientIdentity(NamedPipeServerStream server, Process child, string exe, out string reason)
     {
@@ -440,6 +491,16 @@ public sealed class DesktopCuController : IDisposable
     [DllImport("ntdll.dll")]
     private static extern int NtQueryInformationProcess(
         IntPtr handle, int infoClass, ref PROCESS_BASIC_INFORMATION pbi, int size, out int returnLength);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out POINT pt);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
 
     public void Dispose() { Stop(); _io.Dispose(); }
 }

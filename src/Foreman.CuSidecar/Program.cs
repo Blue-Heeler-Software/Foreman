@@ -81,9 +81,20 @@ static int Run(string[] args)
                     // Report what we currently read from the shared map, so the App can cross-check (INV-5).
                     resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: true, PayloadB64: ToB64(ReadPanic(panicView)));
                     break;
+                case DesktopCuKind.ExecuteAction:
+                {
+                    // Slice 4b-2: inject ONE atomic gesture, re-checking panic + confinement before every single INPUT
+                    // (CuInputInjector reads the shared MMF itself via ReadPanic; parentPid = Foreman, for INV-9).
+                    var ea = FromB64<ExecuteActionArgs>(req.PayloadB64);
+                    var result = ea is null
+                        ? new ExecuteActionResult(false, "bad ExecuteAction payload")
+                        : CuInputInjector.Execute(ea, () => ReadPanic(panicView), parentPid);
+                    resp = new DesktopCuResponse(req.RequestId, req.Kind, result.Ok, PayloadB64: ToB64(result), Error: result.Error);
+                    break;
+                }
                 default:
                     resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: false,
-                        Error: "Not implemented in Slice 4a (input injection lands in Slice 4b).");
+                        Error: "Unsupported desktop CU request kind.");
                     break;
             }
 
