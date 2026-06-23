@@ -1,20 +1,29 @@
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 using Foreman.Core.ComputerUse;
 
 namespace Foreman.App.ComputerUse;
 
 /// <summary>
 /// App-side writer of the shared panic + bound-window signal (spec INV-2 / INV-3) that the desktop sidecar reads
-/// before every input. The map is created UNNAMED, so no same-user process can <c>OpenExisting</c> it; the sidecar
-/// gets read access only via a READ-ONLY duplicated handle (<see cref="DuplicateReadOnlyHandleInto"/>) pushed over the
-/// authenticated control pipe after the handshake. The App is therefore the ONLY writer of panic/boundHwnd/epoch -
-/// the read's #1 carry-forward (a same-user named DACL alone cannot make this guarantee; create-handle RW vs a
-/// duplicated read-only handle does).
+/// before every input. The map is created UNNAMED, so no process can <c>OpenExisting</c> it by name; the sidecar gets
+/// read access only via a READ-ONLY duplicated handle (<see cref="DuplicateReadOnlyHandleInto"/>) pushed over the
+/// authenticated control pipe after the handshake - a handle that physically cannot be escalated to write. So the
+/// sidecar cannot forge the halt or move the bound window, and no process can reach the map by name.
 ///
-/// Layout (little-endian): [0]=panic byte, [8]=bound HWND (long), [16]=epoch (long). The epoch is written LAST so a
-/// reader that re-reads it can detect a torn read (seqlock). The App mirrors <c>CuPanicState.Changed</c> into this.
+/// HONEST LIMIT (review finding): this makes the App the only *intended* writer, not an absolute one. A same-user
+/// process that gets PROCESS_VM_WRITE or PROCESS_DUP_HANDLE on the App can write its mapped pages (or pull the App's
+/// read-write handle) directly - but that is the general "an attacker who can write Foreman's own process memory owns
+/// Foreman" residual (identical to patching <c>CuPanicState</c> in-process), out of the bounded medium-IL threat model
+/// and not fixable by a memory map. INV-3's HARD floor is therefore the App-side TerminateProcess(sidecar) + BlockInput
+/// (Slice 4b), which does NOT depend on this byte; this map is the fast in-sidecar abort, not the floor.
+///
+/// Layout (little-endian): [0]=panic byte, [8]=bound HWND (long), [16]=epoch (long). Each writer commits the field(s)
+/// then a release barrier then the epoch LAST, so a reader's seqlock (epoch read-fields-read, retry on mismatch) gets
+/// a tear-free snapshot. The canary records the App's expected panic/hwnd/epoch and flags ANY divergence. The App
+/// mirrors <c>CuPanicState.Changed</c> into this.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
@@ -26,7 +35,9 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
     private readonly MemoryMappedFile _mmf;
     private readonly MemoryMappedViewAccessor _view;   // the App's read-write creation view (the only writer)
     private long _epoch;
-    private byte _expectedPanic;                        // canary baseline = what the App last wrote
+    private byte _expectedPanic;     // canary baselines = exactly what the App last wrote to each field
+    private long _expectedHwnd;
+    private long _expectedEpoch;
 
     public int MapCapacity => Capacity;
 
@@ -37,8 +48,7 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
         _view = _mmf.CreateViewAccessor(0, Capacity, MemoryMappedFileAccess.ReadWrite);
         _view.Write(OffPanic, (byte)0);
         _view.Write(OffHwnd, 0L);
-        _view.Write(OffEpoch, 0L);
-        _view.Flush();
+        _view.Write(OffEpoch, 0L);   // Flush is unnecessary for a memory-backed map (shared pages are coherent)
     }
 
     public bool IsHalted { get { lock (_lock) return _view.ReadByte(OffPanic) != 0; } }
@@ -51,9 +61,9 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
         {
             var b = (byte)(halted ? 1 : 0);
             _view.Write(OffPanic, b);
-            _expectedPanic = b;
-            _view.Write(OffEpoch, ++_epoch);   // epoch LAST (seqlock)
-            _view.Flush();
+            Thread.MemoryBarrier();             // release: the field commits before the epoch that publishes it
+            _view.Write(OffEpoch, ++_epoch);    // epoch LAST (seqlock)
+            _expectedPanic = b; _expectedEpoch = _epoch;
         }
     }
 
@@ -62,8 +72,9 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
         lock (_lock)
         {
             _view.Write(OffHwnd, hwnd);
-            _view.Write(OffEpoch, ++_epoch);   // epoch LAST
-            _view.Flush();
+            Thread.MemoryBarrier();             // release: the field commits before the epoch that publishes it
+            _view.Write(OffEpoch, ++_epoch);    // epoch LAST
+            _expectedHwnd = hwnd; _expectedEpoch = _epoch;
         }
     }
 
@@ -82,12 +93,16 @@ public sealed class CuSharedPanicFlag : ICuPanicSignal, IDisposable
         return dup.ToInt64();
     }
 
-    /// <summary>Tamper canary: the map is unnamed + the only other handle is read-only, so the panic byte must always
-    /// equal what the App last wrote. Any divergence means an unexpected writer reached the mapping (or memory
-    /// corruption) - the caller treats it as Critical (halt + kill the sidecar). Returns true on tamper.</summary>
+    /// <summary>Tamper canary across ALL three trust-bearing fields (panic, boundHwnd, epoch): each must equal exactly
+    /// what the App last wrote. The real write-protection is the unnamed map + read-only sidecar handle; this canary is
+    /// the secondary net that catches the in-process-write residual (PROCESS_VM_WRITE/handle-dup on the App) and memory
+    /// corruption. The caller treats true as Critical (kill the sidecar). Returns true on any divergence.</summary>
     public bool DetectTamper()
     {
-        lock (_lock) return _view.ReadByte(OffPanic) != _expectedPanic;
+        lock (_lock)
+            return _view.ReadByte(OffPanic) != _expectedPanic
+                || _view.ReadInt64(OffHwnd) != _expectedHwnd
+                || _view.ReadInt64(OffEpoch) != _expectedEpoch;
     }
 
     public void Dispose()

@@ -111,7 +111,9 @@ static IntPtr MapPanicView(long handle, int capacity)
 // consistent {panic, boundHwnd, epoch} even under a concurrent write. Aligned 8-byte reads are atomic on x64.
 static PanicSnapshot ReadPanic(IntPtr view)
 {
-    if (view == IntPtr.Zero) return new PanicSnapshot(0, 0, 0);
+    // Fail CLOSED everywhere: an unmapped view or a read that never stabilises reports HALTED (panic=1, epoch=-1) so
+    // the Slice 4b input gate refuses to inject when it cannot trust the panic/bind state.
+    if (view == IntPtr.Zero) return new PanicSnapshot(1, 0, -1);
     for (var attempt = 0; attempt < 8; attempt++)
     {
         var e1 = Marshal.ReadInt64(view, 16);
@@ -122,7 +124,7 @@ static PanicSnapshot ReadPanic(IntPtr view)
         var e2 = Marshal.ReadInt64(view, 16);
         if (e1 == e2) return new PanicSnapshot(panic, hwnd, e2);
     }
-    return new PanicSnapshot(Marshal.ReadByte(view, 0), Marshal.ReadInt64(view, 8), Marshal.ReadInt64(view, 16));
+    return new PanicSnapshot(1, 0, -1);   // persistent contention -> treat as halted, never hand back a torn snapshot
 }
 
 // Authenticate the reply with the session nonce so the App can reject any frame it did not get from us. The MAC binds

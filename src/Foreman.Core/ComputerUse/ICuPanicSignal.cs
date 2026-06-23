@@ -2,10 +2,10 @@ namespace Foreman.Core.ComputerUse;
 
 /// <summary>
 /// The shared panic + bound-window signal the desktop sidecar reads before every input (Slice 4) and the App writes.
-/// Backed by a named memory-mapped file plus an auto-reset event (the App-side impl, Slice 3). Per spec INV-2/INV-3
-/// the sidecar must NOT be able to clear the halt or move the bound window — that read-only-to-sidecar guarantee is
-/// completed in Slice 4 by handing the sidecar a read-only duplicated handle (a same-user named DACL alone cannot
-/// distinguish two processes of the same user). The App mirrors <c>CuPanicState.Changed</c> into this.
+/// Backed (Slice 4a impl) by an UNNAMED memory-mapped file the App owns read-write; the sidecar gets a read-only
+/// DUPLICATED handle, so per spec INV-2/INV-3 it cannot clear the halt or move the bound window. The App mirrors
+/// <c>CuPanicState.Changed</c> into this. (A cross-process auto-reset WAKE event is a Slice-4b optimisation - the
+/// hard floor is the App killing the sidecar, not the sidecar noticing the byte.)
 /// </summary>
 public interface ICuPanicSignal
 {
@@ -18,7 +18,8 @@ public interface ICuPanicSignal
     /// <summary>Monotonic epoch bumped on every halt or (re)bind, so a stale read is detectable.</summary>
     long Epoch { get; }
 
-    /// <summary>App-only: set/clear the halt and pulse the wake event so the sidecar reacts immediately.</summary>
+    /// <summary>App-only: set/clear the halt; the sidecar observes it on its next pre-input read (Slice 4b also adds the
+    /// App-side TerminateProcess + BlockInput hard floor, which does not depend on the sidecar noticing this byte).</summary>
     void SetHalted(bool halted);
 
     /// <summary>App-only: publish the bound window (and bump the epoch) for the sidecar to confine to.</summary>
