@@ -302,8 +302,16 @@ public partial class App : Application
         {
             var cuPanicFlag = new Foreman.App.ComputerUse.CuSharedPanicFlag();
             cuPanicFlag.SetHalted(panicState.IsHalted);
-            panicState.Changed += halted => cuPanicFlag.SetHalted(halted);
             _desktopCu = new Foreman.App.ComputerUse.DesktopCuController { PanicFlag = cuPanicFlag };
+            // The ACTIVE panic floor (INV-3): on halt, BlockInput shield + synthetic release-all + hard-kill the
+            // injector sidecar + an independent watchdog that always restores input. The MMF byte (below) is only the
+            // fast in-sidecar abort; this floor does NOT depend on the sidecar noticing it.
+            var cuFloor = new Foreman.App.ComputerUse.CuDesktopPanicFloor(() => _desktopCu?.KillSidecarNow() ?? false);
+            panicState.Changed += halted =>
+            {
+                cuPanicFlag.SetHalted(halted);   // fast in-sidecar abort
+                if (halted) cuFloor.Trigger();   // hard floor (kill + BlockInput + release-all)
+            };
             _desktopCu.Start();
         }
 

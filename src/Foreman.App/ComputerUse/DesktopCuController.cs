@@ -46,6 +46,7 @@ public sealed class DesktopCuController : IDisposable
     private StreamWriter? _writer;
     private readonly SemaphoreSlim _io = new(1, 1);
     private volatile bool _connected;
+    private volatile Process? _child;   // the live sidecar, exposed for the panic floor's hard kill
     private string _nonce = string.Empty;
 
     public bool IsRunning { get; private set; }
@@ -105,6 +106,19 @@ public sealed class DesktopCuController : IDisposable
         }
     }
 
+    /// <summary>Hard-kill the live sidecar IMMEDIATELY (the panic floor's INV-3 TerminateProcess step) - independent of
+    /// the normal cancel/teardown path, so a halt does not wait on the pipe or the heartbeat loop. Marks the channel
+    /// dead and cancels the run so it does not relaunch. Returns true if a live sidecar was killed. Never throws.</summary>
+    public bool KillSidecarNow()
+    {
+        _connected = false;
+        var child = _child;
+        var killed = false;
+        try { if (child is { HasExited: false }) { child.Kill(); killed = true; } } catch { }
+        try { _cts?.Cancel(); } catch { }   // stop the run loop; finally reaps/disposes
+        return killed;
+    }
+
     private async Task RunAsync(CancellationTokenSource cts)
     {
         var ct = cts.Token;
@@ -140,6 +154,7 @@ public sealed class DesktopCuController : IDisposable
 
             child = LaunchSidecar(exe, pipeName, _nonce);
             if (child is null) { Notice(ForemanSeverity.Low, "Desktop CU sidecar failed to start."); return; }
+            _child = child;   // publish for the panic floor's hard kill
 
             // Bound the wait: a sidecar launched then immediately SUSPENDED by a hostile same-user process must not
             // wedge us forever holding exeLock + the sole pipe instance.
@@ -228,6 +243,7 @@ public sealed class DesktopCuController : IDisposable
         finally
         {
             _connected = false;
+            _child = null;
             // Reap the child on ANY exit (cancel, timeout, reject, pipe break, normal stop). Its parent (the App) is
             // still alive, so it would NOT self-exit on parent death - it would orphan as a stranded medium-IL process.
             try { if (child is { HasExited: false }) child.Kill(); } catch { }
