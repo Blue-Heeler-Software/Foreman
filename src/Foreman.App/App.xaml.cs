@@ -448,6 +448,12 @@ public partial class App : Application
                     "Foreman.ComputerUse",
                     $"CU bind hotkey ({Foreman.App.ComputerUse.BindHotkey.ChordText}) could not be registered (another " +
                     "app may own it). Desktop CU can't bind a target window until it's free."));
+            else
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Info,
+                    "Foreman.ComputerUse",
+                    $"Desktop computer-use armed. Focus a window and press {Foreman.App.ComputerUse.BindHotkey.ChordText} " +
+                    $"to bind it as the AI's target; press {Foreman.App.ComputerUse.PanicHotkey.ChordText} (or tray STOP) " +
+                    "to panic-stop at any time. Each desktop action stays held for your approval."));
 
             _desktopCu?.Start();
             _pilotChannel?.Start();
