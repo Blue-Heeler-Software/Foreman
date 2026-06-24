@@ -21,15 +21,19 @@ namespace Foreman.App.ComputerUse;
 [SupportedOSPlatform("windows")]
 internal static class CuSmokeTest
 {
-    public const string Flag = "--cu-smoketest";
+    public const string Flag = "--cu-smoketest";        // injector-only path (controller -> sidecar -> SendInput)
+    public const string FlagE2E = "--cu-smoketest-e2e";  // full stack: broker -> approve -> pump -> inject
     public static string LogPath => Path.Combine(Path.GetTempPath(), "foreman-cu-smoketest.log");
 
-    public static void RunToFileAndExit(Application app)
+    public static void RunToFileAndExit(Application app) => RunCore(app, RunAsync);
+    public static void RunE2EToFileAndExit(Application app) => RunCore(app, RunE2EAsync);
+
+    private static void RunCore(Application app, Func<Task<(int code, string report)>> run)
     {
         _ = Task.Run(async () =>
         {
             int code; string report;
-            try { (code, report) = await RunAsync().ConfigureAwait(false); }
+            try { (code, report) = await run().ConfigureAwait(false); }
             catch (Exception ex) { code = 99; report = "smoketest threw:\n" + ex; }
             try { File.WriteAllText(LogPath, report); } catch { }
             try { app.Dispatcher.Invoke(() => app.Shutdown(code)); } catch { }
@@ -153,6 +157,118 @@ internal static class CuSmokeTest
             return true;
         }, IntPtr.Zero);
         return found;
+    }
+
+    // Full-stack end-to-end: a relayed local-agent PROPOSAL flows through the real broker (audit + default-Held), is
+    // refused by the pump until the operator APPROVES, then the pump claims it and the sidecar injector types it into the
+    // bound Notepad window. Proves the whole mediated chain on-device. (cu_approve's MCP presence tap is exercised
+    // separately; here the operator decision is broker.ApproveHeld directly.)
+    private static async Task<(int code, string report)> RunE2EAsync()
+    {
+        var sb = new StringBuilder();
+        void Log(string m) => sb.AppendLine(m);
+        Log("=== Foreman desktop-CU END-TO-END smoke test (propose -> Held -> approve -> pump -> inject) ===");
+        Log($"sidecar: {DesktopCuController.SidecarPath()} (exists={File.Exists(DesktopCuController.SidecarPath())})");
+        Log("");
+
+        Process? np = null;
+        var notepadPid = 0;
+        DesktopCuController? ctl = null;
+        CuSharedPanicFlag? flag = null;
+        try
+        {
+            // 1. Fresh Notepad, foreground.
+            foreach (var stale in Process.GetProcessesByName("notepad")) { try { stale.Kill(); } catch { } }
+            await Task.Delay(400).ConfigureAwait(false);
+            var tmp = Path.Combine(Path.GetTempPath(), "foreman-cu-fidelity.txt");
+            try { File.WriteAllText(tmp, string.Empty); } catch { }
+            np = Process.Start(new ProcessStartInfo("notepad.exe") { Arguments = $"\"{tmp}\"", UseShellExecute = true });
+            IntPtr hwnd = IntPtr.Zero;
+            for (var i = 0; i < 60 && hwnd == IntPtr.Zero; i++)
+            {
+                hwnd = FindWindowByTitle("Notepad");
+                if (hwnd == IntPtr.Zero) await Task.Delay(200).ConfigureAwait(false);
+            }
+            if (hwnd == IntPtr.Zero) return (2, sb + "\nFAIL: Notepad window never appeared");
+            GetWindowThreadProcessId(hwnd, out notepadPid);
+            await EnsureForeground(hwnd).ConfigureAwait(false);
+            Log($"notepad hwnd={hwnd.ToInt64()} pid={notepadPid}");
+
+            // 2. The REAL stack: broker (real audit pipeline) + injector + executor pump.
+            flag = new CuSharedPanicFlag();
+            var broker = new CuBroker(new AuditPipeline(new FastPathAuditor()));
+            broker.WindowProbe = new Win32WindowProbe();
+            broker.OnWindowSwitch = (_, now) => { try { flag!.SetBound(now?.Hwnd.ToInt64() ?? 0); } catch { } };
+            broker.EnrollDesktopDriver(LocalDriverIpc.LocalAgentHostId);
+
+            ctl = new DesktopCuController { PanicFlag = flag };
+            ctl.OnSecurityNotice = (sev, m) => Log($"  [sidecar {sev}] {m}");
+            ctl.Start();
+            for (var i = 0; i < 75 && !ctl.IsConnected; i++) await Task.Delay(200).ConfigureAwait(false);
+            if (!ctl.IsConnected) return (3, sb + "\nFAIL: sidecar not connected");
+            Log("sidecar connected + handshaked");
+
+            var pump = new CuExecutorPump(broker, new DesktopCuExecutor(ctl, () => flag!.BoundHwnd));
+
+            // 3. Bind the Notepad window (OnWindowSwitch syncs the injector's MMF bound HWND).
+            var probe = new Win32WindowProbe();
+            var wref = probe.CaptureForeground();
+            if (wref is null || wref.Hwnd != hwnd) { await EnsureForeground(hwnd).ConfigureAwait(false); wref = probe.CaptureForeground(); }
+            var (_, bindReason) = broker.SetActiveWindow(wref);
+            Log($"bind: {bindReason} (MMF bound now {flag.BoundHwnd})");
+
+            // 4. Relay a proposal AS THE LOCAL AGENT HOST (the real relay path: DriverSubmit -> BuildAction).
+            var action = LocalDriverIpc.BuildAction(new DriverSubmit(
+                Guid.NewGuid().ToString("N"), "type",
+                new Dictionary<string, string> { ["text"] = "Hello from Foreman" }, "e2e smoke test"));
+            var item = await broker.SubmitAsync(action, new CuContext(LocalDriverIpc.LocalAgentHostId)).ConfigureAwait(false);
+            Log($"proposal submitted -> state={item.State} (expect Held: default-Held, auto-grant off)");
+
+            // 5. NEGATIVE: pump WITHOUT approval must execute nothing.
+            await EnsureForeground(hwnd).ConfigureAwait(false);
+            await pump.PumpOnceAsync().ConfigureAwait(false);
+            var stateNoApprove = broker.Get(item.ActionId)!.State;
+            var rb0 = TryReadText(hwnd);
+            Log($"pump w/o approval -> state={stateNoApprove}, readback={(string.IsNullOrWhiteSpace(rb0) ? "<empty>" : "\"" + rb0.Trim() + "\"")}");
+
+            // 6. Operator approves, then the pump claims + injects.
+            var (aok, aReason) = broker.ApproveHeld(item.ActionId);
+            Log($"operator approve -> {aok}: {aReason}");
+            await EnsureForeground(hwnd).ConfigureAwait(false);
+            await pump.PumpOnceAsync().ConfigureAwait(false);
+            await Task.Delay(400).ConfigureAwait(false);
+            var finalState = broker.Get(item.ActionId)!.State;
+            var rb = TryReadText(hwnd);
+            Log($"pump after approval -> state={finalState}, readback={(rb is null ? "<unavailable>" : "\"" + rb.Replace("\r", " ").Replace("\n", " ").Trim() + "\"")}");
+
+            // The STATE machine is the authoritative proof, not the readback: Claim only ever delivers Approved items,
+            // and Complete->Completed only happens when the controller's INV-5 (App foreground == bound == sidecar
+            // FinalHwnd) passed - so finalState==Completed IS a verified injection into the bound window. The UIA readback
+            // is informational only (the new Notepad restores prior-run text + drops chars under load - a documented
+            // fidelity limitation, not a chain failure).
+            var heldFirst = item.State == CuActionState.Held;
+            var notBeforeApprove = stateNoApprove == CuActionState.Held;   // pump didn't advance an unapproved item
+            var executed = finalState == CuActionState.Completed;          // INV-5-verified injection
+            var textOk = rb?.Contains("Hello from Foreman", StringComparison.Ordinal) == true;
+
+            Log("");
+            Log($"[{(heldFirst ? "PASS" : "FAIL")}] proposal landed HELD (not auto-executed)");
+            Log($"[{(notBeforeApprove ? "PASS" : "FAIL")}] pump did NOT execute it before operator approval (stayed Held)");
+            Log($"[{(executed ? "PASS" : "FAIL")}] after approval the pump executed it -> Completed (INV-5 verified)");
+            Log($"[info] typed-text readback (best-effort; new-Notepad confound): {(textOk ? "exact" : rb is null ? "unavailable" : "garbled/accumulated")}");
+
+            var overall = heldFirst && notBeforeApprove && executed;
+            Log("");
+            Log($"OVERALL: {(overall ? "PASS" : "FAIL")}");
+            return (overall ? 0 : 10, sb.ToString());
+        }
+        finally
+        {
+            try { ctl?.Stop(); } catch { }
+            try { flag?.Dispose(); } catch { }
+            try { if (notepadPid != 0) Process.GetProcessById(notepadPid).Kill(); } catch { }
+            try { if (np is { HasExited: false }) np.Kill(); } catch { }
+        }
     }
 
     // Best-effort readback via UI Automation (works across classic + Win11 Notepad's document control). Null if the
