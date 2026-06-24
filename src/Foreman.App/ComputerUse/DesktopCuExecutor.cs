@@ -1,5 +1,8 @@
 using System.Runtime.Versioning;
+using System.Windows.Automation;
 using Foreman.Core.ComputerUse;
+using Foreman.Core.Events;
+using Foreman.Core.Models;
 
 namespace Foreman.App.ComputerUse;
 
@@ -34,6 +37,49 @@ public sealed class DesktopCuExecutor : ICuExecutor
         var args = new ExecuteActionArgs(item.ActionId, a.Verb, a.Args, boundHwnd);
         var r = await _controller.ExecuteAsync(args, ct).ConfigureAwait(false);
         if (r is null) return new CuExecResult(false, null, "desktop executor unavailable (sidecar killed / timed out)");
+
+        // Best-effort fidelity check (warn-only): the controller's INV-5 already proved the input landed in the BOUND
+        // window, but a receiver with an async text pipeline (e.g. the Win11 Notepad island) can still RENDER typed text
+        // garbled. Read the target back and flag a mismatch so the operator/agent knows the text may not be faithful. No
+        // auto-retry: re-typing would duplicate/compound a substitution-garble, and a wrong-window type is already an
+        // INV-5 failure above.
+        if (r.Ok && string.Equals(a.Verb?.Trim(), "type", StringComparison.OrdinalIgnoreCase)
+            && a.Arg("text") is { Length: > 0 } expected)
+        {
+            var got = TryReadText((IntPtr)boundHwnd);
+            if (got is not null && !got.Contains(expected, StringComparison.Ordinal))
+                Publish(ForemanSeverity.Low,
+                    "Typed text did not verify against the target window - the receiver may have dropped or altered " +
+                    "characters (the input WAS delivered to the bound window, INV-5-verified; only the rendered text differs).");
+        }
+
         return new CuExecResult(r.Ok, new { r.FinalHwnd, r.CursorX, r.CursorY, r.HaltedMidStream }, r.Error);
+    }
+
+    private static void Publish(ForemanSeverity sev, string message)
+    {
+        try { EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, sev, "Foreman.ComputerUse", message)); }
+        catch { /* fidelity note is best-effort */ }
+    }
+
+    // Best-effort UIA readback of the bound window's text (Document/Edit TextPattern, ValuePattern fallback). Null if it
+    // can't be read - then we simply don't warn (can't-verify != failed).
+    private static string? TryReadText(IntPtr hwnd)
+    {
+        try
+        {
+            if (hwnd == IntPtr.Zero) return null;
+            var root = AutomationElement.FromHandle(hwnd);
+            if (root is null) return null;
+            var doc = root.FindFirst(TreeScope.Subtree, new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit))) ?? root;
+            if (doc.TryGetCurrentPattern(TextPattern.Pattern, out var tp))
+                return ((TextPattern)tp).DocumentRange.GetText(-1);
+            if (doc.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
+                return ((ValuePattern)vp).Current.Value;
+            return null;
+        }
+        catch { return null; }
     }
 }
