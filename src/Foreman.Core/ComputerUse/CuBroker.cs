@@ -418,6 +418,12 @@ public sealed class CuBroker
     /// <summary>App-supplied probe for liveness checks at delivery (recycled-handle defense); null in tests/headless.</summary>
     public IDesktopWindowProbe? WindowProbe { get; set; }
 
+    /// <summary>App-wired one-time bind-token validator (spec INV-17). When set, a desktop BIND must present a token
+    /// the validator accepts - one the presence gate minted on a real operator BindCuWindow tap and consumes once - so
+    /// a caller cannot fabricate a CuWindowRef for an attacker-owned window and bind it. Null in tests/headless means
+    /// no token is required (the App wires this when the local agent host is enabled).</summary>
+    public Func<string?, bool>? BindTokenValidator { get; set; }
+
     /// <summary>Fired when the bound CU window changes (old, new) — the App announces it via the HUD + audit log.</summary>
     public Action<CuWindowRef?, CuWindowRef?>? OnWindowSwitch { get; set; }
 
@@ -426,10 +432,17 @@ public sealed class CuBroker
 
     /// <summary>Binds (or clears, with null) the single active CU window. REFUSES Foreman's own windows. Bumps the
     /// Epoch so any action approved against a prior binding is re-held at delivery. The caller presence-gates the bind.</summary>
-    public (bool Ok, string Reason) SetActiveWindow(CuWindowRef? w)
+    public (bool Ok, string Reason) SetActiveWindow(CuWindowRef? w, string? bindToken = null)
     {
-        if (w is not null && w.OwnerPid == Environment.ProcessId)
-            return (false, "Refused: cannot bind Foreman's own window as a CU target.");
+        if (w is not null)
+        {
+            if (w.OwnerPid == Environment.ProcessId)
+                return (false, "Refused: cannot bind Foreman's own window as a CU target.");
+            // INV-17: a bind must carry a live one-time token the presence gate minted on a real operator tap, so a
+            // caller cannot hand the broker a fabricated CuWindowRef for a window the operator never chose.
+            if (BindTokenValidator is { } validate && !validate(bindToken))
+                return (false, "Refused: bind not authorized by a live presence tap (missing/invalid bind token).");
+        }
         var old = _activeWindow;
         _activeWindow = w is null ? null : w with { Epoch = Interlocked.Increment(ref _windowEpoch) };
         try { OnWindowSwitch?.Invoke(old, _activeWindow); } catch { /* best-effort announce */ }

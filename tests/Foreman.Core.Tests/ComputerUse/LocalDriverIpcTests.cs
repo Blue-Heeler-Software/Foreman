@@ -50,6 +50,19 @@ public sealed class LocalDriverIpcTests
         Assert.False(b.CanDriveModality("other-agent", isOperator: false, CuModality.Desktop));
     }
 
+    [Fact]
+    public void SetActiveWindow_DesktopBind_RequiresLiveBindToken()  // INV-17
+    {
+        var b = new CuBroker(new AllowAuditor());
+        b.BindTokenValidator = tok => tok == "live-token";   // the App wires the presence one-time-token check here
+        var w = new CuWindowRef((IntPtr)0x1000, OwnerPid: 4321, "notepad", "Untitled - Notepad", Epoch: 0);
+
+        Assert.False(b.SetActiveWindow(w, "forged").Ok);     // a fabricated ref with no valid token is refused
+        Assert.False(b.SetActiveWindow(w, null).Ok);         // ... and a missing token is refused
+        Assert.True(b.SetActiveWindow(w, "live-token").Ok);  // only a live operator-tap token binds
+        Assert.True(b.SetActiveWindow(null).Ok);             // clearing the bound window needs no token
+    }
+
     private sealed class AllowAuditor : IAuditor
     {
         public Task<CuVerdict> JudgeAsync(CuAction a, CuContext c, CancellationToken ct = default)
