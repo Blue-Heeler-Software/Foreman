@@ -289,6 +289,11 @@ public partial class App : Application
             catch { /* HUD is best-effort; never disturb the broker */ }
         }));
         _mcpHost.State.Cu = cuBroker;
+        // INV-16: approving a HELD desktop CU action over MCP requires a fresh presence tap, not just the operator
+        // bearer token. PresenceGuard.Configure runs later in startup; this delegate is only INVOKED at approve-time.
+        _mcpHost.State.CuDesktopApprovalGate = () => Security.PresenceGuard.AuthorizeAsync(
+            Foreman.Core.Security.WeakeningAction.ApproveCuDesktopAction,
+            "approve a held desktop computer-use action", forcePresence: true, freshTap: true);
         // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
         _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);

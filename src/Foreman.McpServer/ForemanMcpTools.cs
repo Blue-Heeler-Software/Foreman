@@ -1458,7 +1458,7 @@ public static class ForemanMcpTools
     [McpServerTool, Description(
         "Operator only: APPROVE a computer-use action the auditor held. The harness that submitted it cannot approve " +
         "its own held action — only the operator may.")]
-    public static object CuApprove(
+    public static async Task<object> CuApprove(
         [Description("actionId to approve")] string actionId,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
@@ -1467,10 +1467,26 @@ public static class ForemanMcpTools
         var caller = CallerScope.From(http);
         if (!caller.IsOperator) return new { ok = false, reason = "Only the operator may approve a held computer-use action." };
         if (string.IsNullOrWhiteSpace(actionId)) return new { ok = false, reason = "actionId is required." };
-        var (ok, reason) = state.Cu.ApproveHeld(actionId.Trim());
+        var id = actionId.Trim();
+
+        // INV-16: approving a HELD DESKTOP action requires a FRESH presence tap, not merely the operator bearer token -
+        // the human-in-the-loop the default-Held design rests on must be a live person, not a token holder (the same-user
+        // adversary who minted an operator token must still face the Hello/FIDO2 prompt). Fail closed if no gate is wired
+        // (desktop CU only arms when presence is enrolled). Browser approvals keep the token-only path.
+        var item = state.Cu.Get(id);
+        if (item?.Action.Modality == Foreman.Core.ComputerUse.CuModality.Desktop)
+        {
+            var gate = state.CuDesktopApprovalGate;
+            var authed = false;
+            if (gate is not null) { try { authed = await gate().ConfigureAwait(false); } catch { authed = false; } }
+            if (!authed)
+                return new { ok = false, reason = "A presence tap (Windows Hello / FIDO2) is required to approve a desktop computer-use action and was not provided." };
+        }
+
+        var (ok, reason) = state.Cu.ApproveHeld(id);
         if (ok)
             EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
-                $"Operator APPROVED held computer-use action [{actionId.Trim()}]."));
+                $"Operator APPROVED held computer-use action [{id}]."));
         return new { ok, reason };
     }
 

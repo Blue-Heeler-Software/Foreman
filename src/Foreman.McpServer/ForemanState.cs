@@ -82,6 +82,11 @@ public sealed class ForemanState : IEventSink
     /// (unless a test sets it), in which case the cu_* tools report the capability as unavailable.</summary>
     public Foreman.Core.ComputerUse.CuBroker? Cu { get; set; }
 
+    /// <summary>App-wired presence gate for approving a HELD DESKTOP computer-use action (INV-16): returns true only on a
+    /// fresh Hello/FIDO2 tap, so an operator BEARER TOKEN alone cannot approve desktop input. Null in tests/headless ->
+    /// desktop approvals are then refused (fail closed). Browser approvals do not use this.</summary>
+    public Func<Task<bool>>? CuDesktopApprovalGate { get; set; }
+
     void IEventSink.OnEvent(ForemanEvent evt)
     {
         if (evt.Severity > ForemanSeverity.Info)
