@@ -136,4 +136,21 @@ public sealed class CuBrokerWindowGateTests
         Assert.Empty(b.Claim(10));                              // probe reports the window gone -> never delivered (INV-2)
         Assert.Equal(CuActionState.Held, b.Get(item.ActionId)!.State);
     }
+
+    [Fact]
+    public void SetActiveWindow_RequiresValidBindToken_ConsumeOnce()
+    {
+        var b = Broker();
+        var used = false;
+        b.BindTokenValidator = t => { if (t == "good" && !used) { used = true; return true; } return false; };  // INV-17 + consume-once
+
+        Assert.False(b.SetActiveWindow(Win(100), "bad").Ok);    // wrong token -> refused
+        Assert.Null(b.ActiveWindow);
+        Assert.False(b.SetActiveWindow(Win(100), null).Ok);     // missing token -> refused
+        Assert.Null(b.ActiveWindow);
+
+        Assert.True(b.SetActiveWindow(Win(100), "good").Ok);    // the minted token binds
+        Assert.NotNull(b.ActiveWindow);
+        Assert.False(b.SetActiveWindow(Win(200), "good").Ok);   // ...but only once (replay refused)
+    }
 }

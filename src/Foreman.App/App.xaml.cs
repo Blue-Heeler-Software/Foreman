@@ -23,6 +23,7 @@ public partial class App : Application
     private static bool _ownsSingleInstance;
     private TrayController? _tray;
     private Foreman.App.ComputerUse.PanicHotkey? _panicHotkey;
+    private Foreman.App.ComputerUse.BindHotkey? _cuBindHotkey;
     private Foreman.App.ComputerUse.DesktopCuController? _desktopCu;
     private Foreman.App.ComputerUse.PilotChannelController? _pilotChannel;
     private System.IO.FileStream? _cuSidecarPin;
@@ -400,6 +401,20 @@ public partial class App : Application
                 cuPanicFlag?.SetHalted(halted);   // fast in-sidecar abort (desktop injector)
                 if (halted) cuFloor.Trigger();    // hard floor: kill both helpers + BlockInput + release-all
             };
+
+            // INV-17: the operator binds the desktop CU target window via a global hotkey that captures the window while
+            // it is FOREGROUND (before Foreman steals focus), gated by a fresh presence tap; the bind carries a one-time
+            // token the broker validates + consumes, so a caller can't fabricate a CuWindowRef for an attacker window.
+            var cuBindStore = new Foreman.App.ComputerUse.BindTokenStore();
+            cuBroker.BindTokenValidator = cuBindStore.Validate;
+            var cuBindProbe = cuBroker.WindowProbe ?? new Foreman.App.ComputerUse.Win32WindowProbe();
+            _cuBindHotkey = new Foreman.App.ComputerUse.BindHotkey(
+                () => _ = BindCuForegroundWindowAsync(cuBroker, cuBindProbe, cuBindStore));
+            if (!_cuBindHotkey.Registered)
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Low,
+                    "Foreman.ComputerUse",
+                    $"CU bind hotkey ({Foreman.App.ComputerUse.BindHotkey.ChordText}) could not be registered (another " +
+                    "app may own it). Desktop CU can't bind a target window until it's free."));
 
             _desktopCu?.Start();
             _pilotChannel?.Start();
@@ -787,6 +802,35 @@ public partial class App : Application
         }
     }
 
+    // INV-17 bind flow: capture the CURRENT foreground window (the operator pressed the bind hotkey while their target
+    // was foreground, before Foreman could steal focus), require a fresh presence tap, then mint a one-time token and
+    // bind. The token is validated + consumed by the broker, so a fabricated CuWindowRef can't be bound without the tap.
+    private static async Task BindCuForegroundWindowAsync(
+        Foreman.Core.ComputerUse.CuBroker broker,
+        Foreman.Core.ComputerUse.IDesktopWindowProbe probe,
+        Foreman.App.ComputerUse.BindTokenStore store)
+    {
+        void Notice(ForemanSeverity sev, string msg) => EventBus.Instance.Publish(
+            new MonitoringNoticeEvent(DateTimeOffset.UtcNow, sev, "Foreman.ComputerUse", msg));
+        try
+        {
+            var w = probe.CaptureForeground();
+            if (w is null) { Notice(ForemanSeverity.Low, "Bind hotkey: no foreground window to bind."); return; }
+            if (w.OwnerPid == Environment.ProcessId)
+            { Notice(ForemanSeverity.Low, "Bind hotkey: refusing to bind Foreman's own window."); return; }
+
+            var ok = await Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.BindCuWindow,
+                $"bind desktop computer-use to '{w.TitleAtBind}' (pid {w.OwnerPid})",
+                forcePresence: true, freshTap: true).ConfigureAwait(false);
+            if (!ok) { Notice(ForemanSeverity.Low, "Bind not authorized (no presence tap) - the CU target was not bound."); return; }
+
+            var (bound, reason) = broker.SetActiveWindow(w, store.Mint());
+            Notice(bound ? ForemanSeverity.Info : ForemanSeverity.Low, reason);
+        }
+        catch (Exception ex) { Notice(ForemanSeverity.Low, "Bind failed: " + ex.Message); }
+    }
+
     private static string SafeVerifyStatus(EventLogStore log)
     {
         try { return log.Verify().Status.ToString(); } catch { return "unknown"; }
@@ -946,6 +990,7 @@ public partial class App : Application
         _mcpHost?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
         _monitor?.Dispose();
         _panicHotkey?.Dispose();
+        _cuBindHotkey?.Dispose();
         _tray?.Dispose();
         if (_ownsSingleInstance) _singleInstance?.ReleaseMutex();
         base.OnExit(e);
