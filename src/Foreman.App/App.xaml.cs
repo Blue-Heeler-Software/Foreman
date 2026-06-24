@@ -53,6 +53,19 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+#if DEBUG
+        // Developer on-device smoke test for the desktop CU injector (Foreman.exe --cu-smoketest). Runs the real
+        // controller->sidecar->SendInput path against Notepad + a panic test, writes a temp log, and exits. Branches
+        // BEFORE the single-instance mutex + the full app wiring so it can run standalone alongside a real instance.
+        // DEBUG-only: excluded from release builds entirely (zero shipping surface).
+        if (e.Args.Contains(ComputerUse.CuSmokeTest.Flag))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            ComputerUse.CuSmokeTest.RunToFileAndExit(this);
+            return;
+        }
+#endif
+
         // Track ownership explicitly: the second instance must NOT call ReleaseMutex in
         // OnExit (releasing an unowned mutex throws and crashed the duplicate on exit).
         _singleInstance = new Mutex(initiallyOwned: true, "ForemanSingleInstanceMutex", out _ownsSingleInstance);
