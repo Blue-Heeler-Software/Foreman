@@ -26,6 +26,7 @@ public partial class App : Application
     private Foreman.App.ComputerUse.BindHotkey? _cuBindHotkey;
     private Foreman.App.ComputerUse.DesktopCuController? _desktopCu;
     private Foreman.App.ComputerUse.PilotChannelController? _pilotChannel;
+    private Foreman.Core.ComputerUse.CuExecutorPump? _cuPump;
     private System.IO.FileStream? _cuSidecarPin;
     private System.IO.FileStream? _cuPilotPin;
     private MonitorService? _monitor;
@@ -363,6 +364,18 @@ public partial class App : Application
                 // INV-5: a result that fails the App's independent foreground check escalates to a full halt.
                 _desktopCu.OnVerificationFailure = () =>
                     panicController.Halt("desktop CU result failed independent verification (INV-5)");
+                // Keep the injector's authoritative bound window (the MMF it reads) in sync with the broker's
+                // operator-bound window, so a bind via the hotkey actually confines the injector. SetBound is thread-safe.
+                cuBroker.OnWindowSwitch = (_, now) =>
+                {
+                    try { cuPanicFlag!.SetBound(now?.Hwnd.ToInt64() ?? 0); } catch { /* best-effort sync */ }
+                };
+                // Executor pump (the payoff): run APPROVED desktop actions through the verified sidecar injector,
+                // in-process. Claim re-gates driver-auth + panic epoch + one-window confinement at delivery; the
+                // controller verifies each result (INV-5). Idle until an item is approved + the sidecar is connected.
+                var cuExecutor = new Foreman.App.ComputerUse.DesktopCuExecutor(_desktopCu, () => cuPanicFlag!.BoundHwnd);
+                _cuPump = new Foreman.Core.ComputerUse.CuExecutorPump(cuBroker, cuExecutor);
+                _ = _cuPump.RunAsync(TimeSpan.FromMilliseconds(300), _cts!.Token);
             }
             if (settings.CuDriverHostEnabled)
             {
