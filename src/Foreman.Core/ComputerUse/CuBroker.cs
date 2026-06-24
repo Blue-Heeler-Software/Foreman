@@ -101,6 +101,30 @@ public sealed class CuBroker
             return halted;
         }
 
+        // Desktop verb allowlist (INV-12 structural): reject an unknown/over-length verb before the auditor or the
+        // injector ever sees it, so a crafted verb from a relayed proposal cannot smuggle through.
+        if (action.Modality == CuModality.Desktop && !CuVerbs.IsKnownDesktop(action.Verb))
+        {
+            var bad = new CuBrokerItem(id, action, CuActionState.Blocked,
+                CuVerdict.Block("broker", "unsupported desktop verb"), DateTimeOffset.UtcNow,
+                Error: "Unsupported desktop verb.", UpdatedAt: DateTimeOffset.UtcNow);
+            _items[id] = bad;
+            return bad;
+        }
+
+        // Desktop driver authorization (INV-14): a Desktop action must come from an explicitly enrolled driver id (or
+        // the operator); the "*" wildcard never authorizes Desktop. Blocked early, before audit. (Browser is unaffected
+        // - it keeps the existing Claim-time CanDrive gate.)
+        if (action.Modality == CuModality.Desktop
+            && !CanDriveModality(action.ByHarness, isOperator: false, CuModality.Desktop))
+        {
+            var denied = new CuBrokerItem(id, action, CuActionState.Blocked,
+                CuVerdict.Block("broker", "driver not authorized for desktop computer use (enroll the id; '*' does not count)"),
+                DateTimeOffset.UtcNow, Error: "Driver not authorized for desktop.", UpdatedAt: DateTimeOffset.UtcNow);
+            _items[id] = denied;
+            return denied;
+        }
+
         // Rate limit (Slice 2): a non-operator harness flooding actions faster than a human could pilot is Held
         // without even auditing -- defeats approval-fatigue + auditor-flood. The operator's manual actions are exempt.
         if (!string.Equals(action.ByHarness, OperatorMarker, StringComparison.OrdinalIgnoreCase)
@@ -136,6 +160,16 @@ public sealed class CuBroker
         {
             verdict = exVerdict;
             if (exVerdict.Decision != CuDecision.Allow) state = CuActionState.Held;
+        }
+
+        // INV-15 (propose-not-act default): a Desktop action from a driver lands HELD for the operator even on an
+        // auditor Allow (DesktopAutoGrant OFF by default), so a compromised channel cannot act without a human in the
+        // loop. The operator's own actions, and an explicitly opted-in auto-grant, skip this.
+        if (action.Modality == CuModality.Desktop && state == CuActionState.Approved && !DesktopAutoGrant
+            && !string.Equals(action.ByHarness, OperatorMarker, StringComparison.OrdinalIgnoreCase))
+        {
+            state = CuActionState.Held;
+            verdict = CuVerdict.Hold("broker", "desktop action held for operator approval (auto-grant off)");
         }
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
@@ -184,7 +218,7 @@ public sealed class CuBroker
                      .OrderBy(i => i.CreatedAt))
         {
             if (batch.Count >= n) break;
-            if (!CanDrive(item.Action.ByHarness, isOperator: false))
+            if (!CanDriveModality(item.Action.ByHarness, isOperator: false, item.Action.Modality))   // INV-14 at delivery
             {
                 _items[item.ActionId] = item with
                 {
@@ -329,6 +363,21 @@ public sealed class CuBroker
         DriverPersister?.Invoke(Driver);
     }
 
+    /// <summary>Enroll an explicit DESKTOP driver id (e.g. "local-agent-host") additively, PRESERVING any existing
+    /// browser "*" - the set can become ["*", "local-agent-host"], i.e. browser=any but desktop=only this enrolled id
+    /// (INV-14: "*" never authorizes Desktop, so the wildcard is harmless here and the explicit id is required). This is
+    /// a DERIVED in-memory enrollment, NOT persisted - the App re-applies it each startup from the sealed
+    /// CuDriverHostEnabled flag (which is itself presence-gated to arm), so it can't be turned on by a settings edit
+    /// alone. Does NOT collapse "*" (unlike SetDrivers) and does NOT call the persister.</summary>
+    public void EnrollDesktopDriver(string id)
+    {
+        var norm = (id ?? string.Empty).Trim().ToLowerInvariant();
+        if (norm.Length == 0 || norm == "*") return;
+        var d = _drivers;
+        if (d.Contains(norm)) return;
+        _drivers = [.. d, norm];
+    }
+
     public bool CanDrive(string? harnessId, bool isOperator)
     {
         if (isOperator || string.Equals(harnessId, OperatorMarker, StringComparison.OrdinalIgnoreCase)) return true;
@@ -352,6 +401,10 @@ public sealed class CuBroker
         if (d.Contains("*")) return true;
         return id is not null && d.Contains(id);
     }
+
+    /// <summary>Opt-in: let a desktop action that audits to Allow proceed without operator approval. Default OFF, so a
+    /// desktop action from a driver is always Held for the operator (INV-15). The App wires this from settings.</summary>
+    public bool DesktopAutoGrant { get; set; }
 
     // ── Pinned shared-attention (focus-lock) ─────────────────────────────────────
 

@@ -61,6 +61,7 @@ public static class SettingsSeal
             // Foreman launches as the agent - seal them so any change flips the verdict to Tampered (revert + alert).
             cuDesktop       = s.CuDesktopEnabled,
             cuDriverHost    = s.CuDriverHostEnabled,
+            cuAutoGrant     = s.CuDesktopAutoGrant,
             cuDriver        = s.CuDriver ?? "",
             cuAgentCommand  = s.CuAgentCommand ?? "",
             cuAgentArgs     = s.CuAgentArguments ?? "",

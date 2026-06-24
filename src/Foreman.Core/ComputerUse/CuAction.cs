@@ -51,4 +51,21 @@ public static class CuVerbs
     };
 
     public static bool IsCursorMoving(string? verb) => CursorMoving.Contains((verb ?? string.Empty).Trim());
+
+    // The ONLY verbs a DESKTOP action may carry. An unknown or over-length verb is rejected at the broker before it can
+    // reach the auditor or the injector (defense in depth - the injector also rejects unknown verbs), so a crafted verb
+    // from a relayed agent proposal cannot smuggle through.
+    // Aligned with what CuInputInjector actually executes (move/left_click/right_click/middle_click/scroll/key/type)
+    // plus the read-only capture verbs. Anything else is rejected at the broker (the injector also rejects unknowns).
+    private static readonly HashSet<string> DesktopVerbs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "move", "left_click", "right_click", "middle_click", "scroll", "key", "type",
+        "screenshot", "read", "status", "snapshot",
+    };
+
+    public static bool IsKnownDesktop(string? verb)
+    {
+        var v = (verb ?? string.Empty).Trim();
+        return v.Length is > 0 and <= 40 && DesktopVerbs.Contains(v);
+    }
 }

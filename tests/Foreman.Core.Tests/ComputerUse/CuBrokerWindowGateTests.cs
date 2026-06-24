@@ -21,7 +21,7 @@ public sealed class CuBrokerWindowGateTests
     public async Task NoBoundWindow_DesktopStateChange_Held()
     {
         var b = Broker();
-        var item = await b.SubmitAsync(Desk("click"), new CuContext());
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());
         Assert.Equal(CuActionState.Held, item.State);   // no window bound -> held until the operator binds one
     }
 
@@ -30,7 +30,7 @@ public sealed class CuBrokerWindowGateTests
     {
         var b = Broker();
         b.SetActiveWindow(Win(100));
-        var item = await b.SubmitAsync(Desk("click"), new CuContext());   // no explicit hwnd -> runs in the bound window
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());   // no explicit hwnd -> runs in the bound window
         Assert.Equal(CuActionState.Approved, item.State);
     }
 
@@ -39,7 +39,7 @@ public sealed class CuBrokerWindowGateTests
     {
         var b = Broker();
         b.SetActiveWindow(Win(100));
-        var item = await b.SubmitAsync(Desk("click", new() { ["hwnd"] = "200" }), new CuContext());
+        var item = await b.SubmitAsync(Desk("left_click", new() { ["hwnd"] = "200" }), new CuContext());
         Assert.Equal(CuActionState.Held, item.State);
     }
 
@@ -67,7 +67,7 @@ public sealed class CuBrokerWindowGateTests
     {
         var b = Broker();
         b.SetActiveWindow(Win(100));
-        var item = await b.SubmitAsync(Desk("click"), new CuContext());
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());
         var claimed = b.Claim(10);
         Assert.Single(claimed);
         Assert.Equal("100", claimed[0].Action.Arg("hwnd"));            // executor can't pick another window
@@ -79,7 +79,7 @@ public sealed class CuBrokerWindowGateTests
     {
         var b = Broker();
         b.SetActiveWindow(Win(100));
-        var item = await b.SubmitAsync(Desk("click"), new CuContext());
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());
         Assert.Equal(CuActionState.Approved, item.State);
         b.SetActiveWindow(Win(300));                     // operator switches the bound window (Epoch bumps)
         Assert.Empty(b.Claim(10));                        // the approved action is re-held, never auto-retargeted
@@ -111,7 +111,7 @@ public sealed class CuBrokerWindowGateTests
     {
         var b = Broker();
         b.SetActiveWindow(Win(100));
-        var item = await b.SubmitAsync(Desk("click"), new CuContext());
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());
         Assert.Equal(CuActionState.Approved, item.State);
         b.OnPanicHalt();
         Assert.Equal(CuActionState.Rejected, b.Get(item.ActionId)!.State);   // queue invalidated on panic

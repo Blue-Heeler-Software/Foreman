@@ -265,6 +265,7 @@ public partial class App : Application
             try { SettingsStore.Save(settings); } catch { /* in-memory driver still applies this session */ }
         };
         cuBroker.AllowTabOverride = settings.CuTabOverride;   // opt-in: off-focus changes may proceed if justified
+        cuBroker.DesktopAutoGrant = settings.CuDesktopAutoGrant;   // INV-15: default OFF -> desktop actions land Held
         // Operator HUD overlay: announce AI piloting (localised safe flash + shake) when a CU action starts running.
         // Held by the broker's OnExecuting closure, so it lives for the app lifetime; marshalled to the UI thread.
         var cuOverlay = new Foreman.App.ComputerUse.CuOverlayWindow();
@@ -282,6 +283,10 @@ public partial class App : Application
         _tray.Panic = panicController;
         // Keep the tray STOP/RESUME label correct even when a halt/resume doesn't change the tray status colour.
         panicState.Changed += _ => Dispatcher.BeginInvoke(new Action(() => _tray?.RefreshMenu()));
+        // INV-20: on panic, the broker rejects every pending/in-flight DESKTOP item and bumps the panic epoch so a stale
+        // relayed proposal can't execute post-halt. Unconditional (fires even when desktop CU isn't armed - the desktop
+        // queue is then simply empty), so it never depends on the arm block running.
+        panicState.Changed += halted => { if (halted) cuBroker.OnPanicHalt(); };
         _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
             () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
         if (!_panicHotkey.Registered)
@@ -340,15 +345,31 @@ public partial class App : Application
             }
             if (settings.CuDriverHostEnabled)
             {
+                // INV-14: enroll the local-agent-host id as a DESKTOP driver. Derived from the sealed + presence-armed
+                // CuDriverHostEnabled flag and re-applied each startup (never persisted), so a settings edit alone can't
+                // enroll it. After this the broker's CanDriveModality(Desktop) admits exactly this id.
+                cuBroker.EnrollDesktopDriver(Foreman.Core.ComputerUse.LocalDriverIpc.LocalAgentHostId);
+
                 _pilotChannel = new Foreman.App.ComputerUse.PilotChannelController();
                 if (!string.IsNullOrWhiteSpace(settings.CuAgentCommand))
                     _pilotChannel.AgentSpec = new Foreman.Core.ComputerUse.StartAgentArgs(
                         settings.CuAgentCommand!, settings.CuAgentArguments, settings.CuAgentWorkingDir);
-                // L4: a relayed agent proposal arrives as a trusted, rebuilt CuAction. For now surface it (the in-process
-                // broker submit + audit + default-Held is wired in L5). Logged so the operator sees the agent proposing.
-                _pilotChannel.OnDriverSubmit = action => EventBus.Instance.Publish(new MonitoringNoticeEvent(
-                    DateTimeOffset.UtcNow, ForemanSeverity.Info, "Foreman.LocalAgentHost",
-                    $"Local agent proposed: {action.Verb} (held pending the L5 in-process audit/submit)."));
+                // L5: a relayed agent proposal arrives as a trusted, rebuilt CuAction -> submit it into the AUDITED
+                // broker. The broker rejects unknown verbs + unauthorized drivers and, with auto-grant OFF, lands every
+                // desktop action HELD for the operator (INV-15). Fire-and-forget: the operator acts on the Held item via
+                // the HUD/dashboard; nothing executes without approval.
+                _pilotChannel.OnDriverSubmit = action =>
+                {
+                    var ctx = new Foreman.Core.ComputerUse.CuContext(
+                        Foreman.Core.ComputerUse.LocalDriverIpc.LocalAgentHostId);
+                    _ = cuBroker.SubmitAsync(action, ctx).ContinueWith(t =>
+                    {
+                        if (t.IsCompletedSuccessfully)
+                            EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow,
+                                ForemanSeverity.Info, "Foreman.LocalAgentHost",
+                                $"Local agent proposed: {action.Verb} -> {t.Result.State}."));
+                    }, TaskScheduler.Default);
+                };
             }
 
             panicState.Changed += halted =>

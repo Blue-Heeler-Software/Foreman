@@ -61,6 +61,11 @@ public sealed class ForemanSettings
     public string? CuAgentArguments { get; set; }
     public string? CuAgentWorkingDir { get; set; }
 
+    /// <summary>Opt-in: let a desktop action that audits to Allow proceed WITHOUT operator approval. OFF by default
+    /// (INV-15 propose-not-act) - every desktop action from a driver is Held for the operator. Sealed (a settings edit
+    /// flipping this on is tamper-detected). Leave off unless you accept unattended desktop autonomy.</summary>
+    public bool CuDesktopAutoGrant { get; set; }
+
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
 
