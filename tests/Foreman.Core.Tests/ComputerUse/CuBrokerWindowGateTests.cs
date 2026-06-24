@@ -117,4 +117,23 @@ public sealed class CuBrokerWindowGateTests
         Assert.Equal(CuActionState.Rejected, b.Get(item.ActionId)!.State);   // queue invalidated on panic
         Assert.Empty(b.Claim(10));
     }
+
+    private sealed class DeadProbe : IDesktopWindowProbe
+    {
+        public CuWindowRef? CaptureForeground() => null;
+        public bool IsAlive(CuWindowRef w) => false;          // the bound window is gone / its handle was recycled
+        public IntPtr RootOwner(IntPtr hwnd) => hwnd;
+    }
+
+    [Fact]
+    public async Task Claim_BoundWindowNotAlive_ReHeld()
+    {
+        var b = Broker();
+        b.WindowProbe = new DeadProbe();
+        b.SetActiveWindow(Win(100));
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);
+        Assert.Empty(b.Claim(10));                              // probe reports the window gone -> never delivered (INV-2)
+        Assert.Equal(CuActionState.Held, b.Get(item.ActionId)!.State);
+    }
 }

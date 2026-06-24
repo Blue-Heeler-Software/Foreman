@@ -279,6 +279,7 @@ public partial class App : Application
         };
         cuBroker.AllowTabOverride = settings.CuTabOverride;   // opt-in: off-focus changes may proceed if justified
         cuBroker.DesktopAutoGrant = settings.CuDesktopAutoGrant;   // INV-15: default OFF -> desktop actions land Held
+        cuBroker.WindowProbe = new Foreman.App.ComputerUse.Win32WindowProbe();   // INV-2: recycled-handle re-gate at Claim
         // Operator HUD overlay: announce AI piloting (localised safe flash + shake) when a CU action starts running.
         // Held by the broker's OnExecuting closure, so it lives for the app lifetime; marshalled to the UI thread.
         var cuOverlay = new Foreman.App.ComputerUse.CuOverlayWindow();

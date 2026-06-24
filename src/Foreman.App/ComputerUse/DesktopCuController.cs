@@ -317,6 +317,18 @@ public sealed class DesktopCuController : IDisposable
             return null;
         }
 
+        // INV-19: re-check the tamper canary on EVERY round-trip, not just the 2s heartbeat - the App's own panic/bind
+        // bytes must never have changed except when the App wrote them. A divergence mid-action means another writer
+        // (PROCESS_VM_WRITE / handle-dup residual) touched the map: kill + halt before trusting any result.
+        if (PanicFlag is { } pf && pf.DetectTamper())
+        {
+            Notice(ForemanSeverity.Critical,
+                "Shared panic map tampered during a desktop CU action - hard-killing the sidecar and halting (INV-19).");
+            KillSidecarNow();
+            try { OnVerificationFailure?.Invoke(); } catch { }
+            return new ExecuteActionResult(false, "panic map tampered mid-action (INV-19)");
+        }
+
         ExecuteActionResult? result;
         try
         {
