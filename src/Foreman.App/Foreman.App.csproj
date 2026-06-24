@@ -22,6 +22,8 @@
     <ProjectReference Include="..\Foreman.Guardian\Foreman.Guardian.csproj" ReferenceOutputAssembly="false" />
     <!-- Medium-IL desktop computer-use sidecar (separate process, launched on demand by DesktopCuController). -->
     <ProjectReference Include="..\Foreman.CuSidecar\Foreman.CuSidecar.csproj" ReferenceOutputAssembly="false" />
+    <!-- Medium-IL Local Agent Host pilot shim (separate process, launched on demand by PilotChannelController). -->
+    <ProjectReference Include="..\Foreman.CuPilot\Foreman.CuPilot.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Stage the sidecar under <app>\sidecar so ElevatedSidecarController can launch it. -->
@@ -41,6 +43,16 @@
     </ItemGroup>
     <Copy SourceFiles="@(_CuSidecarOutput)"
           DestinationFiles="@(_CuSidecarOutput->'$(OutDir)cu-sidecar\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Stage the Local Agent Host pilot shim under <app>\cu-pilot so PilotChannelController can launch it. -->
+  <Target Name="CopyCuPilot" AfterTargets="Build">
+    <ItemGroup>
+      <_CuPilotOutput Include="$(MSBuildThisFileDirectory)..\Foreman.CuPilot\bin\$(Configuration)\$(TargetFramework)\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_CuPilotOutput)"
+          DestinationFiles="@(_CuPilotOutput->'$(OutDir)cu-pilot\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 

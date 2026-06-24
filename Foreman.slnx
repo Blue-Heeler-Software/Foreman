@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Foreman.App/Foreman.App.csproj" />
     <Project Path="src/Foreman.Core/Foreman.Core.csproj" />
+    <Project Path="src/Foreman.CuPilot/Foreman.CuPilot.csproj" />
     <Project Path="src/Foreman.CuSidecar/Foreman.CuSidecar.csproj" />
     <Project Path="src/Foreman.EtwSidecar/Foreman.EtwSidecar.csproj" />
     <Project Path="src/Foreman.Guardian/Foreman.Guardian.csproj" />

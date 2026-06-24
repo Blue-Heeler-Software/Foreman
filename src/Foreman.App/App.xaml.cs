@@ -24,7 +24,9 @@ public partial class App : Application
     private TrayController? _tray;
     private Foreman.App.ComputerUse.PanicHotkey? _panicHotkey;
     private Foreman.App.ComputerUse.DesktopCuController? _desktopCu;
+    private Foreman.App.ComputerUse.PilotChannelController? _pilotChannel;
     private System.IO.FileStream? _cuSidecarPin;
+    private System.IO.FileStream? _cuPilotPin;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -292,31 +294,47 @@ public partial class App : Application
         // cannot swap it AT REST. Done REGARDLESS of CuDesktopEnabled: the at-rest window is exactly when the feature
         // is off (the file is otherwise unlocked), and on an unsigned dev build this lock - not Authenticode - is the
         // integrity safeguard for the binary that can later be granted input authority.
+        // Pin BOTH desktop-CU sidecar binaries (injector + pilot shim) write/delete-locked for the app's whole
+        // lifetime so a same-user process cannot swap either AT REST. Done REGARDLESS of the feature toggles: the
+        // at-rest window is exactly when the feature is off, and on an unsigned dev build this lock - not Authenticode -
+        // is the integrity safeguard for a binary that can later be granted input authority.
         _cuSidecarPin = Foreman.App.ComputerUse.DesktopCuController.PinBinaryAtRest();
+        _cuPilotPin = Foreman.App.ComputerUse.PilotChannelController.PinBinaryAtRest();
 
-        // Desktop computer-use sidecar (Slice 3: integrity + identity + nonce handshake only; capture/input land in
-        // later slices). OFF by default and never reachable over MCP (INV-7) - the operator opts in via
-        // CuDesktopEnabled. When on, the App launches the medium-IL sidecar, verifies it three ways, and mirrors the
-        // panic halt into the shared flag the sidecar reads, so the same STOP that halts browser CU reaches it too.
-        if (settings.CuDesktopEnabled)
+        // Desktop computer-use + Local Agent Host (off by default; never reachable over MCP, INV-7). When either is on,
+        // the App launches the relevant signed medium-IL helper, verifies it three ways, and wires the ACTIVE panic
+        // floor that on halt hard-kills BOTH helpers (INV-3 + INV-20 KillPilotNow) + BlockInput shield + release-all +
+        // an independent watchdog - independent of which feature armed it, and not dependent on any helper noticing.
+        if (settings.CuDesktopEnabled || settings.CuDriverHostEnabled)
         {
-            var cuPanicFlag = new Foreman.App.ComputerUse.CuSharedPanicFlag();
-            cuPanicFlag.SetHalted(panicState.IsHalted);
-            _desktopCu = new Foreman.App.ComputerUse.DesktopCuController { PanicFlag = cuPanicFlag };
-            // The ACTIVE panic floor (INV-3): on halt, BlockInput shield + synthetic release-all + hard-kill the
-            // injector sidecar + an independent watchdog that always restores input. The MMF byte (below) is only the
-            // fast in-sidecar abort; this floor does NOT depend on the sidecar noticing it.
-            var cuFloor = new Foreman.App.ComputerUse.CuDesktopPanicFloor(() => _desktopCu?.KillSidecarNow() ?? false);
+            var cuFloor = new Foreman.App.ComputerUse.CuDesktopPanicFloor(() =>
+            {
+                var killedSidecar = _desktopCu?.KillSidecarNow() ?? false;
+                var killedPilot = _pilotChannel?.KillPilotNow() ?? false;
+                return killedSidecar || killedPilot;
+            });
+
+            Foreman.App.ComputerUse.CuSharedPanicFlag? cuPanicFlag = null;
+            if (settings.CuDesktopEnabled)
+            {
+                cuPanicFlag = new Foreman.App.ComputerUse.CuSharedPanicFlag();
+                cuPanicFlag.SetHalted(panicState.IsHalted);
+                _desktopCu = new Foreman.App.ComputerUse.DesktopCuController { PanicFlag = cuPanicFlag };
+                // INV-5: a result that fails the App's independent foreground check escalates to a full halt.
+                _desktopCu.OnVerificationFailure = () =>
+                    panicController.Halt("desktop CU result failed independent verification (INV-5)");
+            }
+            if (settings.CuDriverHostEnabled)
+                _pilotChannel = new Foreman.App.ComputerUse.PilotChannelController();
+
             panicState.Changed += halted =>
             {
-                cuPanicFlag.SetHalted(halted);   // fast in-sidecar abort
-                if (halted) cuFloor.Trigger();   // hard floor (kill + BlockInput + release-all)
+                cuPanicFlag?.SetHalted(halted);   // fast in-sidecar abort (desktop injector)
+                if (halted) cuFloor.Trigger();    // hard floor: kill both helpers + BlockInput + release-all
             };
-            // INV-5: a result that fails the App's independent foreground check escalates to a full halt (the sidecar
-            // is already locally killed by the controller before this fires).
-            _desktopCu.OnVerificationFailure = () =>
-                panicController.Halt("desktop CU result failed independent verification (INV-5)");
-            _desktopCu.Start();
+
+            _desktopCu?.Start();
+            _pilotChannel?.Start();
         }
 
         // AlertDetailWindow's data + action dependencies, set once as one object (required members, so a

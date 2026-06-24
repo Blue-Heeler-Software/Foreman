@@ -48,6 +48,12 @@ public sealed class ForemanSettings
     /// in-process only, never offered over MCP (spec INV-7). When set, the App launches and handshakes the sidecar.</summary>
     public bool CuDesktopEnabled { get; set; }
 
+    /// <summary>Opt-in: enable the Local Agent Host - Foreman launches a signed Pilot shim so a LOCAL AI agent can
+    /// pilot the desktop through the audited path (spec L3+; never the network, never MCP). OFF by default; arming
+    /// additionally requires an enrolled presence credential (INV-16). When set, the App launches + handshakes the
+    /// pilot shim.</summary>
+    public bool CuDriverHostEnabled { get; set; }
+
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
 
