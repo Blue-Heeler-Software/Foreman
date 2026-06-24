@@ -50,8 +50,11 @@ public sealed class PanicController
     public async Task<(bool Ok, string Message)> ResumeAsync()
     {
         if (!_panic.IsHalted) return (true, "Computer use is not halted.");
+        // The panic STOP is the operator's emergency brake; releasing it is a CU-sovereignty action that demands a
+        // FRESH presence tap REGARDLESS of the lock being off / unconfigured, and never rides the approval cache
+        // (spec INV-16). forcePresence + freshTap, not the defaults - shipping without these left resume ungated.
         if (!await PresenceGuard.AuthorizeAsync(WeakeningAction.ResumeComputerUse,
-                "resume computer use after a panic stop").ConfigureAwait(false))
+                "resume computer use after a panic stop", forcePresence: true, freshTap: true).ConfigureAwait(false))
             return (false, "Presence not verified — computer use stays halted.");
 
         _panic.Resume();

@@ -18,9 +18,16 @@ public static class LocalDriverIpc
     /// <summary>The single authenticated id the shim stamps on every relayed submit (App-set, never agent-supplied).</summary>
     public const string LocalAgentHostId = "local-agent-host";
 
-    // Even though DriverSubmit has no hwnd/identity FIELDS, the free-form Args map could still smuggle these keys to try
-    // to pre-stamp the bound window or spoof identity - so they are stripped when the App builds the action (INV-12/17).
-    private static readonly string[] Reserved = { "hwnd", "epoch", "modality", "byharness", "isolation", "sessionid" };
+    // Reserved keys an agent must NOT be able to assert via the free-form Args map: the bound window / identity /
+    // modality (INV-12), AND the descriptors the Desktop AUDITOR judges - windowClass/windowTitle (the consent-surface
+    // Block) + targetLabel/targetRole (the sensitive-control Hold and the no-target Hold). Those must be supplied by
+    // the trusted probe at delivery (INV-1), never agent-asserted, or a hostile agent steers its own audit verdict
+    // (claim targetLabel="OK", omit windowClass/windowTitle, and a click on a real credential dialog sails through).
+    private static readonly string[] Reserved =
+    {
+        "hwnd", "epoch", "modality", "byharness", "isolation", "sessionid",
+        "windowclass", "windowtitle", "targetlabel", "targetrole", "justification",
+    };
 
     /// <summary>
     /// Build the trusted desktop CuAction from a driver's proposal: App-set Modality=Desktop, App-set
@@ -34,6 +41,10 @@ public static class LocalDriverIpc
             foreach (var kv in s.Args)
                 if (!Reserved.Contains(kv.Key.Trim().ToLowerInvariant()))
                     safe[kv.Key] = kv.Value;
+
+        // The agent's claimed rationale travels ONLY via the typed field, into a reserved slot it cannot write directly
+        // (a free-form "justification" arg is stripped above) - the HUD/gate renders this as agent-CLAIMED, not trusted.
+        if (!string.IsNullOrWhiteSpace(s.Justification)) safe["agentJustification"] = s.Justification!.Trim();
 
         return new CuAction(CuModality.Desktop, s.Verb ?? string.Empty, safe,
             ByHarness: LocalAgentHostId, ActionId: string.IsNullOrWhiteSpace(s.ActionId) ? null : s.ActionId);
