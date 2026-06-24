@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using Foreman.Core.ComputerUse;
 
 /// <summary>
@@ -59,6 +60,13 @@ internal static class CuInputInjector
                     if (SendInput(1, new[] { inp }, Marshal.SizeOf<INPUT>()) != 1) { Flush(owed, args.DryRun); return Fail("SendInput rejected"); }
                     if (owe is INPUT up) owed.Add(up);                                  // a DOWN: owe its UP
                     else if (pays && owed.Count > 0) owed.RemoveAt(owed.Count - 1);     // the UP: paid (LIFO - pairs are adjacent)
+                    // Pace after EVERY input (both the DOWN and the UP). A target with an async text-input pipeline (the
+                    // Win11 Notepad XAML island) processes injected events on a separate thread; under a tight burst it
+                    // loses intermediate key-UPs, so the last key "sticks" and auto-repeats ("from" -> "mmmm"). A gap
+                    // after each event lets the down register, then the up, before the next char. Panic stays responsive
+                    // (the next step's top-of-loop gate runs after at most this delay; Flush releases anything held), and
+                    // MaxStepsPerGesture keeps the total within the controller's request timeout.
+                    if (InterKeyDelayMs > 0) Thread.Sleep(InterKeyDelayMs);
                 }
 
                 if (!Confined(bound, foremanPid, out var why2)) { Flush(owed, args.DryRun); return Fail("foreground changed during input: " + why2); }
@@ -104,7 +112,11 @@ internal static class CuInputInjector
     }
 
     // A step is (the INPUT to send, the UP it owes if it is a DOWN else null, whether it is the UP that pays a prior owe).
-    private const int MaxStepsPerGesture = 120;   // one ExecuteAction must fit the request budget; the pump splits longer
+    // One ExecuteAction must finish within the controller's request timeout (5s). With InterKeyDelayMs pacing the
+    // worst-case time is MaxStepsPerGesture * InterKeyDelayMs (80 * 40ms = 3.2s) - kept comfortably under 5s. The
+    // executor pump splits longer text into multiple <=40-char gestures.
+    private const int MaxStepsPerGesture = 80;
+    private const int InterKeyDelayMs = 40;        // gap after each input so async text targets don't drop/coalesce chars
 
     private static List<(INPUT inp, INPUT? owe, bool pays)>? BuildSteps(ExecuteActionArgs args, IntPtr bound, out string err)
     {

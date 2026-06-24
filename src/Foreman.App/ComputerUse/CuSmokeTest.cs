@@ -54,7 +54,14 @@ internal static class CuSmokeTest
             // 1. Launch Notepad and find its top-level window. On Win11 notepad.exe is a packaged app, so the launched
             //    Process's MainWindowHandle never populates (the window belongs to a different PID) - enumerate windows
             //    by title instead, which is PID-agnostic.
-            np = Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true });
+            // Kill any stray Notepad first so FindWindowByTitle can't bind a STALE window from a prior run (the new
+            // Notepad's session-restore + unreliable kill otherwise leaves old windows that accumulate text).
+            foreach (var stale in Process.GetProcessesByName("notepad")) { try { stale.Kill(); } catch { } }
+            await Task.Delay(400).ConfigureAwait(false);
+            // Launch on a FRESH empty temp file so the new Notepad opens a clean document instead of restoring tabs.
+            var tmp = Path.Combine(Path.GetTempPath(), "foreman-cu-fidelity.txt");
+            try { File.WriteAllText(tmp, string.Empty); } catch { }
+            np = Process.Start(new ProcessStartInfo("notepad.exe") { Arguments = $"\"{tmp}\"", UseShellExecute = true });
             IntPtr hwnd = IntPtr.Zero;
             for (var i = 0; i < 60 && hwnd == IntPtr.Zero; i++)
             {
