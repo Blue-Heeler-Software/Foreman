@@ -60,6 +60,12 @@ public partial class App : Application
         // controller->sidecar->SendInput path against Notepad + a panic test, writes a temp log, and exits. Branches
         // BEFORE the single-instance mutex + the full app wiring so it can run standalone alongside a real instance.
         // DEBUG-only: excluded from release builds entirely (zero shipping surface).
+        if (e.Args.Contains(ComputerUse.CuSmokeTest.FlagHud))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            ComputerUse.CuSmokeTest.RunHudToFileAndExit(this);
+            return;
+        }
         if (e.Args.Contains(ComputerUse.CuSmokeTest.FlagE2E))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

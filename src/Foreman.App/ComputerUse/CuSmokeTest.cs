@@ -23,10 +23,12 @@ internal static class CuSmokeTest
 {
     public const string Flag = "--cu-smoketest";        // injector-only path (controller -> sidecar -> SendInput)
     public const string FlagE2E = "--cu-smoketest-e2e";  // full stack: broker -> approve -> pump -> inject
+    public const string FlagHud = "--cu-smoketest-hud";  // INV-18 HUD occlusion-ack plumbing
     public static string LogPath => Path.Combine(Path.GetTempPath(), "foreman-cu-smoketest.log");
 
     public static void RunToFileAndExit(Application app) => RunCore(app, RunAsync);
     public static void RunE2EToFileAndExit(Application app) => RunCore(app, RunE2EAsync);
+    public static void RunHudToFileAndExit(Application app) => RunCore(app, () => RunHudTestAsync(app));
 
     private static void RunCore(Application app, Func<Task<(int code, string report)>> run)
     {
@@ -269,6 +271,40 @@ internal static class CuSmokeTest
             try { if (notepadPid != 0) Process.GetProcessById(notepadPid).Kill(); } catch { }
             try { if (np is { HasExited: false }) np.Kill(); } catch { }
         }
+    }
+
+    // INV-18 plumbing proof: the real CuOverlayWindow's adversarial ConfirmVisible() must return TRUE when the banner
+    // is up on a normal desktop, FALSE when it isn't visible. (Foreign-window occlusion is excluded by the own-PID
+    // filter + unit-tested via FakeHud; this exercises the real Win32/DWM plumbing on-device.)
+    private static async Task<(int code, string report)> RunHudTestAsync(Application app)
+    {
+        var sb = new StringBuilder();
+        void Log(string m) => sb.AppendLine(m);
+        Log("=== Foreman desktop-CU HUD occlusion-ack plumbing test (INV-18, on-device) ===");
+        CuOverlayWindow? hud = null;
+        try
+        {
+            await app.Dispatcher.InvokeAsync(() => { hud = new CuOverlayWindow(); hud.EnsureShown(); });
+            await Task.Delay(900).ConfigureAwait(false);
+            var v1 = hud!.ConfirmVisible();
+            Log($"HUD shown (normal desktop)  -> ConfirmVisible = {v1} (expect True)");
+
+            await app.Dispatcher.InvokeAsync(() => hud!.Hide());
+            await Task.Delay(500).ConfigureAwait(false);
+            var v2 = hud.ConfirmVisible();
+            Log($"HUD hidden                  -> ConfirmVisible = {v2} (expect False)");
+
+            await app.Dispatcher.InvokeAsync(() => hud!.EnsureShown());
+            await Task.Delay(700).ConfigureAwait(false);
+            var v3 = hud.ConfirmVisible();
+            Log($"HUD re-shown                -> ConfirmVisible = {v3} (expect True)");
+
+            var pass = v1 && !v2 && v3;
+            Log("");
+            Log($"OVERALL: {(pass ? "PASS" : "FAIL")}");
+            return (pass ? 0 : 10, sb.ToString());
+        }
+        finally { try { await app.Dispatcher.InvokeAsync(() => hud?.Close()); } catch { } }
     }
 
     // Best-effort readback via UI Automation (works across classic + Win11 Notepad's document control). Null if the

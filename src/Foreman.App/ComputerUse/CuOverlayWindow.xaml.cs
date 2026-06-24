@@ -34,6 +34,9 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+    [DllImport("shell32.dll")] private static extern int SHQueryUserNotificationState(out int state);
+
+    private const int QUNS_BUSY = 2, QUNS_RUNNING_D3D_FULL_SCREEN = 3, QUNS_PRESENTATION_MODE = 4;
 
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
 
@@ -125,6 +128,14 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
         if (h == IntPtr.Zero || !IsWindowVisible(h)) return false;
         if (IsCloaked(h)) return false;
         if ((GetWindowLong(h, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) return false;
+
+        // INV-18 forced handoff: a full-screen-exclusive (D3D) / presentation app can paint over everything WITHOUT
+        // being a normal window above us in the z-order, so the walk below can't see it - the shell's notification state
+        // does. Treat any full-screen/presentation/busy state as "HUD cannot be trusted visible" and fail closed.
+        if (SHQueryUserNotificationState(out var quns) == 0 &&
+            (quns == QUNS_BUSY || quns == QUNS_RUNNING_D3D_FULL_SCREEN || quns == QUNS_PRESENTATION_MODE))
+            return false;
+
         if (!GetWindowRect(h, out var hud) || hud.Right <= hud.Left || hud.Bottom <= hud.Top) return false;
 
         // Any VISIBLE, non-cloaked, non-own window higher in the z-order whose rect overlaps the banner = occlusion.
