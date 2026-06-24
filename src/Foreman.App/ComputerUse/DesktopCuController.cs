@@ -304,6 +304,16 @@ public sealed class DesktopCuController : IDisposable
     {
         if (!_connected) return null;
         var bound = PanicFlag?.BoundHwnd ?? 0;
+        // INV-2: the action must target the window it was APPROVED against. If the operator re-bound the CU window
+        // between approval/Claim and now, args.BoundHwnd (the approved-against window) no longer matches the live bound
+        // window - refuse rather than redirect the action into the freshly-bound window. (The injector's per-input
+        // snap.BoundHwnd != args.BoundHwnd check is the mid-gesture backstop; this catches the pre-injection window.)
+        if (bound == 0 || args.BoundHwnd != bound)
+        {
+            Notice(ForemanSeverity.High,
+                $"Desktop CU action's bound window changed since approval (action={args.BoundHwnd}, bound now={bound}) - refusing (INV-2).");
+            return new ExecuteActionResult(false, "bound window changed since approval (INV-2)");
+        }
         var payload = B64(JsonSerializer.Serialize(args, CuJson.Options));
         var resp = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.ExecuteAction, payload), ct).ConfigureAwait(false);
 

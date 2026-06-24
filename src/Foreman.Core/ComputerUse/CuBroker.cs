@@ -344,6 +344,11 @@ public sealed class CuBroker
     {
         if (!_items.TryGetValue(actionId, out var item)) return (false, "Unknown action id.");
         if (item.State is CuActionState.Completed or CuActionState.Failed) return (false, "Already completed.");
+        // A panic that Rejected (or a Block that terminated) an in-flight item WINS the race: the pump's post-kill
+        // Complete must not overwrite that terminal state, so the audit/blackbox record of what the panic stopped stays
+        // truthful (mirrors the SubmitAsync panic-during-audit CAS guard).
+        if (item.State is CuActionState.Rejected or CuActionState.Blocked)
+            return (false, "Already terminal (panic/rejected) — not overwriting.");
         _items[actionId] = item with
         {
             State = ok ? CuActionState.Completed : CuActionState.Failed,

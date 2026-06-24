@@ -27,7 +27,11 @@ public sealed class DesktopCuExecutor : ICuExecutor
     public async Task<CuExecResult> ExecuteAsync(CuBrokerItem item, CancellationToken ct = default)
     {
         var a = item.Action;
-        var args = new ExecuteActionArgs(item.ActionId, a.Verb, a.Args, _boundHwnd());
+        // Bind to the window this action was APPROVED against - the broker stamps "hwnd" onto the action at Claim - NOT
+        // the live MMF. So if the operator re-binds between Claim and execute, args.BoundHwnd no longer matches the live
+        // bound window and the controller refuses (below) rather than redirecting the action into the new window (INV-2).
+        var boundHwnd = long.TryParse(a.Arg("hwnd"), out var h) ? h : _boundHwnd();
+        var args = new ExecuteActionArgs(item.ActionId, a.Verb, a.Args, boundHwnd);
         var r = await _controller.ExecuteAsync(args, ct).ConfigureAwait(false);
         if (r is null) return new CuExecResult(false, null, "desktop executor unavailable (sidecar killed / timed out)");
         return new CuExecResult(r.Ok, new { r.FinalHwnd, r.CursorX, r.CursorY, r.HaltedMidStream }, r.Error);

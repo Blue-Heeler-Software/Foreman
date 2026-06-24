@@ -118,6 +118,20 @@ public sealed class CuBrokerWindowGateTests
         Assert.Empty(b.Claim(10));
     }
 
+    [Fact]
+    public async Task Complete_DoesNotOverwritePanicRejected()
+    {
+        var b = Broker();
+        b.SetActiveWindow(Win(100));
+        var item = await b.SubmitAsync(Desk("left_click"), new CuContext());
+        Assert.Equal(CuActionState.Approved, item.State);
+        b.OnPanicHalt();                                                       // panic rejects the in-flight item
+        Assert.Equal(CuActionState.Rejected, b.Get(item.ActionId)!.State);
+        var (ok, _) = b.Complete(item.ActionId, ok: false, result: null, error: "killed pipe");
+        Assert.False(ok);                                                      // the pump's post-kill Complete is refused
+        Assert.Equal(CuActionState.Rejected, b.Get(item.ActionId)!.State);    // audit record stays truthful
+    }
+
     private sealed class DeadProbe : IDesktopWindowProbe
     {
         public CuWindowRef? CaptureForeground() => null;
