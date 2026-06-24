@@ -363,6 +363,11 @@ public sealed class CuBroker
 
     public CuBrokerItem? Get(string actionId) => _items.TryGetValue(actionId, out var i) ? i : null;
 
+    /// <summary>Cheap peek: is there at least one APPROVED action of this modality waiting? Lets the pump gate the HUD
+    /// occlusion check + claim only when there is work, so Approved items simply WAIT (not fail) while the HUD is occluded.</summary>
+    public bool HasApprovedFor(CuModality modality) =>
+        !_isHalted() && _items.Values.Any(i => i.State == CuActionState.Approved && i.Action.Modality == modality);
+
     public IReadOnlyList<CuBrokerItem> ListHeld() =>
         _items.Values.Where(i => i.State == CuActionState.Held).OrderBy(i => i.CreatedAt).ToList();
 

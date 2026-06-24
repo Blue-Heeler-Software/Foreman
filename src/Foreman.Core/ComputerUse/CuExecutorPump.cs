@@ -15,12 +15,18 @@ public sealed class CuExecutorPump
     private readonly CuBroker _broker;
     private readonly ICuExecutor _executor;
     private readonly int _batch;
+    private readonly IHudAck? _hud;
+    private readonly Action? _onHudWithheld;
+    private DateTimeOffset _lastHudWarn = DateTimeOffset.MinValue;
 
-    public CuExecutorPump(CuBroker broker, ICuExecutor executor, int batch = 4)
+    public CuExecutorPump(CuBroker broker, ICuExecutor executor, int batch = 4,
+        IHudAck? hud = null, Action? onHudWithheld = null)
     {
         _broker = broker;
         _executor = executor;
         _batch = Math.Clamp(batch, 1, 10);
+        _hud = hud;
+        _onHudWithheld = onHudWithheld;
     }
 
     /// <summary>Claim + execute one batch of Approved actions for this executor's modality. Returns the count run. Never
@@ -29,6 +35,26 @@ public sealed class CuExecutorPump
     public async Task<int> PumpOnceAsync(CancellationToken ct = default)
     {
         if (!_executor.IsReady) return 0;
+
+        // INV-18: before delivering ANY desktop input, the operator HUD must be confirmed VISIBLE right now (topmost +
+        // un-cloaked + un-occluded). Peek FIRST so we only raise/test the HUD when there is approved work, then fail
+        // CLOSED if it can't be confirmed: we don't even Claim, so the Approved items simply WAIT (never execute behind a
+        // hidden HUD, never terminally fail) and resume the instant the HUD is visible again.
+        if (_hud is not null)
+        {
+            if (!_broker.HasApprovedFor(_executor.Modality)) return 0;
+            _hud.EnsureShown();
+            if (!_hud.ConfirmVisible())
+            {
+                if (DateTimeOffset.UtcNow - _lastHudWarn > TimeSpan.FromSeconds(5))
+                {
+                    _lastHudWarn = DateTimeOffset.UtcNow;
+                    try { _onHudWithheld?.Invoke(); } catch { /* warning is best-effort */ }
+                }
+                return 0;
+            }
+        }
+
         var batch = _broker.Claim(_batch, _executor.Modality);
         var ran = 0;
         foreach (var item in batch)

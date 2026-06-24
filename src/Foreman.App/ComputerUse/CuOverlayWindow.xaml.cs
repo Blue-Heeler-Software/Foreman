@@ -15,14 +15,27 @@ namespace Foreman.App.ComputerUse;
 /// after a few idle seconds. It is click-through (WS_EX_TRANSPARENT) and never activates (WS_EX_NOACTIVATE) so it
 /// can't steal focus or be driven into. Sizing/frequency are safe defaults today; operator config comes later.
 /// </summary>
-public partial class CuOverlayWindow : Window
+public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
 {
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_TRANSPARENT = 0x20;
     private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_TOPMOST = 0x00000008;
+    private const uint GW_HWNDPREV = 3;                 // walks UP the z-order (toward the top)
+    private const int DWMWA_CLOAKED = 14;
+    private static readonly uint OurPid = (uint)Environment.ProcessId;
+
+    private IntPtr _hwnd;   // cached so ConfirmVisible can run OFF the UI thread (the pump calls it from its loop)
 
     [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr hwnd, out RECT rc);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
 
     private readonly DispatcherTimer _hide;
     private static readonly TimeSpan AnnounceFor = TimeSpan.FromSeconds(4);   // 3-7s "fireworks" window
@@ -40,6 +53,7 @@ public partial class CuOverlayWindow : Window
         base.OnSourceInitialized(e);
         // Click-through + never-activate, so the HUD floats over everything without intercepting input or focus.
         var h = new WindowInteropHelper(this).Handle;
+        _hwnd = h;   // cache for the off-UI-thread ConfirmVisible occlusion test
         SetWindowLong(h, GWL_EXSTYLE, GetWindowLong(h, GWL_EXSTYLE) | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     }
 
@@ -85,4 +99,48 @@ public partial class CuOverlayWindow : Window
         };
         Shake.BeginAnimation(TranslateTransform.XProperty, shake);
     }
+
+    // ── IHudAck (spec INV-8 / INV-18) ──────────────────────────────────────────────────────────────────
+
+    /// <summary>Raise/keep the piloting banner up (sticky). The pump calls this every tick while there is approved work,
+    /// so the idle auto-hide only fires once piloting stops. Marshals to the UI thread; animates only on first appearance.</summary>
+    public void EnsureShown()
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(EnsureShown)); return; }
+        if (string.IsNullOrWhiteSpace(Label.Text) || !IsVisible) Label.Text = "AI AGENT DRIVING THRU FOREMAN";
+        Topmost = true;
+        if (!IsVisible) { Show(); Animate(); }
+        Reposition();
+        _hide.Stop();
+        _hide.Start();   // re-arm idle hide; re-called every pump tick while piloting, so it stays up
+    }
+
+    /// <summary>Adversarial occlusion test (INV-18), safe off the UI thread (uses only the cached HWND + thread-safe
+    /// user32/DWM). True ONLY if the banner is visible, topmost, NOT DWM-cloaked, and NO other window above it in the
+    /// z-order overlaps its rectangle. The HUD is click-through (WS_EX_TRANSPARENT) so WindowFromPoint would skip it -
+    /// we enumerate windows ABOVE it in z-order instead (the spec's sanctioned method). Fail closed on any doubt.</summary>
+    public bool ConfirmVisible()
+    {
+        var h = _hwnd;
+        if (h == IntPtr.Zero || !IsWindowVisible(h)) return false;
+        if (IsCloaked(h)) return false;
+        if ((GetWindowLong(h, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) return false;
+        if (!GetWindowRect(h, out var hud) || hud.Right <= hud.Left || hud.Bottom <= hud.Top) return false;
+
+        // Any VISIBLE, non-cloaked, non-own window higher in the z-order whose rect overlaps the banner = occlusion.
+        for (var w = GetWindow(h, GW_HWNDPREV); w != IntPtr.Zero; w = GetWindow(w, GW_HWNDPREV))
+        {
+            if (!IsWindowVisible(w) || IsCloaked(w)) continue;
+            GetWindowThreadProcessId(w, out var pid);
+            if (pid == OurPid) continue;   // Foreman's own windows aren't an adversarial occluder
+            if (GetWindowRect(w, out var wr) && Overlaps(wr, hud)) return false;
+        }
+        return true;
+    }
+
+    private static bool IsCloaked(IntPtr h) =>
+        DwmGetWindowAttribute(h, DWMWA_CLOAKED, out var cloaked, sizeof(int)) == 0 && cloaked != 0;
+
+    private static bool Overlaps(RECT a, RECT b) =>
+        a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
 }

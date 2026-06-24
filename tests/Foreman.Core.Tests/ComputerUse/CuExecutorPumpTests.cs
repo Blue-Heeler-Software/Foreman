@@ -24,6 +24,14 @@ public sealed class CuExecutorPumpTests
         }
     }
 
+    private sealed class FakeHud : IHudAck
+    {
+        public bool Visible { get; set; } = true;
+        public int Shown { get; private set; }
+        public void EnsureShown() => Shown++;
+        public bool ConfirmVisible() => Visible;
+    }
+
     private const string Agent = LocalDriverIpc.LocalAgentHostId;
     private static CuWindowRef Win(long h) => new((IntPtr)h, 4242, "notepad", "Untitled - Notepad", 0);
     private static CuAction Desk(string verb) =>
@@ -81,5 +89,30 @@ public sealed class CuExecutorPumpTests
         var ran = await new CuExecutorPump(b, fake).PumpOnceAsync();
         Assert.Equal(1, ran);
         Assert.Equal(CuActionState.Failed, b.Get(item.ActionId)!.State);
+    }
+
+    [Fact]
+    public async Task PumpOnce_HudOccluded_WithholdsAndItemWaits()
+    {
+        var (b, item) = await ApprovedItem();
+        var fake = new FakeExecutor();
+        var hud = new FakeHud { Visible = false };
+        var withheld = 0;
+        var ran = await new CuExecutorPump(b, fake, hud: hud, onHudWithheld: () => withheld++).PumpOnceAsync();
+        Assert.Equal(0, ran);
+        Assert.Empty(fake.Ran);                                            // INV-18: nothing runs behind a hidden HUD
+        Assert.Equal(CuActionState.Approved, b.Get(item.ActionId)!.State); // item WAITS (not failed)
+        Assert.True(hud.Shown > 0);                                        // the HUD was asked to show
+        Assert.Equal(1, withheld);                                         // operator warned (piloting paused)
+    }
+
+    [Fact]
+    public async Task PumpOnce_HudVisible_Executes()
+    {
+        var (b, item) = await ApprovedItem();
+        var fake = new FakeExecutor();
+        var ran = await new CuExecutorPump(b, fake, hud: new FakeHud { Visible = true }).PumpOnceAsync();
+        Assert.Equal(1, ran);
+        Assert.Equal(CuActionState.Completed, b.Get(item.ActionId)!.State);
     }
 }

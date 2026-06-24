@@ -380,7 +380,14 @@ public partial class App : Application
                 // in-process. Claim re-gates driver-auth + panic epoch + one-window confinement at delivery; the
                 // controller verifies each result (INV-5). Idle until an item is approved + the sidecar is connected.
                 var cuExecutor = new Foreman.App.ComputerUse.DesktopCuExecutor(_desktopCu, () => cuPanicFlag!.BoundHwnd);
-                _cuPump = new Foreman.Core.ComputerUse.CuExecutorPump(cuBroker, cuExecutor);
+                // INV-18: the pump confirms the HUD is ACTUALLY visible (topmost + un-cloaked + un-occluded) before
+                // delivering any input; if it can't, it withholds (fail closed) and warns - so piloting can never be
+                // invisible. The CuOverlayWindow implements the adversarial occlusion test.
+                _cuPump = new Foreman.Core.ComputerUse.CuExecutorPump(cuBroker, cuExecutor, batch: 4,
+                    hud: cuOverlay,
+                    onHudWithheld: () => EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                        DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.ComputerUse",
+                        "HUD could not be confirmed visible - desktop piloting PAUSED until the banner is unobscured (INV-18).")));
                 _ = _cuPump.RunAsync(TimeSpan.FromMilliseconds(300), _cts!.Token);
             }
             if (settings.CuDriverHostEnabled)
