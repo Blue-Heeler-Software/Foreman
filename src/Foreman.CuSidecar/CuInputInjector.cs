@@ -32,32 +32,47 @@ internal static class CuInputInjector
         var steps = BuildSteps(args, bound, out var buildErr);
         if (steps is null) return Fail(buildErr);
 
-        // Best-effort bring the bound window forward; the per-step confine check is what actually gates (no blind inject).
+        // Foreground-LOCK pin: attach to the bound window's input thread and lock SetForegroundWindow so a same-user
+        // process cannot steal the foreground in the gap between our pre-check and the kernel dequeuing the INPUT (the
+        // SendInput-targets-foreground race). The per-INPUT Confined() check still gates regardless; this just shrinks
+        // the window. Always unwound in finally.
+        var boundThread = GetWindowThreadProcessId(bound, out _);
+        var ourThread = GetCurrentThreadId();
+        var attached = boundThread != 0 && AttachThreadInput(ourThread, boundThread, true);
         try { SetForegroundWindow(bound); } catch { }
+        try { LockSetForegroundWindow(LSFW_LOCK); } catch { }
 
         // UPs owed for DOWNs already emitted. Flushed on ANY early return so a panic OR a confine-fail (which does NOT
         // run the App-side floor) can never strand a key/button held - the injector knows exactly what it pressed.
         var owed = new List<INPUT>();
-        foreach (var (inp, owe, pays) in steps)
+        try
         {
-            var snap = panicNow();
-            if (snap.Panic != 0) { Flush(owed, args.DryRun); return Halted(); }
-            if (snap.BoundHwnd != args.BoundHwnd) { Flush(owed, args.DryRun); return Fail("bound window changed mid-gesture (INV-2)"); }
-            if (!Confined(bound, foremanPid, out var why)) { Flush(owed, args.DryRun); return Fail("not confined: " + why); }
-
-            if (!args.DryRun)
+            foreach (var (inp, owe, pays) in steps)
             {
-                if (SendInput(1, new[] { inp }, Marshal.SizeOf<INPUT>()) != 1) { Flush(owed, args.DryRun); return Fail("SendInput rejected"); }
-                if (owe is INPUT up) owed.Add(up);                                  // a DOWN: owe its UP
-                else if (pays && owed.Count > 0) owed.RemoveAt(owed.Count - 1);     // the UP: paid (LIFO - pairs are adjacent)
+                var snap = panicNow();
+                if (snap.Panic != 0) { Flush(owed, args.DryRun); return Halted(); }
+                if (snap.BoundHwnd != args.BoundHwnd) { Flush(owed, args.DryRun); return Fail("bound window changed mid-gesture (INV-2)"); }
+                if (!Confined(bound, foremanPid, out var why)) { Flush(owed, args.DryRun); return Fail("not confined: " + why); }
+
+                if (!args.DryRun)
+                {
+                    if (SendInput(1, new[] { inp }, Marshal.SizeOf<INPUT>()) != 1) { Flush(owed, args.DryRun); return Fail("SendInput rejected"); }
+                    if (owe is INPUT up) owed.Add(up);                                  // a DOWN: owe its UP
+                    else if (pays && owed.Count > 0) owed.RemoveAt(owed.Count - 1);     // the UP: paid (LIFO - pairs are adjacent)
+                }
+
+                if (!Confined(bound, foremanPid, out var why2)) { Flush(owed, args.DryRun); return Fail("foreground changed during input: " + why2); }
             }
 
-            if (!Confined(bound, foremanPid, out var why2)) { Flush(owed, args.DryRun); return Fail("foreground changed during input: " + why2); }
+            GetCursorPos(out var pt);
+            var finalFg = GetForegroundWindow();
+            return new ExecuteActionResult(Ok: true, Error: null, FinalHwnd: finalFg.ToInt64(), CursorX: pt.X, CursorY: pt.Y, HaltedMidStream: false);
         }
-
-        GetCursorPos(out var pt);
-        var finalFg = GetForegroundWindow();
-        return new ExecuteActionResult(Ok: true, Error: null, FinalHwnd: finalFg.ToInt64(), CursorX: pt.X, CursorY: pt.Y, HaltedMidStream: false);
+        finally
+        {
+            try { LockSetForegroundWindow(LSFW_UNLOCK); } catch { }
+            if (attached) try { AttachThreadInput(ourThread, boundThread, false); } catch { }
+        }
     }
 
     // Force-release everything we still hold, on ANY early exit. Sent ungated: releasing a key/button is always safe
@@ -80,8 +95,10 @@ internal static class CuInputInjector
         GetWindowThreadProcessId(fg, out var fgPid);
         if ((int)fgPid == foremanPid) { why = "foreground is Foreman's own UI (INV-9)"; return false; }
         var cls = ClassOf(fg);
-        if (cls is "Shell_TrayWnd" or "NotifyIconOverflowWindow" or "Progman" or "WorkerW")
+        if (cls is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "NotifyIconOverflowWindow" or "Progman" or "WorkerW"
+            or "Windows.UI.Core.CoreWindow" or "MultitaskingViewFrame" or "XamlExplorerHostIslandWindow" or "ForegroundStaging")
         { why = $"foreground is shell chrome ({cls})"; return false; }
+        // The real gate: fg must be exactly the bound window (an allowlist - any shell/sibling window already fails here).
         if (fg != bound) { why = "foreground is not the bound window"; return false; }
         return true;
     }
@@ -158,6 +175,11 @@ internal static class CuInputInjector
         if (cx < 0 || cy < 0 || cx >= rc.Right || cy >= rc.Bottom) { err = "point is outside the bound client rect"; return false; }
         var p = new POINT { X = cx, Y = cy };
         if (!ClientToScreen(bound, ref p)) { err = "ClientToScreen failed"; return false; }
+        // INV-9 under-the-point: the window ACTUALLY under the target screen point must root-own to the bound window -
+        // catches a topmost overlay sitting over the bound client rect to harvest the click/keystroke.
+        var under = WindowFromPoint(p);
+        if (under == IntPtr.Zero || GetAncestor(under, GA_ROOTOWNER) != bound)
+        { err = "another window covers the target point (possible input-harvest overlay)"; return false; }
         screenAbs = p;
         return true;
     }
@@ -218,6 +240,8 @@ internal static class CuInputInjector
     private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020, MOUSEEVENTF_MIDDLEUP = 0x0040;
     private const int SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79;
     private const int WHEEL_DELTA = 120;
+    private const uint LSFW_LOCK = 1, LSFW_UNLOCK = 2;
+    private const uint GA_ROOTOWNER = 3;
 
     [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public InputUnion U; }
     [StructLayout(LayoutKind.Explicit)] private struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
@@ -235,4 +259,9 @@ internal static class CuInputInjector
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ClientToScreen(IntPtr hWnd, ref POINT pt);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out POINT pt);
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool LockSetForegroundWindow(uint uLockCode);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
 }
