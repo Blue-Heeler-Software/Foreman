@@ -16,6 +16,8 @@ public enum WeakeningAction
     EditHarnessSysprompt,
     RelaxHarnessCapabilityRestriction,
     ResumeComputerUse,      // un-halt Foreman-mediated computer/browser use after a panic STOP
+    BindCuWindow,           // bind the desktop CU target window (operator gesture; spec INV-10/INV-17)
+    EnrollLocalAgentHost,   // authorize a local AI agent to drive desktop CU (spec INV-16)
     ExitForeman,
 }
 
@@ -65,6 +67,8 @@ public static class PresenceLockPolicy
         WeakeningAction.EditHarnessSysprompt,
         WeakeningAction.RelaxHarnessCapabilityRestriction,
         WeakeningAction.ResumeComputerUse,
+        WeakeningAction.BindCuWindow,
+        WeakeningAction.EnrollLocalAgentHost,
     ];
 
     public static bool RequiresPresence(WeakeningAction action, PresenceLockSettings settings)

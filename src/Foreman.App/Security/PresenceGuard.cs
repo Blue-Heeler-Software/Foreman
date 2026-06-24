@@ -45,8 +45,14 @@ public static class PresenceGuard
     /// True to PROCEED with a weakening action, false to BLOCK it. Safe before <see cref="Configure"/> (proceeds)
     /// and when the lock is off (proceeds silently). <paramref name="detail"/> goes into the audit record.
     /// </summary>
-    public static async Task<bool> AuthorizeAsync(WeakeningAction action, string detail)
-        => _gate is null || await _gate.AuthorizeAsync(action, detail).ConfigureAwait(false);
+    public static async Task<bool> AuthorizeAsync(WeakeningAction action, string detail,
+        bool forcePresence = false, bool freshTap = false)
+    {
+        // Not configured yet: normal actions proceed; a FORCED CU-sovereignty action fails CLOSED (we cannot verify a
+        // tap, so we must not silently permit binding / enrolling / resuming desktop CU). (INV-16)
+        if (_gate is null) return !forcePresence;
+        return await _gate.AuthorizeAsync(action, detail, forcePresence, freshTap).ConfigureAwait(false);
+    }
 
     /// <summary>Enroll + arm the lock: confirm a tap works, pin the credential, persist. Returns (ok, message).</summary>
     public static async Task<(bool Ok, string Message)> EnableAsync(LockScope scope)
@@ -95,6 +101,8 @@ public static class PresenceGuard
         WeakeningAction.ClearOrRotateLog     => "clear the log",
         WeakeningAction.EditHarnessSysprompt => "edit harness modalities",
         WeakeningAction.ResumeComputerUse    => "resume computer use after a panic stop",
+        WeakeningAction.BindCuWindow         => "bind a window for AI computer use",
+        WeakeningAction.EnrollLocalAgentHost => "authorize a local AI agent to drive the desktop",
         WeakeningAction.ExitForeman          => "quit Foreman",
         _                                    => "security change",
     };

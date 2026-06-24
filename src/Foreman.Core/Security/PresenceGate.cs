@@ -26,7 +26,10 @@ public sealed class PresenceGate
     private readonly Action<PresenceDecision> _onDecision;
     private readonly Func<DateTimeOffset> _now;
     private readonly object _lock = new();
-    private DateTimeOffset _lastApproval = DateTimeOffset.MinValue;
+    // Keyed by (action, detail) so a tap for one change never silently covers a DIFFERENT one (closes the
+    // "one tap covers bind+enroll+resume" finding). The CU-sovereignty actions additionally pass freshTap and never
+    // read or write this cache at all.
+    private readonly Dictionary<string, DateTimeOffset> _approvals = new();
 
     public PresenceGate(
         Func<PresenceLockSettings> settings,
@@ -42,22 +45,27 @@ public sealed class PresenceGate
 
     /// <summary>
     /// True to PROCEED with the action, false to BLOCK it. Non-gated actions (lock off, or action not in scope)
-    /// proceed silently without a prompt. <paramref name="detail"/> describes the specific change (e.g. the
-    /// harness + the old→new value) for the audit record.
+    /// proceed silently without a prompt. <paramref name="detail"/> describes the specific change for the audit record.
+    /// <paramref name="forcePresence"/> (the CU-sovereignty actions: bind / enroll-local-agent / resume) demands a
+    /// verified tap REGARDLESS of the lock being off or the action being out of the normal gated set - the
+    /// "lock off => proceed" / "not gated => proceed" branches do NOT apply (spec INV-16). <paramref name="freshTap"/>
+    /// bypasses the approval cache entirely so each such action needs its own fresh tap.
     /// </summary>
-    public async Task<bool> AuthorizeAsync(WeakeningAction action, string detail, CancellationToken ct = default)
+    public async Task<bool> AuthorizeAsync(WeakeningAction action, string detail,
+        bool forcePresence = false, bool freshTap = false, CancellationToken ct = default)
     {
         var s = _settings();
-        if (!PresenceLockPolicy.RequiresPresence(action, s)) return true;
+        if (!forcePresence && !PresenceLockPolicy.RequiresPresence(action, s)) return true;
 
-        // A recent successful tap covers rapid follow-ups within the configured window — but never longer than
-        // MaxApprovalTtlSeconds, so a stale approval can't be replayed indefinitely (B9 polish).
-        if (s.ApprovalTtlSeconds > 0)
+        var key = $"{(int)action}|{detail}";
+        // A recent successful tap for THIS (action, detail) covers rapid follow-ups within the window - but never
+        // longer than MaxApprovalTtlSeconds, and never for a freshTap action (each demands its own tap).
+        if (!freshTap && s.ApprovalTtlSeconds > 0)
         {
             var ttl = Math.Min(s.ApprovalTtlSeconds, MaxApprovalTtlSeconds);
             lock (_lock)
             {
-                if (_now() - _lastApproval < TimeSpan.FromSeconds(ttl))
+                if (_approvals.TryGetValue(key, out var when) && _now() - when < TimeSpan.FromSeconds(ttl))
                 {
                     Report(true, action, detail + " (within approval window)", null);
                     return true;
@@ -67,8 +75,9 @@ public sealed class PresenceGate
 
         if (string.IsNullOrEmpty(s.CredentialId))
         {
-            // Lock on but nothing enrolled → cannot prompt. Fail CLOSED: a misconfiguration must not become a bypass.
-            Report(false, action, detail + " — no authenticator enrolled", null);
+            // Nothing enrolled => cannot prompt. Fail CLOSED: a misconfiguration (or a forced CU action with no
+            // enrolled credential, INV-16) must not become a bypass.
+            Report(false, action, detail + " - no authenticator enrolled", null);
             return false;
         }
 
@@ -79,14 +88,14 @@ public sealed class PresenceGate
         }
         catch (Exception ex)
         {
-            Report(false, action, detail + $" — verifier error ({ex.GetType().Name})", null);   // fail closed
+            Report(false, action, detail + $" - verifier error ({ex.GetType().Name})", null);   // fail closed
             return false;
         }
 
-        if (r.Verified)
-            lock (_lock) { _lastApproval = _now(); }
+        if (r.Verified && !freshTap)
+            lock (_lock) { _approvals[key] = _now(); }
 
-        Report(r.Verified, action, r.Verified ? detail : detail + $" — {r.FailureReason}", r.AuthenticatorLabel);
+        Report(r.Verified, action, r.Verified ? detail : detail + $" - {r.FailureReason}", r.AuthenticatorLabel);
         return r.Verified;
     }
 
@@ -105,6 +114,9 @@ public sealed class PresenceGate
         WeakeningAction.DisableLogPersist    => "Authorize disabling the persistent log",
         WeakeningAction.ClearOrRotateLog     => "Authorize clearing the event log",
         WeakeningAction.EditHarnessSysprompt => "Authorize editing a harness's modalities",
+        WeakeningAction.ResumeComputerUse    => "Authorize resuming computer use after a panic stop",
+        WeakeningAction.BindCuWindow         => "Authorize binding this window for AI computer use",
+        WeakeningAction.EnrollLocalAgentHost => "Authorize a local AI agent to drive the desktop",
         WeakeningAction.ExitForeman          => "Authorize quitting Foreman",
         _                                    => "Authorize a Foreman security change",
     };

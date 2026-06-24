@@ -101,10 +101,10 @@ public sealed class PresenceGateTests
         var s = On(ttl: 60);
         var (gate, log, v) = Make(s, PresenceResult.Ok("Hello"), now: () => t);
 
-        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "first"));   // prompts
-        t = t.AddSeconds(30);                                                          // within TTL
-        Assert.True(await gate.AuthorizeAsync(WeakeningAction.DisableReadAuditing, "second"));
-        Assert.Equal(1, v.VerifyCalls);                                                // second used the cached approval
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "trust 4->2"));   // prompts
+        t = t.AddSeconds(30);                                                                // within TTL
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "trust 4->2"));   // SAME (action,detail) -> cached
+        Assert.Equal(1, v.VerifyCalls);                                                      // second used the cached approval
         Assert.True(log[1].Granted);
         Assert.Contains("within approval window", log[1].Detail);
     }
@@ -116,9 +116,9 @@ public sealed class PresenceGateTests
         var s = On(ttl: 60);
         var (gate, _, v) = Make(s, PresenceResult.Ok("Hello"), now: () => t);
 
-        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "first"));
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "same"));
         t = t.AddSeconds(90);                                                          // past TTL
-        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "second"));
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "same"));    // same key; re-prompt due to EXPIRY
         Assert.Equal(2, v.VerifyCalls);                                                // re-prompted
     }
 
@@ -129,9 +129,9 @@ public sealed class PresenceGateTests
         var s = On(ttl: 86_400);   // operator (or a tampered settings file) set a day-long approval window
         var (gate, _, v) = Make(s, PresenceResult.Ok("Hello"), now: () => t);
 
-        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "first"));
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "same"));
         t = t.AddSeconds(PresenceGate.MaxApprovalTtlSeconds + 1);   // past the hard ceiling, though within the configured day
-        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "second"));
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "same"));   // same key; re-tap ONLY due to the clamp
         Assert.Equal(2, v.VerifyCalls);   // the clamp forced a re-tap despite the huge configured TTL
     }
 
@@ -142,9 +142,55 @@ public sealed class PresenceGateTests
         var s = On(ttl: 60);
         var (gate, _, v) = Make(s, PresenceResult.Fail("canceled"), now: () => t);
 
-        Assert.False(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "first"));   // denied
+        Assert.False(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "same"));   // denied
         t = t.AddSeconds(5);
-        Assert.False(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "second"));  // must prompt again, not ride a cache
+        Assert.False(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "same"));   // must prompt again, not ride a cache
         Assert.Equal(2, v.VerifyCalls);
+    }
+
+    // ── Local Agent Host L1: per-(action,detail) cache keying + forcePresence + freshTap ─────────────
+
+    [Fact]
+    public async Task CachedTap_DoesNotCoverADifferentAction()  // INV: a tap for one change never covers another
+    {
+        var t = DateTimeOffset.UnixEpoch;
+        var (gate, _, v) = Make(On(ttl: 60), PresenceResult.Ok("Hello"), now: () => t);
+
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "trust 4->2"));   // prompts + caches its key
+        t = t.AddSeconds(5);                                                                 // well within TTL
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.DisableMonitoring, "disable claude-code"));
+        Assert.Equal(2, v.VerifyCalls);   // different (action,detail) => its own tap, never the cached one
+    }
+
+    [Fact]
+    public async Task ForcePresence_BlocksWhenLockOff_NoSilentProceed()  // INV-16
+    {
+        var (gate, _, v) = Make(new PresenceLockSettings { Enabled = false, CredentialId = "cred-1" }, PresenceResult.Ok("Hello"));
+        // Lock OFF: a normal action would proceed silently, but a forced CU-sovereignty action still demands a tap.
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.BindCuWindow, "bind Notepad", forcePresence: true, freshTap: true));
+        Assert.Equal(1, v.VerifyCalls);   // it actually prompted - did NOT take the lock-off shortcut
+    }
+
+    [Fact]
+    public async Task ForcePresence_NoCredentialEnrolled_FailsClosed()  // INV-16: cannot ARM desktop CU without enrollment
+    {
+        var (gate, log, v) = Make(new PresenceLockSettings { Enabled = false, CredentialId = null });
+        Assert.False(await gate.AuthorizeAsync(WeakeningAction.EnrollLocalAgentHost, "enroll local-agent-host", forcePresence: true, freshTap: true));
+        Assert.Equal(0, v.VerifyCalls);   // nothing to prompt -> blocked, never a silent pass
+        Assert.False(log.Single().Granted);
+    }
+
+    [Fact]
+    public async Task FreshTap_BypassesCache_AndABindTapCannotSatisfyEnrollOrResume()  // closes "one tap covers bind+enroll+resume"
+    {
+        var t = DateTimeOffset.UnixEpoch;
+        var (gate, _, v) = Make(On(ttl: 300), PresenceResult.Ok("Hello"), now: () => t);
+
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.BindCuWindow, "bind Notepad", forcePresence: true, freshTap: true));
+        t = t.AddSeconds(2);   // immediately after, well within any TTL
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.EnrollLocalAgentHost, "enroll local-agent-host", forcePresence: true, freshTap: true));
+        t = t.AddSeconds(2);
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.ResumeComputerUse, "resume after panic", forcePresence: true, freshTap: true));
+        Assert.Equal(3, v.VerifyCalls);   // each demanded its OWN fresh tap; none rode another's approval
     }
 }
