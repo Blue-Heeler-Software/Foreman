@@ -12,6 +12,16 @@ public sealed record DriverSubmit(string ActionId, string Verb, IReadOnlyDiction
 /// <summary>Shim/App -> driver outcome. Advisory only - the operator + the broker are authoritative.</summary>
 public sealed record DriverResult(string ActionId, bool Ok, string? Error = null, string? Reason = null);
 
+/// <summary>App -> shim (HOP A): launch the operator-configured local agent. The shim spawns it, hands it the HOP B
+/// pipe name + session secret via an inherited handle (the agent's stdin), and pins the launched PID. The command is
+/// operator config - never agent-supplied - and arming the host is presence-gated (INV-16).</summary>
+public sealed record StartAgentArgs(string Command, string? Arguments, string? WorkingDir);
+
+/// <summary>shim -> App (HOP A, poll result): the batch of DriverSubmit proposals the agent has sent since the last
+/// poll. The App builds a trusted CuAction from each via <see cref="LocalDriverIpc.BuildAction"/> and submits it
+/// IN-PROCESS (L5); the agent can only propose.</summary>
+public sealed record DriverSubmitBatch(IReadOnlyList<DriverSubmit> Items);
+
 /// <summary>Builds the trusted <see cref="CuAction"/> from an untrusted <see cref="DriverSubmit"/> and the fixed id.</summary>
 public static class LocalDriverIpc
 {

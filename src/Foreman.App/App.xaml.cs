@@ -325,7 +325,17 @@ public partial class App : Application
                     panicController.Halt("desktop CU result failed independent verification (INV-5)");
             }
             if (settings.CuDriverHostEnabled)
+            {
                 _pilotChannel = new Foreman.App.ComputerUse.PilotChannelController();
+                if (!string.IsNullOrWhiteSpace(settings.CuAgentCommand))
+                    _pilotChannel.AgentSpec = new Foreman.Core.ComputerUse.StartAgentArgs(
+                        settings.CuAgentCommand!, settings.CuAgentArguments, settings.CuAgentWorkingDir);
+                // L4: a relayed agent proposal arrives as a trusted, rebuilt CuAction. For now surface it (the in-process
+                // broker submit + audit + default-Held is wired in L5). Logged so the operator sees the agent proposing.
+                _pilotChannel.OnDriverSubmit = action => EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.Info, "Foreman.LocalAgentHost",
+                    $"Local agent proposed: {action.Verb} (held pending the L5 in-process audit/submit)."));
+            }
 
             panicState.Changed += halted =>
             {

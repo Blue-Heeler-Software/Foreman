@@ -60,13 +60,33 @@ static int Run(string[] args)
             catch { continue; }
             if (req is null) continue;
 
-            var resp = req.Kind switch
+            DesktopCuResponse resp;
+            switch (req.Kind)
             {
-                DesktopCuKind.Hello     => new DesktopCuResponse(req.RequestId, req.Kind, Ok: true, PayloadB64: B64("pilot-l3-ready")),
-                DesktopCuKind.Heartbeat => new DesktopCuResponse(req.RequestId, req.Kind, Ok: true),
-                _ => new DesktopCuResponse(req.RequestId, req.Kind, Ok: false,
-                        Error: "Pilot shim (L3) services Hello/Heartbeat only - the agent relay lands in L4."),
-            };
+                case DesktopCuKind.Hello:
+                    resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: true, PayloadB64: B64("pilot-ready"));
+                    break;
+                case DesktopCuKind.Heartbeat:
+                    resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: true);
+                    break;
+                case DesktopCuKind.StartAgent:
+                {
+                    // HOP B (L4): launch the operator's agent + host the second owner-only pipe (AgentHost).
+                    var sa = FromB64<StartAgentArgs>(req.PayloadB64);
+                    if (sa is null) { resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: false, Error: "bad StartAgent payload"); break; }
+                    var ok = AgentHost.Start(sa, out var err);
+                    resp = new DesktopCuResponse(req.RequestId, req.Kind, ok, Error: ok ? null : err);
+                    break;
+                }
+                case DesktopCuKind.PollDriverSubmits:
+                    // Return the agent's queued proposals for the App to rebuild + audit (the agent only proposes).
+                    resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: true, PayloadB64: ToB64(AgentHost.Drain()));
+                    break;
+                default:
+                    resp = new DesktopCuResponse(req.RequestId, req.Kind, Ok: false, Error: "Unsupported pilot request kind.");
+                    break;
+            }
+
             try { writer.WriteLine(JsonSerializer.Serialize(Sign(resp, nonce), CuJson.Options)); }
             catch { break; }
         }
@@ -74,6 +94,7 @@ static int Run(string[] args)
         return 0;
     }
     catch { return 1; }
+    finally { AgentHost.Stop(); }   // never leave the launched agent running past the shim
 }
 
 // Authenticate every reply with the session nonce so the App can reject any frame it did not get from us.
@@ -81,6 +102,16 @@ static DesktopCuResponse Sign(DesktopCuResponse r, string nonce) =>
     r with { Hmac = CuHandshake.Hmac(nonce, CuJson.ResponseMac(r.Kind, r.RequestId, r.Ok, r.Error, r.PayloadB64)) };
 
 static string B64(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
+
+static T? FromB64<T>(string? b64)
+{
+    if (string.IsNullOrEmpty(b64)) return default;
+    try { return JsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(Convert.FromBase64String(b64)), CuJson.Options); }
+    catch { return default; }
+}
+
+static string ToB64<T>(T value) =>
+    Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, CuJson.Options)));
 
 static Process? SafeGetProcess(int pid)
 {

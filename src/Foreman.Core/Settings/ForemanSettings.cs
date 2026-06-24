@@ -54,6 +54,13 @@ public sealed class ForemanSettings
     /// pilot shim.</summary>
     public bool CuDriverHostEnabled { get; set; }
 
+    /// <summary>The local AI agent Foreman launches for the agent host (HOP B): the executable/command, its arguments,
+    /// and working dir. OPERATOR config only - never agent-supplied. Empty Command = run HOP A only (no agent). The
+    /// shim hands the launched agent the HOP B pipe name + session secret via its stdin (an inherited handle).</summary>
+    public string? CuAgentCommand { get; set; }
+    public string? CuAgentArguments { get; set; }
+    public string? CuAgentWorkingDir { get; set; }
+
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
 

@@ -44,6 +44,15 @@ public sealed class PilotChannelController : IDisposable
 
     public Action<ForemanSeverity, string>? OnSecurityNotice { get; set; }
 
+    /// <summary>The operator-configured local agent the shim launches for HOP B, or null to run HOP A only. App-set
+    /// (never agent-supplied); arming the host is presence-gated upstream (INV-16).</summary>
+    public StartAgentArgs? AgentSpec { get; set; }
+
+    /// <summary>Raised for each relayed agent proposal, already rebuilt as a TRUSTED CuAction (App-set Desktop +
+    /// local-agent-host id, reserved/auditor-descriptor keys stripped per INV-12). The App audits + submits it
+    /// in-process (the broker submit is wired in L5); in L4 the App just surfaces it.</summary>
+    public Action<CuAction>? OnDriverSubmit { get; set; }
+
     /// <summary>The staged pilot shim path (under the app dir, beside Foreman's own binaries).</summary>
     public static string PilotPath() => Path.Combine(AppContext.BaseDirectory, "cu-pilot", "Foreman.CuPilot.exe");
 
@@ -181,11 +190,41 @@ public sealed class PilotChannelController : IDisposable
             if (hello is not { Ok: true })
                 Notice(ForemanSeverity.Low, "Pilot shim connected but did not acknowledge Hello.");
 
+            // L4: have the shim launch the operator-configured local agent for HOP B (the agent connects to the shim,
+            // never to the App; we only POLL the shim for the agent's relayed proposals over HOP A).
+            if (AgentSpec is { } spec)
+            {
+                var started = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.StartAgent,
+                    B64(JsonSerializer.Serialize(spec, CuJson.Options))), ct).ConfigureAwait(false);
+                if (started is not { Ok: true })
+                    Notice(ForemanSeverity.Low, $"Pilot shim could not start the local agent: {started?.Error ?? "no response"}.");
+            }
+
+            var ticks = 0;
             while (!ct.IsCancellationRequested && server.IsConnected)
             {
-                await Task.Delay(2000, ct).ConfigureAwait(false);
-                var beat = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.Heartbeat), ct).ConfigureAwait(false);
-                if (beat is not { Ok: true }) break;
+                await Task.Delay(400, ct).ConfigureAwait(false);
+
+                // Poll the agent's proposals; rebuild each as a TRUSTED CuAction (INV-12) and hand it to the App.
+                var poll = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.PollDriverSubmits), ct).ConfigureAwait(false);
+                if (poll is not { Ok: true }) break;
+                if (poll.PayloadB64 is { } pb && OnDriverSubmit is { } sink)
+                {
+                    try
+                    {
+                        var batch = JsonSerializer.Deserialize<DriverSubmitBatch>(
+                            Encoding.UTF8.GetString(Convert.FromBase64String(pb)), CuJson.Options);
+                        if (batch?.Items is { Count: > 0 } items)
+                            foreach (var sub in items) { try { sink(LocalDriverIpc.BuildAction(sub)); } catch { } }
+                    }
+                    catch { /* a malformed batch is not fatal - the channel stays up */ }
+                }
+
+                if (++ticks % 5 == 0)   // ~ every 2s: liveness heartbeat
+                {
+                    var beat = await SendAsync(new DesktopCuRequest(NewId(), DesktopCuKind.Heartbeat), ct).ConfigureAwait(false);
+                    if (beat is not { Ok: true }) break;
+                }
             }
         }
         catch (OperationCanceledException) { }
@@ -303,6 +342,8 @@ public sealed class PilotChannelController : IDisposable
     }
 
     private static string NewId() => Guid.NewGuid().ToString("N");
+
+    private static string B64(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
 
     private static string? QueryImagePath(IntPtr hProcess)
     {

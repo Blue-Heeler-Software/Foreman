@@ -11,7 +11,7 @@ namespace Foreman.Core.ComputerUse;
 /// sidecar response is HMAC'd with the session nonce so the App can authenticate the return channel, and the App
 /// also cross-checks results against independent OS state before trusting them.
 /// </summary>
-public enum DesktopCuKind { Hello, BindWindow, ExecuteAction, SetCursorSkin, Heartbeat }
+public enum DesktopCuKind { Hello, BindWindow, ExecuteAction, SetCursorSkin, Heartbeat, StartAgent, PollDriverSubmits }
 
 /// <summary>App -> sidecar request. <see cref="PayloadB64"/> is a base64 UTF-8 JSON body specific to the Kind.</summary>
 public sealed record DesktopCuRequest(string RequestId, DesktopCuKind Kind, string? PayloadB64 = null);
