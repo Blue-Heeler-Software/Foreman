@@ -80,6 +80,32 @@ public sealed class CuBrokerDesktopDriverTests
     }
 
     [Fact]
+    public async Task AutoGrant_BudgetExhausted_FallsBackToHeld()
+    {
+        var b = Broker();
+        b.DesktopAutoGrant = true;
+        b.AutoGrantMaxActions = 1;
+        b.EnrollDesktopDriver(Agent);
+        b.SetActiveWindow(Win(100));
+        var first = await b.SubmitAsync(Desk("left_click", Agent), new CuContext(Agent));
+        Assert.Equal(CuActionState.Approved, first.State);   // within the budget
+        var second = await b.SubmitAsync(Desk("left_click", Agent), new CuContext(Agent));
+        Assert.Equal(CuActionState.Held, second.State);      // INV-15: budget exhausted -> back to Held
+    }
+
+    [Fact]
+    public async Task AutoGrant_OperatorIdle_FallsBackToHeld()
+    {
+        var b = Broker();
+        b.DesktopAutoGrant = true;
+        b.OperatorIdle = () => TimeSpan.FromMinutes(5);      // operator is away from the machine
+        b.EnrollDesktopDriver(Agent);
+        b.SetActiveWindow(Win(100));
+        var item = await b.SubmitAsync(Desk("left_click", Agent), new CuContext(Agent));
+        Assert.Equal(CuActionState.Held, item.State);        // INV-15: auto-grant paused while idle
+    }
+
+    [Fact]
     public void EnrollDesktopDriver_SurvivesBrowserDriverChange_ButScopesDesktop()
     {
         var b = Broker();

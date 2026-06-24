@@ -169,13 +169,24 @@ public sealed class CuBroker
         }
 
         // INV-15 (propose-not-act default): a Desktop action from a driver lands HELD for the operator even on an
-        // auditor Allow (DesktopAutoGrant OFF by default), so a compromised channel cannot act without a human in the
-        // loop. The operator's own actions, and an explicitly opted-in auto-grant, skip this.
-        if (action.Modality == CuModality.Desktop && state == CuActionState.Approved && !DesktopAutoGrant
+        // auditor Allow, UNLESS auto-grant is enabled AND still within its bounds (a per-session action budget + an
+        // operator-idle gate), so an opted-in auto-grant can never become unbounded standing unattended autonomy. The
+        // operator's own actions skip this entirely.
+        if (action.Modality == CuModality.Desktop && state == CuActionState.Approved
             && !string.Equals(action.ByHarness, OperatorMarker, StringComparison.OrdinalIgnoreCase))
         {
-            state = CuActionState.Held;
-            verdict = CuVerdict.Hold("broker", "desktop action held for operator approval (auto-grant off)");
+            var boundsReason = string.Empty;
+            if (DesktopAutoGrant && AutoGrantWithinBounds(out boundsReason))
+            {
+                Interlocked.Increment(ref _autoGrantUsed);   // count this auto-grant against the per-session budget
+            }
+            else
+            {
+                state = CuActionState.Held;
+                verdict = CuVerdict.Hold("broker", DesktopAutoGrant
+                    ? $"desktop action held: {boundsReason}"
+                    : "desktop action held for operator approval (auto-grant off)");
+            }
         }
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
@@ -433,8 +444,31 @@ public sealed class CuBroker
     }
 
     /// <summary>Opt-in: let a desktop action that audits to Allow proceed without operator approval. Default OFF, so a
-    /// desktop action from a driver is always Held for the operator (INV-15). The App wires this from settings.</summary>
+    /// desktop action from a driver is always Held for the operator (INV-15). The App wires this from settings. Even when
+    /// ON it is BOUNDED by <see cref="AutoGrantMaxActions"/> + the <see cref="OperatorIdle"/> gate.</summary>
     public bool DesktopAutoGrant { get; set; }
+
+    private int _autoGrantUsed;
+
+    /// <summary>Per-session cap on auto-granted desktop actions before falling back to Held - so an opted-in auto-grant
+    /// can't become unbounded unattended autonomy (INV-15). Default 50; &lt;= 0 disables the count cap.</summary>
+    public int AutoGrantMaxActions { get; set; } = 50;
+
+    /// <summary>App-wired probe of how long the operator has been idle (no keyboard/mouse). Null = no idle gate. When set,
+    /// auto-grant pauses (actions fall back to Held) once idle exceeds <see cref="AutoGrantIdleRevoke"/>, so an agent
+    /// can't run unattended while the operator is away from the machine.</summary>
+    public Func<TimeSpan>? OperatorIdle { get; set; }
+    public TimeSpan AutoGrantIdleRevoke { get; set; } = TimeSpan.FromSeconds(60);
+
+    private bool AutoGrantWithinBounds(out string reason)
+    {
+        reason = string.Empty;
+        if (AutoGrantMaxActions > 0 && Volatile.Read(ref _autoGrantUsed) >= AutoGrantMaxActions)
+        { reason = $"auto-grant budget exhausted ({AutoGrantMaxActions} actions) - re-confirm to continue"; return false; }
+        if (OperatorIdle is { } idle && idle() > AutoGrantIdleRevoke)
+        { reason = "operator idle - auto-grant paused until you return"; return false; }
+        return true;
+    }
 
     // ── Pinned shared-attention (focus-lock) ─────────────────────────────────────
 
