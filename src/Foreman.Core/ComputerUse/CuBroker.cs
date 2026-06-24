@@ -338,6 +338,21 @@ public sealed class CuBroker
         return harnessId is not null && d.Contains(harnessId.Trim().ToLowerInvariant());
     }
 
+    /// <summary>Modality-aware driver gate (spec INV-14): the "*" wildcard NEVER authorizes the Desktop modality - a
+    /// desktop driver must be an EXPLICITLY enumerated, operator-enrolled id (e.g. "local-agent-host"). The operator /
+    /// Hello root always passes. Browser keeps the existing wildcard behaviour.</summary>
+    public bool CanDriveModality(string? harnessId, bool isOperator, CuModality modality)
+    {
+        if (isOperator || string.Equals(harnessId, OperatorMarker, StringComparison.OrdinalIgnoreCase)) return true;
+        var d = _drivers;
+        if (d.Length == 0) return false;
+        var id = harnessId?.Trim().ToLowerInvariant();
+        if (modality == CuModality.Desktop)
+            return id is not null && d.Contains(id);   // explicit enrolled id only - NOT "*"
+        if (d.Contains("*")) return true;
+        return id is not null && d.Contains(id);
+    }
+
     // ── Pinned shared-attention (focus-lock) ─────────────────────────────────────
 
     /// <summary>The operator's pinned shared-attention tab (the locked focus), or null when nothing is pinned.</summary>
