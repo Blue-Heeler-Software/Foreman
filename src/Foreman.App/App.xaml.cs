@@ -305,7 +305,21 @@ public partial class App : Application
         // the App launches the relevant signed medium-IL helper, verifies it three ways, and wires the ACTIVE panic
         // floor that on halt hard-kills BOTH helpers (INV-3 + INV-20 KillPilotNow) + BlockInput shield + release-all +
         // an independent watchdog - independent of which feature armed it, and not dependent on any helper noticing.
-        if (settings.CuDesktopEnabled || settings.CuDriverHostEnabled)
+        // INV-16: desktop CU / the Local Agent Host REFUSE to arm unless an enrolled presence credential exists
+        // (Windows Hello / FIDO2) - so a same-user flip of the enable bit can't silently grant input authority without
+        // the operator's hardware tap also being possible. Checked against settings directly (PresenceGuard.Configure
+        // runs later in startup).
+        var cuPresenceArmed = settings.PresenceLock.Enabled
+            && !string.IsNullOrEmpty(settings.PresenceLock.CredentialId)
+            && Foreman.App.Security.PresenceGuard.IsAvailable;
+        if ((settings.CuDesktopEnabled || settings.CuDriverHostEnabled) && !cuPresenceArmed)
+        {
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.High,
+                "Foreman.ComputerUse",
+                "Desktop computer-use / Local Agent Host is enabled but no presence credential is armed (Windows " +
+                "Hello / FIDO2) - REFUSING to arm it (INV-16). Enroll a presence credential first."));
+        }
+        else if (settings.CuDesktopEnabled || settings.CuDriverHostEnabled)
         {
             var cuFloor = new Foreman.App.ComputerUse.CuDesktopPanicFloor(() =>
             {

@@ -57,6 +57,14 @@ public static class SettingsSeal
             decoyEnabled    = s.DecoyCredentials.Enabled,
             decoyReadAudit  = s.DecoyCredentials.EnableReadAuditing,
             osEventLog      = s.OsEventLog.Enabled,
+            // Desktop CU + Local Agent Host: a silent edit here grants desktop input authority or redirects which exe
+            // Foreman launches as the agent - seal them so any change flips the verdict to Tampered (revert + alert).
+            cuDesktop       = s.CuDesktopEnabled,
+            cuDriverHost    = s.CuDriverHostEnabled,
+            cuDriver        = s.CuDriver ?? "",
+            cuAgentCommand  = s.CuAgentCommand ?? "",
+            cuAgentArgs     = s.CuAgentArguments ?? "",
+            cuAgentWorkDir  = s.CuAgentWorkingDir ?? "",
             disabled        = s.DisabledHarnesses.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
             emergency       = s.EmergencyRuleIds.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
             trust           = s.HarnessTrust.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
