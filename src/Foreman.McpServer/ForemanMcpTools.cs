@@ -1410,7 +1410,10 @@ public static class ForemanMcpTools
         // restriction so a submitting/driving harness cannot also drain (and fake-complete) the approved queue.
         if (!caller.IsOperator && !string.Equals(caller.HarnessId, "browser-extension", StringComparison.OrdinalIgnoreCase))
             return new { actions = Array.Empty<object>(), reason = "Only the browser-extension executor may claim computer-use actions." };
-        var batch = state.Cu.Claim(limit);
+        // INV-7: desktop CU is in-process only and NEVER crosses MCP. cu_submit already hard-rejects modality=desktop;
+        // bar the symmetric claim side too, so even an Approved Desktop item (e.g. via auto-grant) can't be claimed over
+        // the network or leak its bound-window descriptors. An in-process executor (not this MCP path) claims Desktop.
+        var batch = state.Cu.Claim(limit, only: Foreman.Core.ComputerUse.CuModality.Browser);
         return new
         {
             actions = batch.Select(i => new

@@ -139,7 +139,13 @@ public sealed class CuBroker
             return throttled;
         }
 
-        _items[id] = new CuBrokerItem(id, action, CuActionState.Auditing, null, DateTimeOffset.UtcNow);
+        // Capture the panic epoch at ADMISSION and stamp it on BOTH the Auditing placeholder and the final item. If a
+        // panic bumps the epoch DURING the audit, the final item is stale (PanicEpoch < current) so Claim drops it - and
+        // the CAS write-back below refuses to resurrect a placeholder OnPanicHalt already Rejected.
+        var submitEpoch = Interlocked.Read(ref _panicEpoch);
+        var auditing = new CuBrokerItem(id, action, CuActionState.Auditing, null, DateTimeOffset.UtcNow,
+            PanicEpoch: submitEpoch);
+        _items[id] = auditing;
 
         CuVerdict verdict;
         try { verdict = await _auditor.JudgeAsync(action, context, ct).ConfigureAwait(false); }
@@ -174,8 +180,21 @@ public sealed class CuBroker
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
             BoundEpoch: action.Modality == CuModality.Desktop ? _activeWindow?.Epoch : null,
-            PanicEpoch: Interlocked.Read(ref _panicEpoch));
-        _items[id] = item;
+            PanicEpoch: submitEpoch);
+
+        // Panic-during-audit guard (TOCTOU, INV-20): if a panic happened while we were auditing, OnPanicHalt has already
+        // Rejected the placeholder and/or bumped the epoch. CAS the audited result in ONLY if the placeholder is still
+        // ours; if a panic won the race, respect the terminal Rejected state - NEVER resurrect it.
+        if (_isHalted() || submitEpoch != Interlocked.Read(ref _panicEpoch))
+        {
+            var blocked = new CuBrokerItem(id, action, CuActionState.Blocked,
+                CuVerdict.Block("broker", "computer use was halted (panic) during audit"), DateTimeOffset.UtcNow,
+                Error: "Halted during audit.", UpdatedAt: DateTimeOffset.UtcNow, PanicEpoch: submitEpoch);
+            _items.TryUpdate(id, blocked, auditing);   // only overwrite if still Auditing; else leave OnPanicHalt's record
+            return _items.TryGetValue(id, out var cur) ? cur : blocked;
+        }
+        if (!_items.TryUpdate(id, item, auditing))
+            return _items.TryGetValue(id, out var cur) ? cur : item;   // a concurrent writer (panic) won; respect it
         Prune();
         return item;
     }
@@ -207,14 +226,16 @@ public sealed class CuBroker
     // ── Executor: claim Approved actions, then complete them ─────────────────────
 
     /// <summary>The executor claims up to <paramref name="limit"/> APPROVED actions, moving them to Executing.
-    /// Returns nothing while halted; re-checks the driver at delivery (rejects actions no longer authorized).</summary>
-    public IReadOnlyList<CuBrokerItem> Claim(int limit)
+    /// Returns nothing while halted; re-checks the driver at delivery (rejects actions no longer authorized).
+    /// <paramref name="only"/> restricts delivery to one modality - the MCP poll path passes Browser so a Desktop item
+    /// can NEVER be claimed over the network (INV-7: desktop is in-process only); an in-process executor passes null.</summary>
+    public IReadOnlyList<CuBrokerItem> Claim(int limit, CuModality? only = null)
     {
         if (_isHalted()) return [];
         var n = Math.Clamp(limit, 1, 10);
         var batch = new List<CuBrokerItem>(n);
         foreach (var item in _items.Values
-                     .Where(i => i.State == CuActionState.Approved)
+                     .Where(i => i.State == CuActionState.Approved && (only is null || i.Action.Modality == only))
                      .OrderBy(i => i.CreatedAt))
         {
             if (batch.Count >= n) break;
@@ -363,19 +384,22 @@ public sealed class CuBroker
         DriverPersister?.Invoke(Driver);
     }
 
-    /// <summary>Enroll an explicit DESKTOP driver id (e.g. "local-agent-host") additively, PRESERVING any existing
-    /// browser "*" - the set can become ["*", "local-agent-host"], i.e. browser=any but desktop=only this enrolled id
-    /// (INV-14: "*" never authorizes Desktop, so the wildcard is harmless here and the explicit id is required). This is
-    /// a DERIVED in-memory enrollment, NOT persisted - the App re-applies it each startup from the sealed
-    /// CuDriverHostEnabled flag (which is itself presence-gated to arm), so it can't be turned on by a settings edit
-    /// alone. Does NOT collapse "*" (unlike SetDrivers) and does NOT call the persister.</summary>
+    // Derived DESKTOP driver enrollments, kept SEPARATE from the persisted browser driver set (_drivers). Desktop
+    // authority reads from here too, so an operator browser-driver change (SetDrivers via cu_set_driver / the picker)
+    // can NEVER silently drop it, and it is never persisted (re-applied each startup from the sealed CuDriverHostEnabled
+    // flag, so a settings edit alone can't enroll it).
+    private readonly object _enrollLock = new();
+    private readonly HashSet<string> _desktopEnrollments = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Enroll an explicit DESKTOP driver id (e.g. "local-agent-host"). Stored in a derived set separate from
+    /// the persisted browser driver set, so a later browser-driver change cannot drop it and it is never persisted. The
+    /// App re-applies it each startup from the sealed + presence-armed CuDriverHostEnabled flag, so a settings edit alone
+    /// can't enroll it. INV-14: a desktop driver must be an explicit id; "*" is rejected here.</summary>
     public void EnrollDesktopDriver(string id)
     {
         var norm = (id ?? string.Empty).Trim().ToLowerInvariant();
         if (norm.Length == 0 || norm == "*") return;
-        var d = _drivers;
-        if (d.Contains(norm)) return;
-        _drivers = [.. d, norm];
+        lock (_enrollLock) _desktopEnrollments.Add(norm);
     }
 
     public bool CanDrive(string? harnessId, bool isOperator)
@@ -393,13 +417,19 @@ public sealed class CuBroker
     public bool CanDriveModality(string? harnessId, bool isOperator, CuModality modality)
     {
         if (isOperator || string.Equals(harnessId, OperatorMarker, StringComparison.OrdinalIgnoreCase)) return true;
-        var d = _drivers;
-        if (d.Length == 0) return false;
         var id = harnessId?.Trim().ToLowerInvariant();
+        if (id is null) return false;
+        var d = _drivers;
         if (modality == CuModality.Desktop)
-            return id is not null && d.Contains(id);   // explicit enrolled id only - NOT "*"
+        {
+            // Desktop authority = an EXPLICITLY enrolled id, NEVER "*": from the derived enrollment set (survives a
+            // browser-driver change; never persisted) OR an explicit operator-set driver id.
+            lock (_enrollLock) { if (_desktopEnrollments.Contains(id)) return true; }
+            return d.Contains(id);
+        }
+        if (d.Length == 0) return false;
         if (d.Contains("*")) return true;
-        return id is not null && d.Contains(id);
+        return d.Contains(id);
     }
 
     /// <summary>Opt-in: let a desktop action that audits to Allow proceed without operator approval. Default OFF, so a

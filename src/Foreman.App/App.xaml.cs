@@ -368,6 +368,10 @@ public partial class App : Application
                             EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow,
                                 ForemanSeverity.Info, "Foreman.LocalAgentHost",
                                 $"Local agent proposed: {action.Verb} -> {t.Result.State}."));
+                        else if (t.IsFaulted)   // never swallow a faulted submit silently
+                            EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow,
+                                ForemanSeverity.Low, "Foreman.LocalAgentHost",
+                                $"Local agent proposal '{action.Verb}' failed to submit: {t.Exception?.GetBaseException().Message}"));
                     }, TaskScheduler.Default);
                 };
             }

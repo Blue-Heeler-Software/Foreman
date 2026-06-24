@@ -80,15 +80,58 @@ public sealed class CuBrokerDesktopDriverTests
     }
 
     [Fact]
-    public void EnrollDesktopDriver_PreservesWildcard_ButScopesDesktop()
+    public void EnrollDesktopDriver_SurvivesBrowserDriverChange_ButScopesDesktop()
     {
         var b = Broker();
         b.SetDriver("*");
         b.EnrollDesktopDriver(Agent);
-        Assert.Contains("*", b.Drivers);
-        Assert.Contains(Agent, b.Drivers);
-        Assert.True(b.CanDrive("any-harness", isOperator: false));                         // browser: "*" still works
-        Assert.True(b.CanDriveModality(Agent, false, CuModality.Desktop));                 // desktop: enrolled id passes
-        Assert.False(b.CanDriveModality("other-harness", false, CuModality.Desktop));      // desktop: "*" does NOT
+        Assert.Contains("*", b.Drivers);                                              // browser driver set unaffected
+        Assert.DoesNotContain(Agent, b.Drivers);                                      // enrollment is NOT in the persisted set
+        Assert.True(b.CanDrive("any-harness", isOperator: false));                    // browser: "*" still works
+        Assert.True(b.CanDriveModality(Agent, false, CuModality.Desktop));            // desktop: enrolled id passes
+        Assert.False(b.CanDriveModality("other-harness", false, CuModality.Desktop)); // desktop: "*" does NOT
+        b.SetDrivers(new[] { "some-browser-harness" });                              // operator changes the BROWSER driver...
+        Assert.True(b.CanDriveModality(Agent, false, CuModality.Desktop));            // ...the desktop enrollment SURVIVES
+    }
+
+    [Fact]
+    public async Task ClaimModalityFilter_DesktopNeverDeliveredToBrowserClaim()
+    {
+        var b = Broker();
+        b.DesktopAutoGrant = true;
+        b.EnrollDesktopDriver(Agent);
+        b.SetActiveWindow(Win(100));
+        var item = await b.SubmitAsync(Desk("left_click", Agent), new CuContext(Agent));
+        Assert.Equal(CuActionState.Approved, item.State);
+        Assert.Empty(b.Claim(10, CuModality.Browser));    // the MCP poll path (Browser-only) never sees a Desktop item
+        Assert.Single(b.Claim(10, CuModality.Desktop));   // an in-process desktop executor can claim it
+    }
+
+    private sealed class GatedAllow : IAuditor
+    {
+        public readonly SemaphoreSlim Entered = new(0);
+        public readonly SemaphoreSlim Release = new(0);
+        public async Task<CuVerdict> JudgeAsync(CuAction a, CuContext c, CancellationToken ct = default)
+        {
+            Entered.Release();
+            await Release.WaitAsync(ct);
+            return CuVerdict.Allow("test");
+        }
+    }
+
+    [Fact]
+    public async Task PanicDuringAudit_DoesNotResurrectItem()
+    {
+        var g = new GatedAllow();
+        var b = new CuBroker(g) { DesktopAutoGrant = true };   // would be Approved but for the panic
+        b.EnrollDesktopDriver(Agent);
+        b.SetActiveWindow(Win(100));
+        var submit = b.SubmitAsync(Desk("left_click", Agent), new CuContext(Agent));
+        await g.Entered.WaitAsync();   // the audit is in-flight (placeholder is in the broker)
+        b.OnPanicHalt();               // panic fires MID-AUDIT: bumps the epoch + rejects the placeholder
+        g.Release.Release();           // let the audit complete and try to write its verdict back
+        var item = await submit;
+        Assert.NotEqual(CuActionState.Approved, item.State);   // must NOT be resurrected to Approved
+        Assert.Empty(b.Claim(10));                              // and nothing is claimable
     }
 }
