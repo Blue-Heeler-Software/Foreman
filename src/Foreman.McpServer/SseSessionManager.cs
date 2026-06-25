@@ -23,7 +23,13 @@ public sealed record AskOffenderResult(AskOutcome Outcome, string? ReplyText, st
 /// </summary>
 public sealed class SseSessionManager
 {
-    private readonly ConcurrentDictionary<string, McpServerType> _sessions = new();
+    private sealed record Entry(McpServerType Server, DateTimeOffset At);
+    private readonly ConcurrentDictionary<string, Entry> _sessions = new();
+    // These are short-lived per-request transport sessions; a disconnect that doesn't Unregister leaks an entry, so
+    // an entry older than this is almost certainly dead -> reaped. MaxSessions hard-caps a runaway leak (and the
+    // broadcast amplification / dashboard inflation it caused: 241 live entries vs 3 real clients).
+    private static readonly TimeSpan StaleTtl = TimeSpan.FromMinutes(15);
+    private const int MaxSessions = 128;
 
     // Sticky activity, keyed by harness id (from the authenticated token). These clients use short-lived
     // per-request MCP sessions, so the live _sessions set reads ~0 between calls — the dashboard would flicker
@@ -31,7 +37,15 @@ public sealed class SseSessionManager
     // request so the UI can treat a harness that has talked to Foreman within a TTL as connected.
     private readonly ConcurrentDictionary<string, DateTimeOffset> _recent = new(StringComparer.OrdinalIgnoreCase);
 
-    public int Count => _sessions.Count;
+    public int Count { get { Prune(); return _sessions.Count; } }
+
+    // Reap leaked (long-stale) registrations; bounded O(n) with MaxSessions, so cheap to call on every access.
+    private void Prune()
+    {
+        var cutoff = DateTimeOffset.UtcNow - StaleTtl;
+        foreach (var kv in _sessions)
+            if (kv.Value.At < cutoff) _sessions.TryRemove(kv.Key, out _);
+    }
 
     /// <summary>Record that an authenticated request from this harness just arrived (drives sticky "connected").</summary>
     public void MarkSeen(string? harnessId)
@@ -52,8 +66,15 @@ public sealed class SseSessionManager
     /// <summary>Registers a connected session. Returns the session key for later unregistration.</summary>
     public string Register(McpServerType server)
     {
+        Prune();
+        // Bound a registration leak: if we're at the cap after pruning, evict the oldest entry.
+        if (_sessions.Count >= MaxSessions)
+        {
+            var oldest = _sessions.OrderBy(kv => kv.Value.At).FirstOrDefault();
+            if (oldest.Key is not null) _sessions.TryRemove(oldest.Key, out _);
+        }
         var id = Guid.NewGuid().ToString("N")[..8];
-        _sessions[id] = server;
+        _sessions[id] = new Entry(server, DateTimeOffset.UtcNow);
         return id;
     }
 
@@ -64,12 +85,15 @@ public sealed class SseSessionManager
     /// to show which agents are connected and whether each supports the sampling round-trip that makes
     /// Ask Harness a true poll (vs. a one-way notification).
     /// </summary>
-    public IReadOnlyList<McpClientInfo> DescribeSessions() =>
-        _sessions.Values.Select(s => new McpClientInfo(
+    public IReadOnlyList<McpClientInfo> DescribeSessions()
+    {
+        Prune();
+        return _sessions.Values.Select(e => e.Server).Select(s => new McpClientInfo(
             ClientLabel(s) ?? "unknown client",
             s.ClientInfo?.Version,
             s.ClientCapabilities?.Sampling is not null,
             s.ClientCapabilities?.Elicitation is not null)).ToList();
+    }
 
     /// <summary>
     /// Pushes notifications/message to every currently-connected MCP client.
@@ -77,9 +101,10 @@ public sealed class SseSessionManager
     /// </summary>
     public async Task BroadcastNotificationAsync(string level, string logger, object data)
     {
+        Prune();
         if (_sessions.IsEmpty) return;
 
-        var tasks = _sessions.Values.Select(server =>
+        var tasks = _sessions.Values.Select(e => e.Server).Select(server =>
             server.SendNotificationAsync("notifications/message", new { level, logger, data })
                   .ContinueWith(t => { /* swallow per-client errors */ }, TaskScheduler.Default));
 
@@ -102,7 +127,7 @@ public sealed class SseSessionManager
         string? requestId = null,
         CancellationToken ct = default)
     {
-        var matches = _sessions.Values
+        var matches = _sessions.Values.Select(e => e.Server)
             .Where(s => MatchesHarness(s.ClientInfo?.Name, s.ClientInfo?.Title, harnessId))
             .ToList();
 

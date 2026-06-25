@@ -29,6 +29,7 @@ public partial class App : Application
     private Foreman.Core.ComputerUse.CuExecutorPump? _cuPump;
     private System.IO.FileStream? _cuSidecarPin;
     private System.IO.FileStream? _cuPilotPin;
+    private System.IO.FileStream? _etwSidecarPin;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -360,6 +361,9 @@ public partial class App : Application
         // is the integrity safeguard for a binary that can later be granted input authority.
         _cuSidecarPin = Foreman.App.ComputerUse.DesktopCuController.PinBinaryAtRest();
         _cuPilotPin = Foreman.App.ComputerUse.PilotChannelController.PinBinaryAtRest();
+        // Same at-rest lock for the ELEVATED ETW sidecar - higher stakes (it launches with UAC), so a same-user swap
+        // before "Run Elevated" can't hijack the admin prompt. Done regardless of the Run-Elevated toggle.
+        _etwSidecarPin = ElevatedSidecarController.PinBinaryAtRest();
 
         // Desktop computer-use + Local Agent Host (off by default; never reachable over MCP, INV-7). When either is on,
         // the App launches the relevant signed medium-IL helper, verifies it three ways, and wires the ACTIVE panic

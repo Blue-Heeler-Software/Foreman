@@ -173,9 +173,32 @@ public sealed class ElevatedSidecarController : IDisposable
             inBufferSize: 0, outBufferSize: 0, security);
     }
 
+    /// <summary>The staged elevated ETW sidecar path.</summary>
+    public static string SidecarPath() => Path.Combine(AppContext.BaseDirectory, "sidecar", "Foreman.EtwSidecar.exe");
+
+    /// <summary>
+    /// Hold a write/delete-denying handle on the elevated sidecar for the App's WHOLE lifetime so a same-user process
+    /// cannot swap it AT REST. This is CRITICAL here because the sidecar is launched with requireAdministrator (UAC), so
+    /// a swapped-in binary would turn Foreman's branded admin prompt into a privilege-escalation primitive. On
+    /// unsigned/dev builds (where <see cref="SidecarIntegrity"/> waives the signer match) this at-rest lock — not
+    /// Authenticode — IS the integrity safeguard; on signed builds it is defense-in-depth that also closes the
+    /// verify->launch TOCTOU. Mirrors the desktop-CU helpers' pin. Call ONCE at startup regardless of the Run-Elevated
+    /// toggle (the at-rest window is exactly when the feature is off) and hold the handle until exit. Returns null if the
+    /// sidecar isn't installed (or is already locked by a prior instance).
+    /// </summary>
+    public static FileStream? PinBinaryAtRest()
+    {
+        try
+        {
+            var exe = SidecarPath();
+            return File.Exists(exe) ? new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read) : null;
+        }
+        catch { return null; }
+    }
+
     private bool LaunchSidecar(string pipeName, string nonce)
     {
-        var exe = Path.Combine(AppContext.BaseDirectory, "sidecar", "Foreman.EtwSidecar.exe");
+        var exe = SidecarPath();
         if (!File.Exists(exe)) return false;
 
         // Never launch an UNTRUSTED binary with administrator rights. The sidecar sits in a same-user-writable

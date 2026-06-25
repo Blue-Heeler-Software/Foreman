@@ -54,6 +54,7 @@ public static class SettingsSeal
             scanMcpTools    = s.ScanMcpTools,
             monitorAll      = s.MonitorAllProcesses,
             peerBinding     = s.McpPeerBindingEnforce,
+            autoExtPair     = s.AllowAutoExtensionPairing,   // re-enabling code-less extension auto-pair is a weakening
             decoyEnabled    = s.DecoyCredentials.Enabled,
             decoyReadAudit  = s.DecoyCredentials.EnableReadAuditing,
             osEventLog      = s.OsEventLog.Enabled,
