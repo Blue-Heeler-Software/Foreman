@@ -293,9 +293,9 @@ internal static class CuSmokeTest
     }
 
     // Full-chain real task: drive File Explorer to the S: drive THROUGH the audited pipeline - launch Explorer, bind its
-    // window, then submit -> Held -> approve -> pump -> inject three keystrokes (F4 to focus the address bar, type "s:\",
-    // Enter). Verifies via the Shell that an Explorer window actually landed on S:. (F4 is the single-key address-bar
-    // focus; the injector has no Ctrl+L-style modifier combos by design.)
+    // window, then submit -> Held -> approve -> pump -> inject three keystrokes (Ctrl+L to focus the address bar, type
+    // "s:\", Enter). The real HUD overlay is up so its BLUE input row shows the keys/macros as they fire. Verifies via
+    // the Shell that an Explorer window actually landed on S:.
     private static async Task<(int code, string report)> RunExplorerTestAsync()
     {
         const string drive = "s:\\";
@@ -305,8 +305,13 @@ internal static class CuSmokeTest
 
         DesktopCuController? ctl = null;
         CuSharedPanicFlag? flag = null;
+        CuOverlayWindow? overlay = null;
+        var app = Application.Current;
         try
         {
+            // 0. Real HUD overlay so the blue input row (keys/macros) is visible on-screen during the drive.
+            await app.Dispatcher.InvokeAsync(() => { overlay = new CuOverlayWindow(); overlay.EnsureShown(); });
+
             // 1. Launch Explorer + find its window (CabinetWClass; the launched process exits immediately on Win11).
             Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true });
             IntPtr hwnd = IntPtr.Zero;
@@ -325,6 +330,12 @@ internal static class CuSmokeTest
             broker.WindowProbe = new Win32WindowProbe();
             broker.OnWindowSwitch = (_, now) => { try { flag!.SetBound(now?.Hwnd.ToInt64() ?? 0); } catch { } };
             broker.EnrollDesktopDriver(LocalDriverIpc.LocalAgentHostId);
+            // Surface each action's input on the HUD's blue row as it executes (the same wiring the App uses).
+            broker.OnExecuting = it =>
+            {
+                var input = CuInputDescription.Of(it.Action);
+                app.Dispatcher.BeginInvoke(new Action(() => { try { overlay?.ShowDriving("desktop"); overlay?.ShowInput(input); } catch { } }));
+            };
 
             ctl = new DesktopCuController { PanicFlag = flag };
             ctl.OnSecurityNotice = (sev, m) => Log($"  [sidecar {sev}] {m}");
@@ -350,7 +361,7 @@ internal static class CuSmokeTest
                 await pump.PumpOnceAsync().ConfigureAwait(false);
                 await Task.Delay(450).ConfigureAwait(false);
                 var st = broker.Get(item.ActionId)!.State;
-                Log($"  {label}: {item.State} -> approve -> pump -> {st}");
+                Log($"  {label}: {item.State} -> approve -> pump -> {st}   [HUD blue: \"{CuInputDescription.Of(action)}\"]");
                 return st == CuActionState.Completed;
             }
 
@@ -372,6 +383,7 @@ internal static class CuSmokeTest
         {
             try { ctl?.Stop(); } catch { }
             try { flag?.Dispose(); } catch { }
+            try { await app.Dispatcher.InvokeAsync(() => overlay?.Close()); } catch { }
         }
     }
 

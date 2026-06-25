@@ -113,9 +113,20 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
         if (string.IsNullOrWhiteSpace(Label.Text) || !IsVisible) Label.Text = "AI AGENT DRIVING THRU FOREMAN";
         Topmost = true;
         if (!IsVisible) { Show(); Animate(); }
+        UpdateLayout();   // settle SizeToContent before centering (the blue input row changes width/height)
         Reposition();
         _hide.Stop();
         _hide.Start();   // re-arm idle hide; re-called every pump tick while piloting, so it stays up
+    }
+
+    /// <summary>Show the live input the driving harness is sending on the blue input row (keys / macros / typed text,
+    /// already secret-redacted by the caller). Empty hides the row. Keeps the banner up. UI-thread-marshalled.</summary>
+    public void ShowInput(string? text)
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(() => ShowInput(text))); return; }
+        if (string.IsNullOrEmpty(text)) { InputLine.Visibility = System.Windows.Visibility.Collapsed; }
+        else { InputLine.Text = text; InputLine.Visibility = System.Windows.Visibility.Visible; }
+        EnsureShown();   // banner up + sticky + re-center for the new size
     }
 
     /// <summary>Adversarial occlusion test (INV-18), safe off the UI thread (uses only the cached HWND + thread-safe

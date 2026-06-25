@@ -17,10 +17,16 @@
         <Border.RenderTransform>
             <TranslateTransform x:Name="Shake" />
         </Border.RenderTransform>
-        <StackPanel Orientation="Horizontal">
-            <TextBlock Text="▶" Foreground="#E53935" FontSize="18" FontWeight="Bold" Margin="0,0,12,0" VerticalAlignment="Center" />
-            <TextBlock x:Name="Label" Text="CLAUDE DRIVING THRU FOREMAN" Foreground="#F2F4F8"
-                       FontSize="16" FontWeight="Bold" FontFamily="Segoe UI, Arial" VerticalAlignment="Center" />
+        <StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="▶" Foreground="#E53935" FontSize="18" FontWeight="Bold" Margin="0,0,12,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="Label" Text="CLAUDE DRIVING THRU FOREMAN" Foreground="#F2F4F8"
+                           FontSize="16" FontWeight="Bold" FontFamily="Segoe UI, Arial" VerticalAlignment="Center" />
+            </StackPanel>
+            <!-- Live keyboard input + macros the driving harness is sending, in blue (secret-shaped text redacted). -->
+            <TextBlock x:Name="InputLine" Foreground="#4FC3F7" FontSize="13" FontWeight="SemiBold"
+                       FontFamily="Consolas, Cascadia Mono, Segoe UI" Margin="30,5,0,0"
+                       TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
         </StackPanel>
     </Border>
 </Window>

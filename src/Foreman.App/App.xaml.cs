@@ -304,11 +304,26 @@ public partial class App : Application
         // Operator HUD overlay: announce AI piloting (localised safe flash + shake) when a CU action starts running.
         // Held by the broker's OnExecuting closure, so it lives for the app lifetime; marshalled to the UI thread.
         var cuOverlay = new Foreman.App.ComputerUse.CuOverlayWindow();
-        cuBroker.OnExecuting = item => Dispatcher.BeginInvoke(new Action(() =>
+        cuBroker.OnExecuting = item =>
         {
-            try { cuOverlay.ShowDriving($"{item.Action.Modality.ToString().ToLowerInvariant()}: {item.Action.Verb}"); }
-            catch { /* HUD is best-effort; never disturb the broker */ }
-        }));
+            // Build the input description OFF the UI thread (pure + secret-redacted), then marshal the strings in.
+            string driving, input;
+            try
+            {
+                driving = item.Action.Modality.ToString().ToLowerInvariant();
+                input = Foreman.App.ComputerUse.CuInputDescription.Of(item.Action);
+            }
+            catch { driving = "desktop"; input = item.Action.Verb ?? string.Empty; }
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    cuOverlay.ShowDriving(driving);
+                    cuOverlay.ShowInput(input);   // the harness's keys/macros/typed text, in blue (secret-redacted)
+                }
+                catch { /* HUD is best-effort; never disturb the broker */ }
+            }));
+        };
         _mcpHost.State.Cu = cuBroker;
         // INV-16: approving a HELD desktop CU action over MCP requires a fresh presence tap, not just the operator
         // bearer token. PresenceGuard.Configure runs later in startup; this delegate is only INVOKED at approve-time.
