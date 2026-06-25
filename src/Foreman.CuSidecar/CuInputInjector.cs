@@ -150,8 +150,14 @@ internal static class CuInputInjector
             case "key":
             {
                 if (!ushort.TryParse(Arg(args, "vk"), out var vk)) { err = "key needs a numeric 'vk'"; return null; }
-                steps.Add((KeyVk(vk, true), KeyVk(vk, false), false));
-                steps.Add((KeyVk(vk, false), null, true));
+                // Optional modifiers ("mods"=ctrl/alt/shift/win): pressed before the key, released after in LIFO order -
+                // so Ctrl+L, Ctrl+C, etc. work. Each DOWN owes its UP, so the held-key tracking releases the modifiers
+                // too on ANY abort/panic/confine-fail (never strands Ctrl held).
+                var mods = ParseMods(Arg(args, "mods"));
+                foreach (var m in mods) steps.Add((KeyVk(m, true), KeyVk(m, false), false));   // modifier DOWN (owes UP)
+                steps.Add((KeyVk(vk, true), KeyVk(vk, false), false));                          // key DOWN (owes UP)
+                steps.Add((KeyVk(vk, false), null, true));                                      // key UP (pays)
+                for (var i = mods.Count - 1; i >= 0; i--) steps.Add((KeyVk(mods[i], false), null, true));  // modifier UP (pays, LIFO)
                 break;
             }
             case "type":
@@ -197,6 +203,23 @@ internal static class CuInputInjector
     }
 
     private static string Arg(ExecuteActionArgs a, string k) => a.Args.TryGetValue(k, out var v) ? v : string.Empty;
+
+    // Parse a "mods" string (e.g. "ctrl", "ctrl+shift", "ctrl alt") into modifier virtual-key codes, pressed/released
+    // around the key in order. Unknown tokens are ignored.
+    private static System.Collections.Generic.List<ushort> ParseMods(string? s)
+    {
+        var list = new System.Collections.Generic.List<ushort>();
+        if (string.IsNullOrWhiteSpace(s)) return list;
+        foreach (var tok in s.Split(new[] { ',', ' ', '+' }, StringSplitOptions.RemoveEmptyEntries))
+            switch (tok.Trim().ToLowerInvariant())
+            {
+                case "ctrl": case "control": list.Add(0x11); break;   // VK_CONTROL
+                case "alt": case "menu":     list.Add(0x12); break;   // VK_MENU
+                case "shift":                list.Add(0x10); break;   // VK_SHIFT
+                case "win": case "lwin":     list.Add(0x5B); break;   // VK_LWIN
+            }
+        return list;
+    }
 
     // ── INPUT builders ───────────────────────────────────────────────────────────────────────────────
     private static INPUT MouseMove(POINT screen)

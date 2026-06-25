@@ -24,11 +24,13 @@ internal static class CuSmokeTest
     public const string Flag = "--cu-smoketest";        // injector-only path (controller -> sidecar -> SendInput)
     public const string FlagE2E = "--cu-smoketest-e2e";  // full stack: broker -> approve -> pump -> inject
     public const string FlagHud = "--cu-smoketest-hud";  // INV-18 HUD occlusion-ack plumbing
+    public const string FlagExplorer = "--cu-smoketest-explorer";  // full chain drives Explorer to a drive
     public static string LogPath => Path.Combine(Path.GetTempPath(), "foreman-cu-smoketest.log");
 
     public static void RunToFileAndExit(Application app) => RunCore(app, RunAsync);
     public static void RunE2EToFileAndExit(Application app) => RunCore(app, RunE2EAsync);
     public static void RunHudToFileAndExit(Application app) => RunCore(app, () => RunHudTestAsync(app));
+    public static void RunExplorerToFileAndExit(Application app) => RunCore(app, RunExplorerTestAsync);
 
     private static void RunCore(Application app, Func<Task<(int code, string report)>> run)
     {
@@ -161,6 +163,23 @@ internal static class CuSmokeTest
         return found;
     }
 
+    // First visible top-level window of a given window class (e.g. "CabinetWClass" = File Explorer).
+    private static IntPtr FindWindowByClass(string cls)
+    {
+        var found = IntPtr.Zero;
+        EnumWindows((h, _) =>
+        {
+            if (!IsWindowVisible(h)) return true;
+            var sb = new StringBuilder(256);
+            if (GetClassName(h, sb, sb.Capacity) > 0 && sb.ToString() == cls) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
+
     // Full-stack end-to-end: a relayed local-agent PROPOSAL flows through the real broker (audit + default-Held), is
     // refused by the pump until the operator APPROVES, then the pump claims it and the sidecar injector types it into the
     // bound Notepad window. Proves the whole mediated chain on-device. (cu_approve's MCP presence tap is exercised
@@ -271,6 +290,111 @@ internal static class CuSmokeTest
             try { if (notepadPid != 0) Process.GetProcessById(notepadPid).Kill(); } catch { }
             try { if (np is { HasExited: false }) np.Kill(); } catch { }
         }
+    }
+
+    // Full-chain real task: drive File Explorer to the S: drive THROUGH the audited pipeline - launch Explorer, bind its
+    // window, then submit -> Held -> approve -> pump -> inject three keystrokes (F4 to focus the address bar, type "s:\",
+    // Enter). Verifies via the Shell that an Explorer window actually landed on S:. (F4 is the single-key address-bar
+    // focus; the injector has no Ctrl+L-style modifier combos by design.)
+    private static async Task<(int code, string report)> RunExplorerTestAsync()
+    {
+        const string drive = "s:\\";
+        var sb = new StringBuilder();
+        void Log(string m) => sb.AppendLine(m);
+        Log("=== Foreman desktop-CU drives File Explorer to S: (full audited chain) ===");
+
+        DesktopCuController? ctl = null;
+        CuSharedPanicFlag? flag = null;
+        try
+        {
+            // 1. Launch Explorer + find its window (CabinetWClass; the launched process exits immediately on Win11).
+            Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true });
+            IntPtr hwnd = IntPtr.Zero;
+            for (var i = 0; i < 60 && hwnd == IntPtr.Zero; i++)
+            {
+                hwnd = FindWindowByClass("CabinetWClass");
+                if (hwnd == IntPtr.Zero) await Task.Delay(200).ConfigureAwait(false);
+            }
+            if (hwnd == IntPtr.Zero) return (2, sb + "\nFAIL: no File Explorer window appeared");
+            await EnsureForeground(hwnd).ConfigureAwait(false);
+            Log($"explorer window hwnd={hwnd.ToInt64()}");
+
+            // 2. Real stack: broker + injector + pump, with the Explorer window bound.
+            flag = new CuSharedPanicFlag();
+            var broker = new CuBroker(new AuditPipeline(new FastPathAuditor()));
+            broker.WindowProbe = new Win32WindowProbe();
+            broker.OnWindowSwitch = (_, now) => { try { flag!.SetBound(now?.Hwnd.ToInt64() ?? 0); } catch { } };
+            broker.EnrollDesktopDriver(LocalDriverIpc.LocalAgentHostId);
+
+            ctl = new DesktopCuController { PanicFlag = flag };
+            ctl.OnSecurityNotice = (sev, m) => Log($"  [sidecar {sev}] {m}");
+            ctl.Start();
+            for (var i = 0; i < 75 && !ctl.IsConnected; i++) await Task.Delay(200).ConfigureAwait(false);
+            if (!ctl.IsConnected) return (3, sb + "\nFAIL: sidecar not connected");
+            Log("sidecar connected + handshaked");
+
+            var pump = new CuExecutorPump(broker, new DesktopCuExecutor(ctl, () => flag!.BoundHwnd));
+            var probe = new Win32WindowProbe();
+            var wref = probe.CaptureForeground();
+            if (wref is null || wref.Hwnd != hwnd) { await EnsureForeground(hwnd).ConfigureAwait(false); wref = probe.CaptureForeground(); }
+            var (_, bindReason) = broker.SetActiveWindow(wref);
+            Log($"bind: {bindReason}");
+
+            // 3. Drive three keystrokes through the FULL audited chain (each: submit -> Held -> approve -> pump -> inject).
+            async Task<bool> DoAsync(string label, string verb, Dictionary<string, string> args)
+            {
+                var action = LocalDriverIpc.BuildAction(new DriverSubmit(Guid.NewGuid().ToString("N"), verb, args, "navigate to S:"));
+                var item = await broker.SubmitAsync(action, new CuContext(LocalDriverIpc.LocalAgentHostId)).ConfigureAwait(false);
+                broker.ApproveHeld(item.ActionId);                              // operator approves
+                await EnsureForeground(hwnd).ConfigureAwait(false);
+                await pump.PumpOnceAsync().ConfigureAwait(false);
+                await Task.Delay(450).ConfigureAwait(false);
+                var st = broker.Get(item.ActionId)!.State;
+                Log($"  {label}: {item.State} -> approve -> pump -> {st}");
+                return st == CuActionState.Completed;
+            }
+
+            var k1 = await DoAsync("Ctrl+L (focus address bar)", "key", new() { ["vk"] = "76", ["mods"] = "ctrl" }).ConfigureAwait(false);  // L = 0x4C
+            var k2 = await DoAsync("type \"s:\\\"", "type", new() { ["text"] = drive }).ConfigureAwait(false);
+            var k3 = await DoAsync("key Enter (navigate)", "key", new() { ["vk"] = "13" }).ConfigureAwait(false);          // VK_RETURN
+            await Task.Delay(700).ConfigureAwait(false);
+
+            var atS = ExplorerIsAtSDrive();
+            Log("");
+            Log($"[{(k1 && k2 && k3 ? "PASS" : "FAIL")}] all three actions ran through the audited chain (held -> approved -> injected)");
+            Log($"[{(atS ? "PASS" : "FAIL")}] an Explorer window is now at S:\\ (verified via the Shell)");
+            var overall = k1 && k2 && k3 && atS;
+            Log("");
+            Log($"OVERALL: {(overall ? "PASS" : "FAIL")}");
+            return (overall ? 0 : 10, sb.ToString());
+        }
+        finally
+        {
+            try { ctl?.Stop(); } catch { }
+            try { flag?.Dispose(); } catch { }
+        }
+    }
+
+    // True if any open File Explorer window is currently showing the S: drive (LocationURL "file:///S:/").
+    private static bool ExplorerIsAtSDrive()
+    {
+        try
+        {
+            var t = Type.GetTypeFromProgID("Shell.Application");
+            if (t is null) return false;
+            dynamic shell = Activator.CreateInstance(t)!;
+            foreach (var w in shell.Windows())
+            {
+                try
+                {
+                    if (w.LocationURL is string url && url.StartsWith("file:///S:", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+        catch { return false; }
     }
 
     // INV-18 plumbing proof: the real CuOverlayWindow's adversarial ConfirmVisible() must return TRUE when the banner
