@@ -54,7 +54,8 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
     {
         InitializeComponent();
         _hide = new DispatcherTimer { Interval = HideAfter };
-        _hide.Tick += (_, _) => { _hide.Stop(); Hide(); };
+        // Clear the input row on hide so stale keys/text never linger or re-appear at the start of the next session.
+        _hide.Tick += (_, _) => { _hide.Stop(); InputLine.Text = string.Empty; InputLine.Visibility = System.Windows.Visibility.Collapsed; Hide(); };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -70,13 +71,14 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
     /// localised pulse + shake, and (re)arm the idle auto-hide. Safe to call repeatedly; each call re-announces.</summary>
     public void ShowDriving(string? target)
     {
-        if (!IsVisible) Show();
+        var firstShow = !IsVisible;
+        if (firstShow) Show();
         Reposition();   // computes _monIndex (the bound window's monitor) and places the HUD there
         var mon = _monIndex > 0 ? $"  [monitor {_monIndex}]" : string.Empty;
         Label.Text = (string.IsNullOrWhiteSpace(target)
             ? "CLAUDE DRIVING THRU FOREMAN"
             : $"CLAUDE DRIVING THRU FOREMAN — {target}") + mon;
-        Animate();
+        if (firstShow) Animate();   // animate once on appearance - not on every per-action call
         _hide.Stop();
         _hide.Start();
     }

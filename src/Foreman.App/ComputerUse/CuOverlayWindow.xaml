@@ -23,9 +23,11 @@
                 <TextBlock x:Name="Label" Text="CLAUDE DRIVING THRU FOREMAN" Foreground="#F2F4F8"
                            FontSize="16" FontWeight="Bold" FontFamily="Segoe UI, Arial" VerticalAlignment="Center" />
             </StackPanel>
-            <!-- Live keyboard input + macros the driving harness is sending, in blue (secret-shaped text redacted). -->
+            <!-- Live keyboard input + macros the driving harness is sending, in blue. Credential fields are hidden and
+                 single typed chars masked; secret-shaped text is best-effort redacted (NOT a guarantee for a bare
+                 password in a non-credential field). MaxWidth bounds the row so the ellipsis engages + the HUD rect stays stable. -->
             <TextBlock x:Name="InputLine" Foreground="#4FC3F7" FontSize="13" FontWeight="SemiBold"
-                       FontFamily="Consolas, Cascadia Mono, Segoe UI" Margin="30,5,0,0"
+                       FontFamily="Consolas, Cascadia Mono, Segoe UI" Margin="30,5,0,0" MaxWidth="520"
                        TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
         </StackPanel>
     </Border>
