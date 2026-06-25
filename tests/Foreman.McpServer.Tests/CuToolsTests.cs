@@ -75,7 +75,7 @@ public sealed class CuToolsTests
         Assert.Equal("held", sub.RootElement.GetProperty("state").GetString());
         var actionId = sub.RootElement.GetProperty("actionId").GetString()!;
 
-        using var appr = Json(ForemanMcpTools.CuApprove(actionId));            // operator approves
+        using var appr = Json(await ForemanMcpTools.CuApprove(actionId));      // operator approves (CuApprove is async)
         Assert.True(appr.RootElement.GetProperty("ok").GetBoolean());
 
         using var poll = Json(ForemanMcpTools.CuPollActions(10));              // executor claims it
