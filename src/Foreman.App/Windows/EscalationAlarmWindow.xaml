@@ -134,6 +134,11 @@
 
             <!-- Safe actions on the right -->
             <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="AuditButton" Content="Audit Harness" Click="AuditClick"
+                        Background="#FF1E2028" Foreground="{StaticResource AccentBrush}"
+                        BorderBrush="{StaticResource AccentBrush}" Padding="12,8" Margin="0,0,8,0"
+                        Cursor="Hand"
+                        ToolTip="Route this harness to an independent auditor (another agent / API) for a second opinion" />
                 <Button Content="Open Log" Click="OpenLogClick"
                         Background="#FF1E2028" Foreground="{StaticResource TextPrimaryBrush}"
                         BorderBrush="#FF303540" Padding="12,8" Margin="0,0,8,0"

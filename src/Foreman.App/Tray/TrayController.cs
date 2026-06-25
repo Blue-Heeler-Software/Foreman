@@ -59,6 +59,10 @@ public sealed class TrayController : IEventSink, IDisposable
     public Action<string>?                                    KillHarness           { get; set; }
     public Action<string>?                                    DisableHarness        { get; set; }
 
+    /// <summary>Injected from App — routes the offending harness to an independent auditor (same flow as the
+    /// auto-audit response). Backs the Emergency popup's "Audit Harness" button.</summary>
+    public Action<Foreman.Core.Models.EscalationEvent>?       AuditHarness          { get; set; }
+
     /// <summary>Injected from App — asks a harness to pack up cleanly (Idle Harness self-cleanup).</summary>
     public Func<string, (bool Ok, string Message)>?           RequestHarnessCleanup { get; set; }
 
@@ -282,7 +286,8 @@ public sealed class TrayController : IEventSink, IDisposable
             EscalationAlarmWindow.ShowFor(
                 esc,
                 id => KillHarness?.Invoke(id),
-                id => DisableHarness?.Invoke(id));
+                id => DisableHarness?.Invoke(id),
+                AuditHarness is { } audit ? e => audit(e) : null);
         }
     }
 

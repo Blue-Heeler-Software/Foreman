@@ -11,31 +11,62 @@ public partial class EscalationAlarmWindow : Window
     private readonly EscalationEvent _event;
     private readonly Action<string>  _killHarness;
     private readonly Action<string>  _disableHarness;
+    private readonly Action<EscalationEvent>? _auditHarness;
 
     public static Action? OpenLogRequested { get; set; }
 
     private EscalationAlarmWindow(
         EscalationEvent evt,
         Action<string> killHarness,
-        Action<string> disableHarness)
+        Action<string> disableHarness,
+        Action<EscalationEvent>? auditHarness)
     {
         _event          = evt;
         _killHarness    = killHarness;
         _disableHarness = disableHarness;
+        _auditHarness   = auditHarness;
 
         InitializeComponent();
         DataContext = new EscalationAlarmVm(evt);
+
+        // "Audit Harness" only makes sense when an auditor route is wired AND the offender is an interrogable agent
+        // (an OS process - "proc:..." - has no agent to audit; matches App.IsUninterrogableProcess).
+        AuditButton.Visibility =
+            _auditHarness is not null && !evt.HarnessId.StartsWith("proc:", StringComparison.Ordinal)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
     }
 
     public static void ShowFor(
         EscalationEvent evt,
         Action<string> killHarness,
-        Action<string> disableHarness)
+        Action<string> disableHarness,
+        Action<EscalationEvent>? auditHarness = null)
     {
-        var w = new EscalationAlarmWindow(evt, killHarness, disableHarness);
+        var w = new EscalationAlarmWindow(evt, killHarness, disableHarness, auditHarness);
         // Surface, not bare Activate: from a tray app, Activate() loses to foreground-lock
         // and the EMERGENCY window can open silently *behind* the user's editor.
         WindowActivation.Surface(w);
+    }
+
+    private void AuditClick(object sender, RoutedEventArgs e)
+    {
+        if (_auditHarness is null) return;
+
+        EventBus.Instance.Publish(new InfoEvent(
+            DateTimeOffset.UtcNow,
+            "Foreman.Behavior",
+            $"Operator requested an independent audit of '{_event.HarnessDisplayName}' from the Emergency alert."));
+
+        _auditHarness(_event);
+
+        // Immediate feedback; the routing outcome (which auditor, or skipped) lands in the event log. The window stays
+        // open so the operator can still kill / pause / acknowledge after sending the audit.
+        if (sender is System.Windows.Controls.Button b)
+        {
+            b.Content   = "Audit requested";
+            b.IsEnabled = false;
+        }
     }
 
     private void KillClick(object sender, RoutedEventArgs e)

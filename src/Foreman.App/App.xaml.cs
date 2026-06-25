@@ -628,6 +628,44 @@ public partial class App : Application
             () => _monitor.Tree.GetAll().ToList());
         _alertResolver.Start();
 
+        // Route the offending harness to an INDEPENDENT auditor (a second pair of eyes). Defined once here because it
+        // is reused by BOTH the automatic-response runner (below) AND the EMERGENCY popup's operator-clicked "Audit
+        // Harness" button — same routing, same honest skip for un-interrogable OS processes.
+        Action<EscalationEvent> runAdversarialAudit = esc =>
+        {
+            // An OS-process offender ("proc:…") is not an auditable agent — no auditor can interrogate the
+            // Windows Search indexer. Skip honestly rather than implying a missing-config (Settings → triage).
+            if (IsUninterrogableProcess(esc.HarnessId))
+            {
+                EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
+                    $"Audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: offender is an OS process, not an auditable agent — logged for human review."));
+                return;
+            }
+            var severity = esc.NewLevel >= EscalationLevel.Emergency ? ForemanSeverity.Critical : ForemanSeverity.High;
+            // Use the full route resolver (not SelectAuditor, which only consults configured preferences and
+            // returns null when none target this offender). Resolve falls back to any other running/connected
+            // harness, so an un-preconfigured escalation still gets a second pair of eyes instead of silently
+            // dropping to "no eligible auditor."
+            var snapshot = _monitor!.Tree.GetAll().ToList();
+            var connected = BuildConnectedHarnessIds(_mcpHost!.Sessions.DescribeSessions());
+            var selection = AuditRouteResolver.Resolve(settings.LlmTriage, esc.HarnessId, severity, snapshot, connected);
+            var auditor = selection.Selected;
+            if (auditor is null)
+            {
+                EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
+                    $"Audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: {selection.Reason}"));
+                return;
+            }
+            var (sys, usr) = BuildEscalationAuditPrompt(esc, auditor.AuditorId);
+            var req = _mcpHost!.State.CreateAskHarnessRequest(auditor.AuditorId, sys, usr, esc.Id, null, null);
+            _ = SafeAsk(auditor.AuditorId, sys, usr, req.RequestId);
+            EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
+                $"Routed '{esc.HarnessId}' to auditor '{auditor.AuditorId}'" +
+                $"{(selection.UsedFallback ? " (fallback — no configured preference)" : "")} for review (request {req.RequestId})."));
+        };
+        // The Emergency popup ("Audit Harness" button) routes through the very same flow.
+        _tray.AuditHarness = runAdversarialAudit;
+
         // Automatic responses (Settings → Automatic responses): when a harness escalates, fire the
         // operator-configured non-destructive actions. Decision + guardrails live in AlertResponsePolicy;
         // these delegates reuse the existing mailbox, audit routing, and idle-cleanup plumbing.
@@ -650,38 +688,7 @@ public partial class App : Application
                 EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
                     $"Auto-response [{esc.NewLevel}]: asked '{esc.HarnessId}' to justify its escalation (request {req.RequestId})."));
             },
-            AdversarialAudit = esc =>
-            {
-                // An OS-process offender ("proc:…") is not an auditable agent — no auditor can interrogate the
-                // Windows Search indexer. Skip honestly rather than implying a missing-config (Settings → triage).
-                if (IsUninterrogableProcess(esc.HarnessId))
-                {
-                    EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
-                        $"Auto-audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: offender is an OS process, not an auditable agent — logged for human review."));
-                    return;
-                }
-                var severity = esc.NewLevel >= EscalationLevel.Emergency ? ForemanSeverity.Critical : ForemanSeverity.High;
-                // Use the full route resolver (not SelectAuditor, which only consults configured preferences and
-                // returns null when none target this offender). Resolve falls back to any other running/connected
-                // harness, so an un-preconfigured escalation still gets a second pair of eyes instead of silently
-                // dropping to "no eligible auditor."
-                var snapshot = _monitor!.Tree.GetAll().ToList();
-                var connected = BuildConnectedHarnessIds(_mcpHost!.Sessions.DescribeSessions());
-                var selection = AuditRouteResolver.Resolve(settings.LlmTriage, esc.HarnessId, severity, snapshot, connected);
-                var auditor = selection.Selected;
-                if (auditor is null)
-                {
-                    EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
-                        $"Auto-audit skipped for '{esc.HarnessId}' [{esc.NewLevel}]: {selection.Reason}"));
-                    return;
-                }
-                var (sys, usr) = BuildEscalationAuditPrompt(esc, auditor.AuditorId);
-                var req = _mcpHost!.State.CreateAskHarnessRequest(auditor.AuditorId, sys, usr, esc.Id, null, null);
-                _ = SafeAsk(auditor.AuditorId, sys, usr, req.RequestId);
-                EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.AutoResponse",
-                    $"Auto-response [{esc.NewLevel}]: routed '{esc.HarnessId}' to auditor '{auditor.AuditorId}'" +
-                    $"{(selection.UsedFallback ? " (fallback — no configured preference)" : "")} for review (request {req.RequestId})."));
-            },
+            AdversarialAudit = runAdversarialAudit,
             RequestSelfCleanup = esc =>
             {
                 var (_, msg) = _monitor!.IdleCleanup.TriggerCleanup(esc.HarnessId, manual: false);
