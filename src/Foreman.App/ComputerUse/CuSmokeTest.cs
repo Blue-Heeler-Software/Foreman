@@ -349,7 +349,8 @@ internal static class CuSmokeTest
             var wref = probe.CaptureForeground();
             if (wref is null || wref.Hwnd != hwnd) { await EnsureForeground(hwnd).ConfigureAwait(false); wref = probe.CaptureForeground(); }
             var (_, bindReason) = broker.SetActiveWindow(wref);
-            Log($"bind: {bindReason}");
+            var mon = MonitorProbe.ForWindow(hwnd);
+            Log($"bind: {bindReason}" + (mon is { } mm ? $" on {mm.Summary}" : ""));
 
             // 3. Drive three keystrokes through the FULL audited chain (each: submit -> Held -> approve -> pump -> inject).
             async Task<bool> DoAsync(string label, string verb, Dictionary<string, string> args)

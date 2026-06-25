@@ -40,9 +40,15 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
 
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
 
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private const uint SWP_NOSIZE = 0x0001, SWP_NOACTIVATE = 0x0010;
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
     private readonly DispatcherTimer _hide;
-    private static readonly TimeSpan AnnounceFor = TimeSpan.FromSeconds(4);   // 3-7s "fireworks" window
+    private static readonly TimeSpan AnnounceFor = TimeSpan.FromSeconds(2);   // shake/glow "wobble" window
     private static readonly TimeSpan HideAfter = TimeSpan.FromSeconds(6);
+    private int _monIndex;   // monitor the HUD last positioned on (the bound/foreground window's monitor)
 
     public CuOverlayWindow()
     {
@@ -64,12 +70,12 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
     /// localised pulse + shake, and (re)arm the idle auto-hide. Safe to call repeatedly; each call re-announces.</summary>
     public void ShowDriving(string? target)
     {
-        Label.Text = string.IsNullOrWhiteSpace(target)
-            ? "CLAUDE DRIVING THRU FOREMAN"
-            : $"CLAUDE DRIVING THRU FOREMAN — {target}";
-
         if (!IsVisible) Show();
-        Reposition();
+        Reposition();   // computes _monIndex (the bound window's monitor) and places the HUD there
+        var mon = _monIndex > 0 ? $"  [monitor {_monIndex}]" : string.Empty;
+        Label.Text = (string.IsNullOrWhiteSpace(target)
+            ? "CLAUDE DRIVING THRU FOREMAN"
+            : $"CLAUDE DRIVING THRU FOREMAN — {target}") + mon;
         Animate();
         _hide.Stop();
         _hide.Start();
@@ -77,10 +83,24 @@ public partial class CuOverlayWindow : Window, Foreman.Core.ComputerUse.IHudAck
 
     private void Reposition()
     {
-        // Top-centre of the primary work area. SizeToContent has measured the banner by now.
+        // Top-centre of the BOUND window's monitor (foreground == bound during piloting) - so the HUD appears where the
+        // action is, not always on the primary. Physical pixels via SetWindowPos, so it's correct across multi-monitor +
+        // per-monitor DPI without DIP conversion. Falls back to the primary work area.
+        if (MonitorProbe.ForForeground() is { } m && _hwnd != IntPtr.Zero && GetWindowRect(_hwnd, out var r))
+        {
+            _monIndex = m.Index;
+            var winW = r.Right - r.Left;
+            var x = m.WorkLeft + Math.Max(0, (m.WorkWidth - winW) / 2);
+            var y = m.WorkTop + 8;
+            SetWindowPos(_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            return;
+        }
         Left = Math.Max(0, (SystemParameters.WorkArea.Width - ActualWidth) / 2);
         Top = SystemParameters.WorkArea.Top + 8;
     }
+
+    /// <summary>The monitor (1-based) the HUD last positioned on - the bound window's monitor. 0 until first shown.</summary>
+    public int CurrentMonitor => _monIndex;
 
     private void Animate()
     {

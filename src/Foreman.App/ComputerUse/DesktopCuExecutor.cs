@@ -53,7 +53,9 @@ public sealed class DesktopCuExecutor : ICuExecutor
                     "characters (the input WAS delivered to the bound window, INV-5-verified; only the rendered text differs).");
         }
 
-        return new CuExecResult(r.Ok, new { r.FinalHwnd, r.CursorX, r.CursorY, r.HaltedMidStream }, r.Error);
+        // Record which monitor the action ran on, so the pump/audit/log is monitor-aware.
+        var monitor = MonitorProbe.ForWindow((IntPtr)boundHwnd)?.Summary;
+        return new CuExecResult(r.Ok, new { r.FinalHwnd, r.CursorX, r.CursorY, r.HaltedMidStream, Monitor = monitor }, r.Error);
     }
 
     private static void Publish(ForemanSeverity sev, string message)

@@ -885,8 +885,10 @@ public partial class App : Application
                 forcePresence: true, freshTap: true).ConfigureAwait(false);
             if (!ok) { Notice(ForemanSeverity.Low, "Bind not authorized (no presence tap) - the CU target was not bound."); return; }
 
+            var mon = Foreman.App.ComputerUse.MonitorProbe.ForWindow(w.Hwnd);
             var (bound, reason) = broker.SetActiveWindow(w, store.Mint());
-            Notice(bound ? ForemanSeverity.Info : ForemanSeverity.Low, reason);
+            Notice(bound ? ForemanSeverity.Info : ForemanSeverity.Low,
+                bound && mon is { } m ? $"{reason} on {m.Summary}" : reason);
         }
         catch (Exception ex) { Notice(ForemanSeverity.Low, "Bind failed: " + ex.Message); }
     }
