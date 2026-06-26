@@ -103,4 +103,34 @@ public sealed class IdleCleanupPolicyTests
         var (system, _) = IdleCleanupPolicy.BuildPrompts("codex", 60, [], manual: false);
         Assert.Contains("not an accusation", system);
     }
+
+    // ── ClassifyForUpdatePrep ─────────────────────────────────────────────────
+    [Fact] public void UpdatePrep_IdleTree_IsReaped()
+        => Assert.Equal(UpdatePrepDisposition.Reap,
+            IdleCleanupPolicy.ClassifyForUpdatePrep("claude-code", [Rec(60), Rec(90)], isLocalModelHost: false, 45, Now));
+
+    [Fact] public void UpdatePrep_ActiveTree_IsCheckpointed_NotKilled()
+        => Assert.Equal(UpdatePrepDisposition.Checkpoint,
+            IdleCleanupPolicy.ClassifyForUpdatePrep("claude-code", [Rec(60), Rec(5)], isLocalModelHost: false, 45, Now));
+
+    [Fact] public void UpdatePrep_LocalModelHost_IsSkipped_EvenWhenIdle()
+        => Assert.Equal(UpdatePrepDisposition.Skip,
+            IdleCleanupPolicy.ClassifyForUpdatePrep("lmstudio", [Rec(120)], isLocalModelHost: true, 45, Now));
+
+    [Fact] public void UpdatePrep_NothingLive_IsSkipped()
+        => Assert.Equal(UpdatePrepDisposition.Skip,
+            IdleCleanupPolicy.ClassifyForUpdatePrep("codex", [Rec(60, state: ProcessState.Terminated)], isLocalModelHost: false, 45, Now));
+
+    // ── BuildUpdatePrepPrompts ────────────────────────────────────────────────
+    [Fact]
+    public void UpdatePrepPrompts_FrameImminentRestart_NotAbandonment()
+    {
+        var (system, user) = IdleCleanupPolicy.BuildUpdatePrepPrompts("claude-code", ["bash.exe"]);
+        Assert.Contains("claude-code", system);
+        Assert.Contains("update", system, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("reply_to_ask_harness_request", user);
+        Assert.Contains("bash.exe", user);
+        Assert.Contains("safe to interrupt", user);
+        Assert.DoesNotContain("abandoned", user, StringComparison.OrdinalIgnoreCase);   // active sessions aren't accused of being idle
+    }
 }

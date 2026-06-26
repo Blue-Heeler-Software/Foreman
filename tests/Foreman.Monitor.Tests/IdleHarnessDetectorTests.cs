@@ -162,4 +162,42 @@ public sealed class IdleHarnessDetectorTests
         Assert.False(ok);
         Assert.Contains("No running processes", msg);
     }
+
+    // PrepareForUpdate is PER SESSION: one idle session is selected for reap while an ACTIVE session of the SAME
+    // harness type is spared and asked to checkpoint. Odd PIDs are used so KillProcess's real-kill path safely no-ops
+    // (Windows PIDs are multiples of 4, so an odd PID never resolves to a live process) — we assert on the reap DECISION
+    // (recorded in the termination ledger before the kill) + the checkpoint ask, not on a real kill.
+    [Fact]
+    public void PrepareForUpdate_ReapsIdleSession_SparesActiveSameTypeSession()
+    {
+        var settings = new ForemanSettings { IdleCleanupAfterMinutes = 45 };
+        var tree = new ProcessTreeTracker();
+        const string type = "custom:prep-iso.exe";
+
+        // Idle session: root + child, both I/O-silent past the threshold.
+        tree.OnProcessCreated(Proc(920_101, 920_099, "claude.exe", type, silentMinutes: 90));
+        tree.OnProcessCreated(Proc(920_103, 920_101, "bash.exe", null, silentMinutes: 90));
+        // ACTIVE session of the SAME type: root quiet but a busy child → not idle.
+        tree.OnProcessCreated(Proc(920_201, 920_199, "claude.exe", type, silentMinutes: 90));
+        tree.OnProcessCreated(Proc(920_203, 920_201, "node.exe", null, silentMinutes: 2));
+
+        var ledger = new Foreman.Core.Termination.ExpectedTerminationLedger();
+        var requests = new List<string>();
+        var sut = new IdleHarnessDetector(_bus, settings, tree)
+        {
+            ExpectedTerminations = ledger,
+            CreateCleanupRequest = (h, _, _, _, _, _) => { lock (requests) requests.Add(h); return "req"; },
+        };
+
+        sut.PrepareForUpdate();
+
+        // The idle session is selected for reap → its whole tree is recorded as expected terminations.
+        Assert.True(ledger.WasExpected(920_101));
+        Assert.True(ledger.WasExpected(920_103));
+        // The active same-type session is spared → never recorded for reap...
+        Assert.False(ledger.WasExpected(920_201));
+        Assert.False(ledger.WasExpected(920_203));
+        // ...and asked to checkpoint instead (type-level cooperative request).
+        Assert.Contains(type, requests);
+    }
 }

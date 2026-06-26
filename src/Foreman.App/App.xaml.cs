@@ -541,6 +541,11 @@ public partial class App : Application
                 _mcpHost.State.ReplyToAskHarnessRequest(requestId, res.ReplyText!, "replied via sampling round-trip", harnessId, null);
         };
         _tray.RequestHarnessCleanup = type => _monitor.IdleCleanup.TriggerCleanup(type);
+        // "Prep sessions for update": reaps done by PrepareForUpdate are recorded as EXPECTED terminations (the ledger
+        // lives in McpServer state, shared via Core) for when the brokered-kill suppression consumer is wired; until
+        // then those reaped exits still surface as exit/orphan events (the reap is honest, not silent).
+        _monitor.IdleCleanup.ExpectedTerminations = _mcpHost.State.ExpectedTerminations;
+        _tray.PrepSessionsForUpdate = () => _monitor.IdleCleanup.PrepareForUpdate();
 
         // wire behavior tracker into tray (metrics window + kill + disable actions)
         _tray.GetBehaviorProfiles   = () => _monitor.Behavior.Profiles;

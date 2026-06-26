@@ -93,4 +93,52 @@ public static class IdleCleanupPolicy
 
         return (system, user);
     }
+
+    /// <summary>
+    /// "Prep for update" disposition for one harness tree: <see cref="UpdatePrepDisposition.Reap"/> an already-idle /
+    /// abandoned tree (safe to kill — a cooperative ask would go unanswered), <see cref="UpdatePrepDisposition.Checkpoint"/>
+    /// an active one (cooperative request, never killed), or <see cref="UpdatePrepDisposition.Skip"/> (local-model host /
+    /// nothing live). Pure so the reap-vs-nudge decision is unit-tested away from the real kill path.
+    /// </summary>
+    public static UpdatePrepDisposition ClassifyForUpdatePrep(
+        string harnessType, IReadOnlyList<ProcessRecord> tree, bool isLocalModelHost,
+        int idleAfterMinutes, DateTimeOffset now)
+    {
+        // Never reap or nag a local-model host (LM Studio / Ollama) — idling between prompts is its normal state.
+        if (isLocalModelHost) return UpdatePrepDisposition.Skip;
+        var live = tree.Where(r => r.State != ProcessState.Terminated).ToList();
+        if (live.Count == 0) return UpdatePrepDisposition.Skip;
+        return IsTreeIdle(live, idleAfterMinutes, now)
+            ? UpdatePrepDisposition.Reap          // abandoned → clean it up
+            : UpdatePrepDisposition.Checkpoint;   // active → ask it to save/commit before the restart; never kill it
+    }
+
+    /// <summary>
+    /// Prompts for the "prep for update" cooperative request: like the idle nudge, but framed as an imminent
+    /// update/restart rather than abandonment, so an ACTIVE agent checkpoints instead of being told it looks idle.
+    /// </summary>
+    public static (string System, string User) BuildUpdatePrepPrompts(string harnessId, IReadOnlyList<string> childNames)
+    {
+        var system =
+            $"You are the '{harnessId}' coding agent. Foreman Agent Safety, the local watchdog on this machine, is " +
+            "preparing for an imminent update or restart that may interrupt you. This is routine — checkpoint so nothing is lost.";
+
+        var children = childNames.Count > 0
+            ? $" Your tracked child processes: {string.Join(", ", childNames.Distinct(StringComparer.OrdinalIgnoreCase).Take(8))}."
+            : "";
+
+        var user =
+            $"An update or restart is imminent and may interrupt this session.{children}\n" +
+            "Please get to a safe-to-interrupt state now:\n" +
+            "1. Save and checkpoint your work; commit it ONLY if your own instructions allow committing.\n" +
+            "2. Stop any leftover child processes you spawned (builds, dev servers, file watchers, shells).\n" +
+            "3. Release file locks and clean up temp resources you own.\n" +
+            $"4. Reply via reply_to_ask_harness_request(requestId, response, actionTaken, harnessId: \"{harnessId}\") " +
+            "with whether you are safe to interrupt — the requestId is shown by list_ask_harness_requests.";
+
+        return (system, user);
+    }
 }
+
+/// <summary>What "prep for update" should do with one harness tree. See <see cref="IdleCleanupPolicy.ClassifyForUpdatePrep"/>.</summary>
+public enum UpdatePrepDisposition { Skip, Checkpoint, Reap }

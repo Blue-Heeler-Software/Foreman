@@ -66,6 +66,10 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — asks a harness to pack up cleanly (Idle Harness self-cleanup).</summary>
     public Func<string, (bool Ok, string Message)>?           RequestHarnessCleanup { get; set; }
 
+    /// <summary>Injected from App — "Prep sessions for update": cooperatively checkpoints ACTIVE harness sessions and
+    /// reaps IDLE/abandoned ones so an update or restart lands clean.</summary>
+    public Func<(bool Ok, string Message)>?                   PrepSessionsForUpdate { get; set; }
+
     /// <summary>Injected from App — per-PID network bytes/sec from the elevated sidecar (null when off).</summary>
     public Func<int, double?>?                                GetNetRate            { get; set; }
 
@@ -655,6 +659,8 @@ public sealed class TrayController : IEventSink, IDisposable
         AddMenuItem(menu, "Process Monitor…", () => OpenProcessMonitorWindow());
         AddMenuItem(menu, "Harnesses…", () => OpenHarnessesWindow());
         AddMenuItem(menu, "Behavior Metrics…", () => OpenBehaviorMetricsWindow());
+        if (PrepSessionsForUpdate is not null)
+            AddMenuItem(menu, "Prep sessions for update…", () => PrepSessionsForUpdateFromTray());
         menu.Items.Add(new Separator());
         AddMenuItem(menu, "Send test alert…", () => SendTestAlert());
         menu.Items.Add(new Separator());
@@ -760,6 +766,35 @@ public sealed class TrayController : IEventSink, IDisposable
             w.Show();
         }
         WindowActivation.Surface(_connectWindow);
+    }
+
+    // "Prep sessions for update": cooperate with the living (ask active sessions to checkpoint), reap the abandoned
+    // (kill idle trees), so an update or restart lands clean. Confirmed first - the reap kills processes.
+    private void PrepSessionsForUpdateFromTray()
+    {
+        if (PrepSessionsForUpdate is null)
+        {
+            MessageBox.Show("Session prep isn't wired up yet.",
+                "Foreman Agent Safety — Prep for update", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            "Prepare agent sessions for an update or restart?\n\n" +
+            $"• ACTIVE sessions are asked to checkpoint/commit and stop their child processes — they are NOT killed.\n" +
+            $"• IDLE sessions (no I/O for {_settings.IdleCleanupAfterMinutes}+ min, configurable in Settings) are REAPED: " +
+            "a hard kill of that session's process tree. Any UNSAVED work in them is lost. A session you are present at " +
+            "but have not run anything in for that long counts as idle — save it first.\n\n" +
+            "Each session is handled on its own, so an active session is spared even if another of the same type is idle. " +
+            "Local-model hosts, disabled harnesses, and Foreman's own processes are left alone.\n\n" +
+            "Note: reaped exits still appear in the event log (alert-suppression for them isn't wired yet).",
+            "Foreman Agent Safety — Prep sessions for update",
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.OK) return;
+
+        var (ok, msg) = PrepSessionsForUpdate();
+        MessageBox.Show(msg, "Foreman Agent Safety — Prep sessions for update",
+            MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     private void OpenMuteManagerWindow()
