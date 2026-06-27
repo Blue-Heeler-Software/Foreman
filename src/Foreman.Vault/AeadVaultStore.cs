@@ -19,17 +19,24 @@ public sealed class AeadVaultStore(string path) : IVaultStore
 
     public bool IsUnlocked { get { lock (_gate) return _doc is not null; } }
 
-    /// <summary>Create a brand-new empty vault at the path (used at first-run enrollment). Overwrites any existing file.</summary>
+    /// <summary>Provision THIS instance as a brand-new empty vault (first-run enrollment) and persist it. Overwrites
+    /// any existing file at the path. Lets a long-lived store instance be enrolled in place (stable resolver).</summary>
+    public void Provision(string masterPassword, byte[] keyComponent)
+    {
+        lock (_gate)
+        {
+            _password = masterPassword;
+            _keyComponent = (byte[])keyComponent.Clone();
+            _doc = new VaultDocument();
+            SaveLocked();
+        }
+    }
+
+    /// <summary>Convenience: a new store provisioned as an empty vault at the path. Used by tests/enrollment.</summary>
     public static AeadVaultStore Create(string path, string masterPassword, byte[] keyComponent)
     {
         var store = new AeadVaultStore(path);
-        lock (store._gate)
-        {
-            store._password = masterPassword;
-            store._keyComponent = (byte[])keyComponent.Clone();
-            store._doc = new VaultDocument();
-            store.SaveLocked();
-        }
+        store.Provision(masterPassword, keyComponent);
         return store;
     }
 
