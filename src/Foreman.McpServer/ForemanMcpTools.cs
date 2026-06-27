@@ -1456,6 +1456,48 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
+        "CU executor only: resolve a {{vault:origin/field}} reference in an APPROVED, EXECUTING browser action to its " +
+        "real value for the live target origin you are about to fill. The submitting harness can never call this; the " +
+        "value is returned only to the browser-extension executor and is never logged. Domain-binding: the live origin " +
+        "must match the credential's registered origin (and an allowed harness / the operator), or resolution is refused.")]
+    public static async Task<object> CuResolveVault(
+        [Description("actionId being executed")] string actionId,
+        [Description("The {{vault:origin/field}} reference to resolve (must be one present in the approved action)")] string reference,
+        [Description("The live target origin/host you are about to fill into (e.g. the tab host)")] string liveOrigin,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+    {
+        var state = _state ?? new ForemanState();
+        if (state.Cu is null) return new { ok = false, reason = "Mediated computer use is not available." };
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate) return new { ok = false, reason = "Refused: token/process identity mismatch." };
+        // Executor identity only (browser-extension or operator) — the submitting/driving harness can NEVER resolve.
+        if (!caller.IsOperator && !string.Equals(caller.HarnessId, "browser-extension", StringComparison.OrdinalIgnoreCase))
+            return new { ok = false, reason = "Only the browser-extension executor may resolve a vault reference." };
+        if (string.IsNullOrWhiteSpace(actionId) || string.IsNullOrWhiteSpace(reference) || string.IsNullOrWhiteSpace(liveOrigin))
+            return new { ok = false, reason = "actionId, reference, and liveOrigin are required." };
+
+        // Bind resolution to a REAL, claimed (executing) browser action AND to a reference the agent actually put in it,
+        // so a compromised extension can't resolve arbitrary credentials, or refs for actions it never claimed.
+        var item = state.Cu.Get(actionId.Trim());
+        if (item is null || item.Action.Modality != Foreman.Core.ComputerUse.CuModality.Browser)
+            return new { ok = false, reason = "No such browser action." };
+        if (item.State != Foreman.Core.ComputerUse.CuActionState.Executing)
+            return new { ok = false, reason = "Action is not executing (claim it first)." };
+        if (!item.Action.Args.Values.Any(v => (v ?? string.Empty).Contains(reference, StringComparison.Ordinal)))
+            return new { ok = false, reason = "That reference was not part of the approved action." };
+
+        var resolve = state.ResolveVaultAsync;
+        if (resolve is null) return new { ok = false, reason = "The credential vault is not available." };
+
+        var (rok, value, reason) = await resolve(reference, liveOrigin.Trim(), item.Action.ByHarness).ConfigureAwait(false);
+        // Audit the EVENT only — never the value.
+        EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Vault",
+            rok ? $"Released a vault credential into '{liveOrigin.Trim()}' for action [{item.ActionId}]."
+                : $"Refused a vault reference for action [{item.ActionId}] into '{liveOrigin.Trim()}': {reason}"));
+        return rok ? new { ok = true, value } : new { ok = false, reason };
+    }
+
+    [McpServerTool, Description(
         "Operator only: APPROVE a computer-use action the auditor held. The harness that submitted it cannot approve " +
         "its own held action — only the operator may.")]
     public static async Task<object> CuApprove(

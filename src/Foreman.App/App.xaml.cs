@@ -355,6 +355,18 @@ public partial class App : Application
             new Foreman.App.Vault.DpapiVaultKeyProtector());
         panicState.Changed += halted => { if (halted) _vaultService?.Lock(); };
         _tray.Vault = _vaultService;   // operator-only "Vault…" tray window (enroll / unlock / manage)
+        // Browser-extension executor's resolve path (cu_resolve_vault): the App holds the unlocked key + resolver, so the
+        // reference -> plaintext substitution happens here, gated by a per-release presence tap (when the lock is on; the
+        // approval-cache TTL keeps a single login from prompting per field) + domain-binding + ACL inside the resolver.
+        _mcpHost.State.ResolveVaultAsync = async (text, liveOrigin, byHarness) =>
+        {
+            if (_vaultService is null) return (false, null, "credential vault unavailable");
+            if (!await Security.PresenceGuard.AuthorizeAsync(
+                    Foreman.Core.Security.WeakeningAction.ResolveVaultCredential, $"release a credential into '{liveOrigin}'"))
+                return (false, null, "presence not verified");
+            var r = _vaultService.Resolver.Resolve(text, liveOrigin, byHarness, isOperator: string.IsNullOrEmpty(byHarness));
+            return (r.Ok, r.Resolved, r.Reason);
+        };
         _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
             () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
         if (!_panicHotkey.Registered)

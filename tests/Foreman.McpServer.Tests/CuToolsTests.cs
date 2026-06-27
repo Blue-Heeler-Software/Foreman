@@ -183,4 +183,52 @@ public sealed class CuToolsTests
         using var doc = Json(ForemanMcpTools.CuSetDriver("codex", AsHarness("codex")));   // a non-operator harness
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
     }
+
+    // ── cu_resolve_vault (the browser-extension executor's reference -> plaintext resolve) ──────────────────
+    private static async Task<string> ExecutingBrowserAction(string text)
+    {
+        using var sub = Json(await ForemanMcpTools.CuSubmit("browser", "type", $"{{\"text\":\"{text}\"}}"));
+        var actionId = sub.RootElement.GetProperty("actionId").GetString()!;
+        Json(ForemanMcpTools.CuPollActions(10, AsHarness("browser-extension"))).Dispose();   // Approved -> Executing
+        return actionId;
+    }
+
+    [Fact]
+    public async Task CuResolveVault_Executor_ResolvesBoundReference()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "s3cret", "ok"));
+        var actionId = await ExecutingBrowserAction("login {{vault:github.com/password}}");
+
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, "{{vault:github.com/password}}", "github.com", AsHarness("browser-extension")));
+        Assert.True(res.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("s3cret", res.RootElement.GetProperty("value").GetString());
+    }
+
+    [Fact]
+    public async Task CuResolveVault_SubmittingHarness_Refused()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "x", "ok"));
+        var actionId = await ExecutingBrowserAction("{{vault:github.com/password}}");
+
+        // A driving/submitting harness (not the browser-extension executor) can never resolve.
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, "{{vault:github.com/password}}", "github.com", AsHarness("codex")));
+        Assert.False(res.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CuResolveVault_ReferenceNotInApprovedAction_Refused()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "x", "ok"));
+        var actionId = await ExecutingBrowserAction("{{vault:github.com/password}}");
+
+        // A reference the agent never put in the approved action is refused — no resolving arbitrary credentials.
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, "{{vault:bank.com/password}}", "bank.com", AsHarness("browser-extension")));
+        Assert.False(res.RootElement.GetProperty("ok").GetBoolean());
+    }
 }
