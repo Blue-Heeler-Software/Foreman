@@ -361,9 +361,15 @@ public partial class App : Application
         _mcpHost.State.ResolveVaultAsync = async (text, liveOrigin, byHarness) =>
         {
             if (_vaultService is null) return (false, null, "credential vault unavailable");
+            // forcePresence: a credential RELEASE to an agent ALWAYS demands a live operator tap (Windows Hello / FIDO2),
+            // regardless of the lock setting - this is the one boundary a same-user adversary (who could mint a
+            // 'browser-extension' token) cannot forge. Fails closed when no authenticator is enrolled, so agent vault
+            // injection requires presence enrollment. freshTap is left default so the approval-cache TTL keeps a single
+            // login from prompting per field (operator can set TTL=0 to tap every time).
             if (!await Security.PresenceGuard.AuthorizeAsync(
-                    Foreman.Core.Security.WeakeningAction.ResolveVaultCredential, $"release a credential into '{liveOrigin}'"))
-                return (false, null, "presence not verified");
+                    Foreman.Core.Security.WeakeningAction.ResolveVaultCredential,
+                    $"release a credential into '{liveOrigin}'", forcePresence: true))
+                return (false, null, "presence not verified (enroll Windows Hello to let agents use vault credentials)");
             var r = _vaultService.Resolver.Resolve(text, liveOrigin, byHarness, isOperator: string.IsNullOrEmpty(byHarness));
             return (r.Ok, r.Resolved, r.Reason);
         };

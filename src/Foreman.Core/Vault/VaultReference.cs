@@ -16,6 +16,12 @@ public static partial class VaultReference
 
     public static bool HasReference(string? text) => !string.IsNullOrEmpty(text) && Pattern().IsMatch(text);
 
+    /// <summary>Every well-formed <c>{{vault:o/f}}</c> token in <paramref name="text"/> (the literal matched substrings),
+    /// so callers can check a requested reference against the WHOLE tokens an approved action actually contained — not a
+    /// loose substring.</summary>
+    public static IEnumerable<string> Tokens(string? text) =>
+        string.IsNullOrEmpty(text) ? [] : Pattern().Matches(text).Select(m => m.Value);
+
     /// <summary>
     /// Replace every <c>{{vault:o/f}}</c> via <paramref name="resolve"/>. Fail-closed: if any reference has an unknown
     /// field, or <paramref name="resolve"/> returns null, the WHOLE result is null (never a partial fill). A non-null

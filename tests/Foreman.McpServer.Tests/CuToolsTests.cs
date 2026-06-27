@@ -231,4 +231,27 @@ public sealed class CuToolsTests
             actionId, "{{vault:bank.com/password}}", "bank.com", AsHarness("browser-extension")));
         Assert.False(res.RootElement.GetProperty("ok").GetBoolean());
     }
+
+    [Fact]
+    public async Task CuResolveVault_WhilePanicHalted_Refused()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "s3cret", "ok"));
+        state.Panic = new Foreman.Core.Security.CuPanicState();
+        state.Panic.Halt();
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            "any", "{{vault:github.com/password}}", "github.com", AsHarness("browser-extension")));
+        Assert.False(res.RootElement.GetProperty("ok").GetBoolean());   // panic voids any credential release
+    }
+
+    [Fact]
+    public async Task CuResolveVault_ReferenceCaseInsensitive_Accepted()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "s3cret", "ok"));
+        var actionId = await ExecutingBrowserAction("login {{vault:github.com/Password}}");   // capital P in the action
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, "{{vault:github.com/password}}", "github.com", AsHarness("browser-extension")));
+        Assert.True(res.RootElement.GetProperty("ok").GetBoolean());    // whole-token, case-insensitive match
+    }
 }

@@ -1468,32 +1468,49 @@ public static class ForemanMcpTools
     {
         var state = _state ?? new ForemanState();
         if (state.Cu is null) return new { ok = false, reason = "Mediated computer use is not available." };
+        if (state.Panic?.IsHalted == true) return new { ok = false, reason = "Computer use is halted (panic) — no credential release." };
         var caller = CallerScope.From(http);
         if (!caller.CanMutate) return new { ok = false, reason = "Refused: token/process identity mismatch." };
-        // Executor identity only (browser-extension or operator) — the submitting/driving harness can NEVER resolve.
+        // Executor identity only (browser-extension or operator) — the submitting/driving harness can NEVER resolve. NOTE:
+        // this identity is NOT a same-user boundary (the install secret is user-readable; a same-user process could mint a
+        // 'browser-extension' token). The real boundary on a credential RELEASE is the mandatory operator presence tap
+        // wired in App + the vault being unlocked only when the operator chooses; see docs/vault-design.md.
         if (!caller.IsOperator && !string.Equals(caller.HarnessId, "browser-extension", StringComparison.OrdinalIgnoreCase))
-            return new { ok = false, reason = "Only the browser-extension executor may resolve a vault reference." };
+            return new { ok = false, reason = "Only the browser-extension executor (or operator) may resolve a vault reference." };
         if (string.IsNullOrWhiteSpace(actionId) || string.IsNullOrWhiteSpace(reference) || string.IsNullOrWhiteSpace(liveOrigin))
             return new { ok = false, reason = "actionId, reference, and liveOrigin are required." };
+        if (reference.Length > 4096 || liveOrigin.Length > 2048)
+            return new { ok = false, reason = "reference/liveOrigin too long." };
 
-        // Bind resolution to a REAL, claimed (executing) browser action AND to a reference the agent actually put in it,
-        // so a compromised extension can't resolve arbitrary credentials, or refs for actions it never claimed.
+        // Bind resolution to a REAL, claimed (executing) browser action AND to a WHOLE {{vault:...}} token the agent
+        // actually put in it (case-insensitive) — not a loose substring — so a compromised extension can't resolve
+        // arbitrary credentials, substring-forged refs, or refs for actions it never claimed.
         var item = state.Cu.Get(actionId.Trim());
         if (item is null || item.Action.Modality != Foreman.Core.ComputerUse.CuModality.Browser)
             return new { ok = false, reason = "No such browser action." };
         if (item.State != Foreman.Core.ComputerUse.CuActionState.Executing)
             return new { ok = false, reason = "Action is not executing (claim it first)." };
-        if (!item.Action.Args.Values.Any(v => (v ?? string.Empty).Contains(reference, StringComparison.Ordinal)))
-            return new { ok = false, reason = "That reference was not part of the approved action." };
+        var want = reference.Trim();
+        var inAction = Foreman.Core.Vault.VaultReference.HasReference(want)
+            && item.Action.Args.Values.SelectMany(v => Foreman.Core.Vault.VaultReference.Tokens(v))
+                   .Any(t => string.Equals(t, want, StringComparison.OrdinalIgnoreCase));
+        if (!inAction) return new { ok = false, reason = "That reference was not part of the approved action." };
 
         var resolve = state.ResolveVaultAsync;
         if (resolve is null) return new { ok = false, reason = "The credential vault is not available." };
 
-        var (rok, value, reason) = await resolve(reference, liveOrigin.Trim(), item.Action.ByHarness).ConfigureAwait(false);
-        // Audit the EVENT only — never the value.
+        var (rok, value, reason) = await resolve(want, liveOrigin.Trim(), item.Action.ByHarness).ConfigureAwait(false);
+
+        // Re-check after the (presence-prompting, possibly slow) resolve: a panic halt or the action completing / being
+        // rejected mid-tap VOIDS the release — never hand back a secret for an action that is no longer live.
+        if (state.Panic?.IsHalted == true ||
+            state.Cu.Get(actionId.Trim())?.State != Foreman.Core.ComputerUse.CuActionState.Executing)
+            return new { ok = false, reason = "Action was halted or is no longer executing — release voided." };
+
+        // Audit the EVENT + which field (the reference names it) — NEVER the value.
         EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Vault",
-            rok ? $"Released a vault credential into '{liveOrigin.Trim()}' for action [{item.ActionId}]."
-                : $"Refused a vault reference for action [{item.ActionId}] into '{liveOrigin.Trim()}': {reason}"));
+            rok ? $"Released vault credential {want} into '{liveOrigin.Trim()}' for action [{item.ActionId}]."
+                : $"Refused vault reference {want} for action [{item.ActionId}] into '{liveOrigin.Trim()}': {reason}"));
         return rok ? new { ok = true, value } : new { ok = false, reason };
     }
 

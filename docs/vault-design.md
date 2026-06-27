@@ -68,6 +68,26 @@ The vault **key** never leaves the App. The submitting agent only ever held the 
 | Secret leaks into log / cloud-judge payload | Reference shown not value; redaction at every egress; hash-chain detects tampering |
 | Second agent races a release | Per-item lock + version compare-and-swap on inject |
 
+## Trust assumptions & residual risks (browser resolve path, P1.4)
+
+The agent-facing resolve (`cu_resolve_vault`) is the most sensitive surface; its review made these explicit:
+
+- **The `browser-extension` executor identity is NOT a same-user boundary.** The install secret is user-readable,
+  so a same-user process could mint a `browser-extension` token. The executor-identity gate stops a *remote* or
+  *cross-harness* caller, not a same-user adversary. The real boundary on every credential RELEASE is therefore
+  (a) the vault being **unlocked** only when the operator entered the master password this session, and (b) a
+  **mandatory operator presence tap** (`forcePresence`) — the one thing a same-user adversary can't forge. Agent
+  vault injection consequently **requires Windows Hello / FIDO2 enrollment** and fails closed without it.
+- **The extension-reported `liveOrigin` is trusted** (the extension is peer-bound; only it knows the live tab
+  origin). A *compromised* extension could claim an origin to resolve a credential registered for it — bounded by
+  what's registered, and still gated by the per-release presence tap. Browser-extension compromise is out of the
+  browser-CU threat model (if the executor is hostile, browser CU is already lost).
+- **The presence approval-cache TTL** lets one tap cover multiple fields of the **same** origin within the window
+  (so a login isn't a tap per field). The operator can set the TTL to 0 to require a tap every release.
+- Resolution is **panic-gated** (checked before and re-checked after the tap), **bound** to a real claimed
+  (Executing) action and a whole `{{vault:...}}` token that action actually contained, and the value is returned
+  only to the executor and **never logged** (the audit records the reference + origin, never the value).
+
 ## Module layout
 
 - **`Foreman.Core/Vault/`** (cross-platform, no KeePassLib): `VaultReference` (parse/extract/replace),
