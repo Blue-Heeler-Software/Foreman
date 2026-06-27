@@ -75,14 +75,17 @@ public partial class VaultWindow : Window
         var rows = _vault.ListItems().Select(VaultItemRow.From).ToList();
         ItemsList.ItemsSource = rows;
         EmptyHint.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (rows.Count == 0) OpenAddForm();   // empty vault (incl. first run) — jump straight to adding one
     }
 
-    private void ShowAddFormClick(object sender, RoutedEventArgs e)
+    private void OpenAddForm()
     {
         AddForm.Visibility = Visibility.Visible;
         AddButton.Visibility = Visibility.Collapsed;
-        AddName.Focus();
+        AddOrigins.Focus();   // the website is the one required field, so start there
     }
+
+    private void ShowAddFormClick(object sender, RoutedEventArgs e) => OpenAddForm();
 
     private void CancelAddClick(object sender, RoutedEventArgs e) => CloseAddForm();
 
@@ -91,10 +94,10 @@ public partial class VaultWindow : Window
     private void SaveItemClick(object sender, RoutedEventArgs e)
     {
         AddError.Text = string.Empty;
+        var origins = ParseOrigins(AddOrigins.Text);   // forgiving: a pasted URL or a bare host both reduce to the host
+        if (origins.Count == 0) { AddError.Text = "Enter the website this is for (e.g. github.com)."; return; }
         var name = AddName.Text.Trim();
-        if (name.Length == 0) { AddError.Text = "Name is required."; return; }
-        var origins = SplitCsv(AddOrigins.Text);
-        if (origins.Count == 0) { AddError.Text = "Add at least one origin — it sets where this credential may be injected."; return; }
+        if (name.Length == 0) name = origins[0];        // default the name to the website
 
         var entry = new VaultEntry
         {
@@ -123,6 +126,27 @@ public partial class VaultWindow : Window
 
     private static List<string> SplitCsv(string? s) =>
         (s ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    // Forgiving website input: each comma-separated entry may be a full URL or a bare host; reduce each to a bare,
+    // lowercase host (so "https://github.com/login", "github.com", and "GitHub.com" all become "github.com").
+    private static List<string> ParseOrigins(string? raw)
+    {
+        var result = new List<string>();
+        foreach (var part in (raw ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var host = NormalizeToHost(part);
+            if (host.Length > 0 && !result.Contains(host, StringComparer.OrdinalIgnoreCase)) result.Add(host);
+        }
+        return result;
+    }
+
+    private static string NormalizeToHost(string s)
+    {
+        s = s.Trim();
+        if (Uri.TryCreate(s, UriKind.Absolute, out var u) && !string.IsNullOrEmpty(u.Host)) return u.Host.ToLowerInvariant();
+        if (Uri.TryCreate("https://" + s, UriKind.Absolute, out var u2) && !string.IsNullOrEmpty(u2.Host)) return u2.Host.ToLowerInvariant();
+        return s.ToLowerInvariant();
+    }
 
     private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
 

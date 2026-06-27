@@ -43,7 +43,7 @@
         <!-- ── ENROLL (first run) ─────────────────────────────────────────── -->
         <StackPanel x:Name="EnrollPanel" Visibility="Collapsed" VerticalAlignment="Top">
             <TextBlock Text="Set up the vault" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
-            <TextBlock Text="A credential vault Foreman can use during agent-driven computer/browser use."
+            <TextBlock Text="Keep your logins here so agents can sign in for you — without ever seeing the passwords. Pick a master password to protect them."
                        Foreground="{StaticResource TextMutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,16" />
             <TextBlock Text="Master password" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
             <PasswordBox x:Name="EnrollPw" />
@@ -64,7 +64,7 @@
             <TextBlock Text="A Windows Hello tap is also required when the presence lock is on."
                        Foreground="{StaticResource TextMutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,14" />
             <TextBlock x:Name="UnlockError" Foreground="#FFFF6666" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
-            <Button Content="Unlock and verify presence" Click="UnlockClick" HorizontalAlignment="Left"
+            <Button Content="Unlock" Click="UnlockClick" HorizontalAlignment="Left"
                     Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" />
         </StackPanel>
 
@@ -117,11 +117,9 @@
                             BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,14,0,0">
                         <StackPanel>
                             <TextBlock Text="Add credential" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,10" />
-                            <TextBlock Text="Name" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
-                            <TextBox x:Name="AddName" />
-                            <TextBlock Text="Origins (comma-separated hosts — where it will be injected)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBlock Text="Website — paste the address or type the host (e.g. github.com)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
                             <TextBox x:Name="AddOrigins" />
-                            <TextBlock Text="Username" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBlock Text="Username or email" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
                             <TextBox x:Name="AddUser" />
                             <TextBlock Text="Password" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
                             <Grid Margin="0,3,0,10">
@@ -132,9 +130,11 @@
                                 <PasswordBox x:Name="AddPw" Grid.Column="0" Margin="0" />
                                 <Button Grid.Column="1" Content="Generate" Click="GeneratePwClick" Margin="8,0,0,0" Padding="10,5" />
                             </Grid>
-                            <TextBlock Text="2FA seed (Base32, optional)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBlock Text="Name (optional — defaults to the website)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBox x:Name="AddName" />
+                            <TextBlock Text="2FA setup key (optional)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
                             <TextBox x:Name="AddTotp" FontFamily="Consolas" />
-                            <TextBlock Text="Allowed harnesses (comma-separated; empty = operator only)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBlock Text="Agents allowed to use it (blank = you only)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
                             <TextBox x:Name="AddHarnesses" />
                             <TextBlock x:Name="AddError" Foreground="#FFFF6666" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
                             <StackPanel Orientation="Horizontal">
