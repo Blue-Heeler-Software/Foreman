@@ -10,4 +10,10 @@
     <EmbeddedResource Include="profiles\*.json" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- RFC-6238 TOTP for the credential vault (MIT, GPL-3.0-compatible). KDBX (KeePassLib, Windows) lives in
+         the separate Foreman.Vault project so Core stays cross-platform. -->
+    <PackageReference Include="Otp.NET" />
+  </ItemGroup>
+
 </Project>
