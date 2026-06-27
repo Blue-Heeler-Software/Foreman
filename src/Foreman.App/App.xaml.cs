@@ -30,6 +30,7 @@ public partial class App : Application
     private System.IO.FileStream? _cuSidecarPin;
     private System.IO.FileStream? _cuPilotPin;
     private System.IO.FileStream? _etwSidecarPin;
+    private Foreman.Vault.VaultService? _vaultService;
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -343,6 +344,16 @@ public partial class App : Application
         // relayed proposal can't execute post-halt. Unconditional (fires even when desktop CU isn't armed - the desktop
         // queue is then simply empty), so it never depends on the arm block running.
         panicState.Changed += halted => { if (halted) cuBroker.OnPanicHalt(); };
+        // Credential vault (P1): constructed DORMANT - it creates no files until the operator enrolls (tray UI, P1.3c).
+        // The App holds the unlocked key; the resolver injects {{vault:...}} only at the inject boundary (P1.4). DPAPI
+        // binds the key component to this user+machine. Panic locks (wipes) the in-memory key alongside the CU halt.
+        var vaultDir = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman");
+        _vaultService = new Foreman.Vault.VaultService(
+            System.IO.Path.Combine(vaultDir, "vault.fvault"),
+            System.IO.Path.Combine(vaultDir, "vault-key.bin"),
+            new Foreman.App.Vault.DpapiVaultKeyProtector());
+        panicState.Changed += halted => { if (halted) _vaultService?.Lock(); };
         _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
             () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
         if (!_panicHotkey.Registered)

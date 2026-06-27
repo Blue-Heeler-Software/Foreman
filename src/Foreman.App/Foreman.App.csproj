@@ -24,6 +24,8 @@
     <ProjectReference Include="..\Foreman.CuSidecar\Foreman.CuSidecar.csproj" ReferenceOutputAssembly="false" />
     <!-- Medium-IL Local Agent Host pilot shim (separate process, launched on demand by PilotChannelController). -->
     <ProjectReference Include="..\Foreman.CuPilot\Foreman.CuPilot.csproj" ReferenceOutputAssembly="false" />
+    <!-- Credential vault (native AEAD store + resolver); App supplies the DPAPI key protector. -->
+    <ProjectReference Include="..\Foreman.Vault\Foreman.Vault.csproj" />
   </ItemGroup>
 
   <!-- Stage the sidecar under <app>\sidecar so ElevatedSidecarController can launch it. -->
@@ -72,6 +74,7 @@
     <PackageReference Include="Microsoft.Toolkit.Uwp.Notifications" />
     <PackageReference Include="System.Diagnostics.PerformanceCounter" />
     <PackageReference Include="System.Diagnostics.EventLog" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
 
   <ItemGroup>
