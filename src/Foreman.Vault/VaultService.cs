@@ -78,4 +78,14 @@ public sealed class VaultService
             _store.Upsert(entry);
         }
     }
+
+    /// <summary>Item metadata for the management UI (no secret values). Requires an unlocked vault.</summary>
+    public IReadOnlyList<VaultItemInfo> ListItems()
+    {
+        lock (_gate)
+        {
+            if (!_store.IsUnlocked) throw new InvalidOperationException("vault is locked");
+            return _store.ListItems();
+        }
+    }
 }

@@ -27,6 +27,7 @@ public sealed class TrayController : IEventSink, IDisposable
     private SettingsWindow? _settingsWindow;
     private ConnectAgentWindow? _connectWindow;
     private MuteManagerWindow? _muteWindow;
+    private Foreman.App.Windows.VaultWindow? _vaultWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -69,6 +70,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — "Prep sessions for update": cooperatively checkpoints ACTIVE harness sessions and
     /// reaps IDLE/abandoned ones so an update or restart lands clean.</summary>
     public Func<(bool Ok, string Message)>?                   PrepSessionsForUpdate { get; set; }
+
+    /// <summary>Injected from App — the credential vault, backing the operator-only "Vault…" window.</summary>
+    public Foreman.Vault.VaultService?                        Vault                 { get; set; }
 
     /// <summary>Injected from App — per-PID network bytes/sec from the elevated sidecar (null when off).</summary>
     public Func<int, double?>?                                GetNetRate            { get; set; }
@@ -670,6 +674,8 @@ public sealed class TrayController : IEventSink, IDisposable
             : $"MCP Server: port {_settings.McpPort}  ·  no clients";
         AddMenuItem(menu, mcpLabel, null, enabled: false);
         AddMenuItem(menu, "Connect agent…", () => OpenConnectAgentWindow());
+        if (Vault is not null)
+            AddMenuItem(menu, "Vault…", () => OpenVaultWindow());
         if (_settings.Mutes.Count > 0)
             AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => OpenMuteManagerWindow());
         AddMenuItem(menu, "Settings…", () => OpenSettingsWindow());
@@ -797,6 +803,20 @@ public sealed class TrayController : IEventSink, IDisposable
             MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
+    // Operator-only credential vault window (enroll / unlock / manage). Never reachable over MCP.
+    private void OpenVaultWindow()
+    {
+        if (Vault is null) return;
+        if (_vaultWindow is null)
+        {
+            var w = new Foreman.App.Windows.VaultWindow(Vault);
+            w.Closed += (_, _) => _vaultWindow = null;
+            _vaultWindow = w;
+            w.Show();
+        }
+        WindowActivation.Surface(_vaultWindow);
+    }
+
     private void OpenMuteManagerWindow()
     {
         if (_muteWindow is null)
@@ -828,6 +848,7 @@ public sealed class TrayController : IEventSink, IDisposable
         _settingsWindow?.Close();
         _connectWindow?.Close();
         _muteWindow?.Close();
+        _vaultWindow?.Close();
         _tray?.Dispose();
     }
 }

@@ -14,6 +14,11 @@ public sealed record VaultItemInfo(
     IReadOnlyList<string> Harnesses,
     bool HasTotp)
 {
+    /// <summary>Which fields the item carries — for the management UI only (still no secret values). Default false so
+    /// existing resolver-path constructions keep working.</summary>
+    public bool HasUsername { get; init; }
+    public bool HasPassword { get; init; }
+
     /// <summary>True if a specific harness is authorized to resolve this item. Empty <see cref="Harnesses"/> =
     /// operator-only (deny by default) — a harness must be explicitly listed. The operator is allowed separately
     /// by the resolver (see <see cref="VaultResolver"/>).</summary>

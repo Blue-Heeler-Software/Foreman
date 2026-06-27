@@ -354,6 +354,7 @@ public partial class App : Application
             System.IO.Path.Combine(vaultDir, "vault-key.bin"),
             new Foreman.App.Vault.DpapiVaultKeyProtector());
         panicState.Changed += halted => { if (halted) _vaultService?.Lock(); };
+        _tray.Vault = _vaultService;   // operator-only "Vault…" tray window (enroll / unlock / manage)
         _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
             () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
         if (!_panicHotkey.Registered)

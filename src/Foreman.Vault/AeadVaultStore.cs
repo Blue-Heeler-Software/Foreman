@@ -58,12 +58,23 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         lock (_gate)
         {
             var e = FindEntryLocked(origin);
-            return e is null
-                ? null
-                : new VaultItemInfo(e.Name, e.Origins.ToArray(), e.Harnesses.ToArray(),
-                    HasTotp: !string.IsNullOrWhiteSpace(e.TotpSeedBase32));
+            return e is null ? null : ToInfo(e);
         }
     }
+
+    /// <summary>Metadata for every item (names/origins/which fields/ACL — never secret VALUES), for the management UI.
+    /// Returns empty while locked.</summary>
+    public IReadOnlyList<VaultItemInfo> ListItems()
+    {
+        lock (_gate) return _doc is null ? [] : _doc.Items.Select(ToInfo).ToArray();
+    }
+
+    private static VaultItemInfo ToInfo(VaultEntry e) =>
+        new(e.Name, e.Origins.ToArray(), e.Harnesses.ToArray(), HasTotp: !string.IsNullOrWhiteSpace(e.TotpSeedBase32))
+        {
+            HasUsername = !string.IsNullOrWhiteSpace(e.Username),
+            HasPassword = !string.IsNullOrWhiteSpace(e.Password),
+        };
 
     public string? GetSecret(string origin, VaultField field)
     {
