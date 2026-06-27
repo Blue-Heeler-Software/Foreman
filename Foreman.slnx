@@ -11,6 +11,7 @@
     <Project Path="src/Foreman.Platform/Foreman.Platform.csproj" />
     <Project Path="src/Foreman.Platform.Linux/Foreman.Platform.Linux.csproj" />
     <Project Path="src/Foreman.TestHarness/Foreman.TestHarness.csproj" />
+    <Project Path="src/Foreman.Vault/Foreman.Vault.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Foreman.Core.Tests/Foreman.Core.Tests.csproj" />
@@ -18,5 +19,6 @@
     <Project Path="tests/Foreman.McpServer.Tests/Foreman.McpServer.Tests.csproj" />
     <Project Path="tests/Foreman.Monitor.Tests/Foreman.Monitor.Tests.csproj" />
     <Project Path="tests/Foreman.Platform.Linux.Tests/Foreman.Platform.Linux.Tests.csproj" />
+    <Project Path="tests/Foreman.Vault.Tests/Foreman.Vault.Tests.csproj" />
   </Folder>
 </Solution>
