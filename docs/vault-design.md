@@ -99,6 +99,26 @@ The agent-facing resolve (`cu_resolve_vault`) is the most sensitive surface; its
 - **`Foreman.App`** wires the resolver into the executor (the injection hooks — small, surgical,
   done last to avoid colliding with concurrent CU work), the tray UI, panic-wipe, and the seal.
 
+## Broad-mode browser fill (P-BM — the unlock for live browser injection)
+
+Live browser credential injection (and self-signup) needs the extension to actually FILL fields. Today it's
+bounded (tabs API only; `type`/`click`/`scroll` error). Per-site grant model chosen (operator allows each site).
+
+- **P-BM1 (done — scaffold):** `manifest.json` adds `scripting` + `optional_host_permissions` (grants nothing
+  until allowed). Side panel gains a "Browser fill access" manager: per-site grant (`chrome.permissions.request`
+  in a user gesture) / list / revoke. The worker will only fill on sites listed here.
+- **P-BM2 (next — the fill, its own reviewed slice):** in `background.js`, implement `type`/`click`/`scroll` via
+  `chrome.scripting.executeScript`, GATED on `chrome.permissions.contains` for the target tab's origin (else the
+  current bounded-mode error). For `type`, if the value holds `{{vault:...}}`, call the built `cu_resolve_vault`
+  (`mcpCall('cu_resolve_vault', { actionId: act.actionId, reference, liveOrigin: tabHost })`) per token, substitute,
+  fail-closed if any returns `ok:false`, then fill via an executeScript func that sets the value + dispatches
+  input/change — never logging it. Contract: `type` targets `args.selector` (CSS) or the focused element.
+  REQUIRES its own adversarial review (content injection + host-permission blast radius + wrong-field-fill) and
+  on-device testing. NOTE: `executeCuAction(act)` must carry `act.actionId` (the poll batch has it) for the resolve call.
+- **P-BM3 (then — self-signup):** a `{{vault:origin/signup}}` generate-and-store branch in the App's
+  `ResolveVaultAsync` (generate via `VaultPasswordGenerator`, `Upsert` bound to the live origin, return) — an
+  agent-initiated WRITE, so gated by operator approval + the presence tap + a rate guard; its own small review.
+
 ## Phasing
 
 - **P1** — vault core (this), KDBX store + TPM-seal + panic-wipe, resolver + release gate, the two

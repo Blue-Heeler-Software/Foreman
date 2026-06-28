@@ -17,6 +17,49 @@ port.onMessage.addListener((m) => {
 $('refresh').addEventListener('click', () => port.postMessage({ kind: 'refresh' }));
 $('nanoExplain').addEventListener('click', explainStatusOnDevice);
 
+// ── Browser fill access (per-site host permissions) ────────────────────────────
+// The grant MUST run in a user gesture, so it lives here in the panel page (not the worker). The worker only
+// CHECKS chrome.permissions.contains before filling. Foreman can touch only sites the operator allows here.
+let currentFillHost = null;
+const hostPattern = (host) => `https://${host}/*`;
+
+$('grantSite').addEventListener('click', () => {
+    if (!currentFillHost) return;
+    // No await before request() — a user gesture is required and an await would consume it.
+    chrome.permissions.request({ origins: [hostPattern(currentFillHost)] }).then(renderFillAccess).catch(() => {});
+});
+
+async function renderFillAccess() {
+    let host = null;
+    try { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (tab?.url) host = new URL(tab.url).host; }
+    catch { /* no active tab */ }
+    currentFillHost = host;
+    const btn = $('grantSite');
+    btn.textContent = host ? `Allow Foreman to fill on ${host}` : 'Open a website tab to allow it';
+    btn.disabled = !host;
+
+    let granted = { origins: [] };
+    try { granted = await chrome.permissions.getAll(); } catch { /* */ }
+    const sites = (granted.origins || []).filter((o) => !/127\.0\.0\.1|localhost/.test(o));   // hide the Foreman link
+    const box = $('grantedSites');
+    box.replaceChildren();
+    if (sites.length === 0) {
+        box.appendChild(Object.assign(document.createElement('div'), { className: 'muted', textContent: 'No sites allowed yet.' }));
+        return;
+    }
+    for (const o of sites) {
+        const row = document.createElement('div');
+        row.className = 'ask';
+        row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+        row.appendChild(Object.assign(document.createElement('span'), { textContent: o, style: 'font-size:12px;word-break:break-all;' }));
+        const rev = Object.assign(document.createElement('button'), { textContent: 'Revoke' });
+        rev.style.cssText = 'width:auto;margin:0 0 0 8px;padding:4px 10px;';
+        rev.addEventListener('click', () => chrome.permissions.remove({ origins: [o] }).then(renderFillAccess).catch(() => {}));
+        row.appendChild(rev);
+        box.appendChild(row);
+    }
+}
+
 function setHint(text, cls) { const h = $('hint'); h.textContent = text; h.className = cls || ''; }
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -32,6 +75,7 @@ function render(m) {
         $('status').innerHTML = '';
         $('inboxSection').hidden = true;
         $('nanoSection').hidden = true;
+        $('fillAccessSection').hidden = true;
         const opt = document.getElementById('opt');
         if (opt) opt.onclick = () => chrome.runtime.openOptionsPage();
         return;
@@ -72,6 +116,10 @@ function render(m) {
     }
 
     renderInbox(Array.isArray(m.asks) ? m.asks : []);
+
+    // Per-site browser-fill access manager (shown once paired).
+    $('fillAccessSection').hidden = false;
+    renderFillAccess();
 
     // On-device section is shown once paired; the button is meaningful only with a status to summarise.
     $('nanoSection').hidden = false;
