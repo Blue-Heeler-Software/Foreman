@@ -79,6 +79,28 @@ public sealed class VaultService
         }
     }
 
+    /// <summary>Operator mutation: edit the item named <paramref name="originalName"/> (a blank secret field keeps the
+    /// existing value; rename supported). Returns false if no item matched. Requires an unlocked vault.</summary>
+    public bool UpdateItem(string originalName, VaultEntry updated)
+    {
+        lock (_gate)
+        {
+            if (!_store.IsUnlocked) throw new InvalidOperationException("vault is locked");
+            return _store.UpdateItem(originalName, updated);
+        }
+    }
+
+    /// <summary>Operator mutation: delete the item named <paramref name="name"/>. Returns false if none matched.
+    /// Requires an unlocked vault.</summary>
+    public bool Delete(string name)
+    {
+        lock (_gate)
+        {
+            if (!_store.IsUnlocked) throw new InvalidOperationException("vault is locked");
+            return _store.Delete(name);
+        }
+    }
+
     /// <summary>Item metadata for the management UI (no secret values). Requires an unlocked vault.</summary>
     public IReadOnlyList<VaultItemInfo> ListItems()
     {

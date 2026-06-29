@@ -19,6 +19,7 @@ namespace Foreman.App.Windows;
 public partial class VaultWindow : Window
 {
     private readonly VaultService _vault;
+    private string? _editingOriginalName;   // non-null while the add form is editing an existing item (its original name)
 
     public VaultWindow(VaultService vault)
     {
@@ -94,12 +95,44 @@ public partial class VaultWindow : Window
 
     private void OpenAddForm()
     {
+        _editingOriginalName = null;                       // a fresh open is always ADD mode
+        AddFormTitle.Text = "Add credential";
+        EditKeepHint.Visibility = Visibility.Collapsed;
         AddForm.Visibility = Visibility.Visible;
         AddButton.Visibility = Visibility.Collapsed;
         AddOrigins.Focus();   // the website is the one required field, so start there
     }
 
     private void ShowAddFormClick(object sender, RoutedEventArgs e) => OpenAddForm();
+
+    // Edit an existing item: pre-fill the non-secret metadata; secrets stay blank and "leave blank to keep" them.
+    private void EditItemClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not VaultItemRow row) return;
+        _editingOriginalName = row.Name;
+        AddFormTitle.Text = "Edit credential";
+        EditKeepHint.Visibility = Visibility.Visible;
+        AddOrigins.Text = string.Join(", ", row.OriginList);
+        AddName.Text = row.Name;
+        AddHarnesses.Text = string.Join(", ", row.HarnessList);
+        AddUser.Text = string.Empty; AddPw.Clear(); AddTotp.Text = string.Empty; AddError.Text = string.Empty;
+        AddForm.Visibility = Visibility.Visible;
+        AddButton.Visibility = Visibility.Collapsed;
+        AddOrigins.Focus();
+    }
+
+    private void DeleteItemClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not VaultItemRow row) return;
+        if (MessageBox.Show($"Delete the credential \"{row.Name}\"? This can't be undone.",
+                "Foreman Agent Safety — Vault", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+        try { _vault.Delete(row.Name); }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Foreman Agent Safety — Vault", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        Log($"Vault item '{row.Name}' deleted.");
+        if (string.Equals(_editingOriginalName, row.Name, StringComparison.OrdinalIgnoreCase)) CloseAddForm();
+        PopulateItems();
+    }
 
     private void CancelAddClick(object sender, RoutedEventArgs e) => CloseAddForm();
 
@@ -122,9 +155,16 @@ public partial class VaultWindow : Window
             Password = NullIfBlank(AddPw.Password),
             TotpSeedBase32 = NullIfBlank(AddTotp.Text.Replace(" ", string.Empty)),
         };
-        try { _vault.Upsert(entry); }
+        try
+        {
+            if (_editingOriginalName is { } orig)
+            {
+                if (!_vault.UpdateItem(orig, entry)) { AddError.Text = "That item no longer exists — close and reopen the list."; return; }
+            }
+            else _vault.Upsert(entry);
+        }
         catch (Exception ex) { AddError.Text = ex.Message; return; }
-        Log($"Vault item '{name}' saved.");
+        Log(_editingOriginalName is null ? $"Vault item '{name}' saved." : $"Vault item '{name}' updated.");
         CloseAddForm();
         PopulateItems();
     }
@@ -134,6 +174,9 @@ public partial class VaultWindow : Window
         AddName.Text = AddOrigins.Text = AddUser.Text = AddTotp.Text = AddHarnesses.Text = string.Empty;
         AddPw.Clear();
         AddError.Text = string.Empty;
+        _editingOriginalName = null;
+        AddFormTitle.Text = "Add credential";
+        EditKeepHint.Visibility = Visibility.Collapsed;
         AddForm.Visibility = Visibility.Collapsed;
         AddButton.Visibility = Visibility.Visible;
     }
@@ -174,6 +217,9 @@ public partial class VaultWindow : Window
         public string Origins { get; init; } = string.Empty;
         public string Fields { get; init; } = string.Empty;
         public string Acl { get; init; } = string.Empty;
+        // Raw lists carried for the Edit form to pre-fill (no secret VALUES — only origins + the agent ACL).
+        public IReadOnlyList<string> OriginList { get; init; } = [];
+        public IReadOnlyList<string> HarnessList { get; init; } = [];
 
         public static VaultItemRow From(Foreman.Core.Vault.VaultItemInfo i)
         {
@@ -187,6 +233,8 @@ public partial class VaultWindow : Window
                 Origins = string.Join(", ", i.Origins),
                 Fields = fields.Count > 0 ? string.Join(" · ", fields) : "(no fields)",
                 Acl = i.Harnesses.Count > 0 ? "agents: " + string.Join(", ", i.Harnesses) : "operator only",
+                OriginList = i.Origins,
+                HarnessList = i.Harnesses,
             };
         }
     }

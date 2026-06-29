@@ -93,9 +93,13 @@
                                 <Border BorderBrush="#FF303540" BorderThickness="1" CornerRadius="4" Padding="10,8" Margin="0,0,0,8">
                                     <StackPanel>
                                         <Grid>
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" />
-                                            <TextBlock Text="{Binding Origins}" HorizontalAlignment="Right"
-                                                       Foreground="{StaticResource TextMutedBrush}" FontFamily="Consolas" FontSize="11" />
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <TextBlock Text="{Binding Origins}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                                           Foreground="{StaticResource TextMutedBrush}" FontFamily="Consolas" FontSize="11" />
+                                                <Button Content="Edit" Click="EditItemClick" Tag="{Binding}" Padding="9,3" Margin="0,0,6,0" />
+                                                <Button Content="Delete" Click="DeleteItemClick" Tag="{Binding}" Padding="9,3" />
+                                            </StackPanel>
                                         </Grid>
                                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                             <TextBlock Text="{Binding Fields}" Foreground="{StaticResource TextMutedBrush}" FontSize="11" />
@@ -116,7 +120,10 @@
                     <Border x:Name="AddForm" Visibility="Collapsed" Background="#FF14161E" BorderBrush="#FF303540"
                             BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,14,0,0">
                         <StackPanel>
-                            <TextBlock Text="Add credential" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,10" />
+                            <TextBlock x:Name="AddFormTitle" Text="Add credential" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,10" />
+                            <TextBlock x:Name="EditKeepHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="11"
+                                       Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,10"
+                                       Text="Editing this credential — leave Password, 2FA, or Username blank to keep the current value." />
                             <TextBlock Text="Website — paste the address or type the host (e.g. github.com)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
                             <TextBox x:Name="AddOrigins" />
                             <TextBlock Text="Username or email" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />

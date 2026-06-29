@@ -107,6 +107,47 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         }
     }
 
+    /// <summary>
+    /// Edit the item currently named <paramref name="originalName"/>, replacing it with <paramref name="updated"/>.
+    /// A null/blank secret field (Username/Password/TotpSeedBase32/Notes) in <paramref name="updated"/> KEEPS the
+    /// existing value — the management UI never sees secret values, so "leave blank to keep" is the only safe edit.
+    /// Supports rename (originalName may differ from updated.Name). Returns false if no item matched. Operator
+    /// mutation; requires an unlocked vault.
+    /// </summary>
+    public bool UpdateItem(string originalName, VaultEntry updated)
+    {
+        lock (_gate)
+        {
+            EnsureUnlockedLocked();
+            var existing = _doc!.Items.FirstOrDefault(i => string.Equals(i.Name, originalName, StringComparison.OrdinalIgnoreCase));
+            if (existing is null) return false;
+            // Preserve unchanged secrets (blank field == keep), since the UI can't round-trip the real value.
+            updated.Username       = string.IsNullOrEmpty(updated.Username)       ? existing.Username       : updated.Username;
+            updated.Password       = string.IsNullOrEmpty(updated.Password)       ? existing.Password       : updated.Password;
+            updated.TotpSeedBase32 = string.IsNullOrWhiteSpace(updated.TotpSeedBase32) ? existing.TotpSeedBase32 : updated.TotpSeedBase32;
+            updated.Notes          = string.IsNullOrEmpty(updated.Notes)          ? existing.Notes          : updated.Notes;
+            // Remove the old record (and any item already holding the NEW name, so a rename can't duplicate).
+            _doc.Items.RemoveAll(i => string.Equals(i.Name, originalName, StringComparison.OrdinalIgnoreCase)
+                                   || string.Equals(i.Name, updated.Name, StringComparison.OrdinalIgnoreCase));
+            _doc.Items.Add(updated);
+            SaveLocked();
+            return true;
+        }
+    }
+
+    /// <summary>Remove the item named <paramref name="name"/> and persist. Returns false if none matched. Operator
+    /// mutation; requires an unlocked vault.</summary>
+    public bool Delete(string name)
+    {
+        lock (_gate)
+        {
+            EnsureUnlockedLocked();
+            var removed = _doc!.Items.RemoveAll(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (removed > 0) SaveLocked();
+            return removed > 0;
+        }
+    }
+
     public void WipeInMemoryKeys()
     {
         lock (_gate)

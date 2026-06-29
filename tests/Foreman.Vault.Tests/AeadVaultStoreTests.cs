@@ -108,4 +108,54 @@ public sealed class AeadVaultStoreTests : IDisposable
         Assert.False(r.Ok);
         Assert.Null(r.Resolved);
     }
+
+    [Fact]   // editing with blank secrets keeps the existing ones (the UI can't round-trip a secret value)
+    public void UpdateItem_BlankSecrets_KeepsExisting_ChangesMetadata()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(GitHub());
+
+        var updated = new VaultEntry { Name = "GitHub", Origins = { "github.com" }, Harnesses = { "claude-code", "codex" } };
+        Assert.True(store.UpdateItem("GitHub", updated));
+
+        Assert.Equal("s3cret", store.GetSecret("github.com", VaultField.Password));   // preserved
+        Assert.Equal("alice", store.GetSecret("github.com", VaultField.Username));    // preserved
+        Assert.NotNull(store.GetSecret("github.com", VaultField.Totp));               // preserved
+        Assert.Equal(2, store.FindByOrigin("github.com")!.Harnesses.Count);           // ACL updated
+    }
+
+    [Fact]   // editing WITH a new password replaces it
+    public void UpdateItem_NewPassword_Replaces()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(GitHub());
+        store.UpdateItem("GitHub", new VaultEntry { Name = "GitHub", Origins = { "github.com" }, Harnesses = { "claude-code" }, Password = "new-pw" });
+        Assert.Equal("new-pw", store.GetSecret("github.com", VaultField.Password));
+    }
+
+    [Fact]   // rename keeps the secrets, doesn't duplicate, drops the old name
+    public void UpdateItem_Rename_KeepsSecrets_NoDuplicate()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(GitHub());
+        Assert.True(store.UpdateItem("GitHub", new VaultEntry { Name = "GitHub work", Origins = { "github.com" }, Harnesses = { "claude-code" } }));
+        Assert.Equal("s3cret", store.GetSecret("github.com", VaultField.Password));   // still resolvable by origin
+        Assert.Single(store.ListItems());
+        Assert.Equal("GitHub work", store.ListItems()[0].Name);
+    }
+
+    [Fact]
+    public void UpdateItem_UnknownName_ReturnsFalse()
+        => Assert.False(AeadVaultStore.Create(VaultPath, Pw, KeyComp).UpdateItem("nope", new VaultEntry { Name = "nope", Origins = { "x.com" } }));
+
+    [Fact]
+    public void Delete_RemovesItem()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(GitHub());
+        Assert.True(store.Delete("GitHub"));
+        Assert.Null(store.FindByOrigin("github.com"));
+        Assert.Empty(store.ListItems());
+        Assert.False(store.Delete("GitHub"));   // already gone
+    }
 }
