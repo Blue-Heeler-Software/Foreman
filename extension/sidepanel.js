@@ -23,10 +23,25 @@ $('nanoExplain').addEventListener('click', explainStatusOnDevice);
 let currentFillHost = null;
 const hostPattern = (host) => `https://${host}/*`;
 
+const fillHint = (text) => { const el = $('fillAccessHint'); if (el) el.textContent = text; };
+
 $('grantSite').addEventListener('click', () => {
-    if (!currentFillHost) return;
-    // No await before request() — a user gesture is required and an await would consume it.
-    chrome.permissions.request({ origins: [hostPattern(currentFillHost)] }).then(renderFillAccess).catch(() => {});
+    const host = currentFillHost;
+    if (!host) { fillHint('Switch to a normal https website tab first, then click to allow it.'); return; }
+    // No await before request() — a user gesture is required and an await would consume it. Surface the
+    // outcome (granted / declined / error) instead of swallowing it, so a side-panel gesture rejection is
+    // visible rather than looking like a dead button.
+    let req;
+    try { req = chrome.permissions.request({ origins: [hostPattern(host)] }); }
+    catch (e) { fillHint(`Could not request ${host}: ${e?.message || e}. Try the extension's Details > Site access in chrome://extensions.`); return; }
+    req.then((granted) => {
+        fillHint(granted
+            ? `Allowed. Foreman can now fill on ${host}.`
+            : `Access to ${host} was declined (or the prompt was dismissed). You can also grant it via chrome://extensions > Foreman > Details > Site access.`);
+        renderFillAccess();
+    }).catch((e) => {
+        fillHint(`Grant failed for ${host}: ${e?.message || e}. Try chrome://extensions > Foreman > Details > Site access.`);
+    });
 });
 
 async function renderFillAccess() {
@@ -34,9 +49,18 @@ async function renderFillAccess() {
     try { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (tab?.url) host = new URL(tab.url).host; }
     catch { /* no active tab */ }
     currentFillHost = host;
+
+    // Reflect whether the CURRENT site is already permitted, so the button stops offering to "allow" a site
+    // Foreman can already fill (re-requesting is a no-op). Already-allowed -> disabled + a clear label; the
+    // site shows in the managed list below with a Revoke control.
+    let alreadyAllowed = false;
+    if (host) { try { alreadyAllowed = await chrome.permissions.contains({ origins: [hostPattern(host)] }); } catch { /* */ } }
+
     const btn = $('grantSite');
-    btn.textContent = host ? `Allow Foreman to fill on ${host}` : 'Open a website tab to allow it';
-    btn.disabled = !host;
+    btn.textContent = !host ? 'Open a website tab to allow it'
+        : alreadyAllowed ? `Foreman can already fill on ${host} — manage below`
+        : `Allow Foreman to fill on ${host}`;
+    btn.disabled = !host || alreadyAllowed;
 
     let granted = { origins: [] };
     try { granted = await chrome.permissions.getAll(); } catch { /* */ }
