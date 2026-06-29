@@ -107,14 +107,25 @@ bounded (tabs API only; `type`/`click`/`scroll` error). Per-site grant model cho
 - **P-BM1 (done — scaffold):** `manifest.json` adds `scripting` + `optional_host_permissions` (grants nothing
   until allowed). Side panel gains a "Browser fill access" manager: per-site grant (`chrome.permissions.request`
   in a user gesture) / list / revoke. The worker will only fill on sites listed here.
-- **P-BM2 (next — the fill, its own reviewed slice):** in `background.js`, implement `type`/`click`/`scroll` via
-  `chrome.scripting.executeScript`, GATED on `chrome.permissions.contains` for the target tab's origin (else the
-  current bounded-mode error). For `type`, if the value holds `{{vault:...}}`, call the built `cu_resolve_vault`
-  (`mcpCall('cu_resolve_vault', { actionId: act.actionId, reference, liveOrigin: tabHost })`) per token, substitute,
-  fail-closed if any returns `ok:false`, then fill via an executeScript func that sets the value + dispatches
-  input/change — never logging it. Contract: `type` targets `args.selector` (CSS) or the focused element.
-  REQUIRES its own adversarial review (content injection + host-permission blast radius + wrong-field-fill) and
-  on-device testing. NOTE: `executeCuAction(act)` must carry `act.actionId` (the poll batch has it) for the resolve call.
+- **P-BM2 (done — the fill):** `background.js` implements `type`/`click`/`scroll` via `chrome.scripting.executeScript`,
+  each fail-closed behind `fillGate(tab)` — which derives the origin from the REAL target tab (`chrome.tabs.get`, never
+  agent args) and requires `chrome.permissions.contains` for that origin (operator grant). `type` resolves any
+  `{{vault:...}}` via `resolveVaultTokens` → `cu_resolve_vault({ actionId: act.actionId, reference: <whole token>,
+  liveOrigin: tabHost })` per token, all-or-nothing, then fills via a self-contained injected `injFill` (native value
+  setter + input/change) that returns only `{tag,name}` — never the value. The worker drops the plaintext (`value=''`)
+  the instant it's handed to the page; nothing sensitive is logged or echoed in `cu_complete_action`. `screenshot`
+  stays a deliberate bounded-mode error (its own future slice). Adversarial-reviewed (wrong-site, read-back,
+  selector-injection, token-cascade, log-leak, TOCTOU, panic, forged-token) — keystone defenses hold.
+  **On-device test still pending** (needs the extension re-paired; load unpacked, grant a site, drive a vault `type`).
+  **Residual risks recorded for follow-up:**
+  - **Wrong-field fill within a granted+bound origin** — the selector is agent-supplied, so an operator-approved-but-
+    malicious `type` could put a credential into the wrong field on the *correct* site. Same-origin contained (that
+    origin already owns the credential) + gated by the operator approving the action's selector. Candidate hardening:
+    a `type="password"`-field guard for password references. Not yet enforced.
+  - **Future DOM-read / screenshot verbs MUST treat filled credential fields as sensitive** — today there is no
+    DOM-content read and screenshot is disabled, so a filled secret can't be read back; that invariant has to be kept.
+  - **Top-frame only** (cross-origin iframe login forms won't fill) and **`selector`-less `type` falls back to
+    `document.activeElement`** (covered by the wrong-field residual above).
 - **P-BM3 (then — self-signup):** a `{{vault:origin/signup}}` generate-and-store branch in the App's
   `ResolveVaultAsync` (generate via `VaultPasswordGenerator`, `Upsert` bound to the live origin, return) — an
   agent-initiated WRITE, so gated by operator approval + the presence tap + a rate guard; its own small review.

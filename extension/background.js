@@ -127,10 +127,13 @@ async function replyAsk(requestId, response) {
 
 // ── Browser use (BU) — executor for Foreman's audited cu_* broker ───────────────
 // Foreman AUDITS every action (and holds risky ones for operator approval) BEFORE it reaches here; this
-// extension is only the executor for actions Foreman already APPROVED. Bounded mode (tabs API only, no
-// scripting/host perms): navigate (new tab), goto (same tab), back/forward (tab history), read (tab metadata).
-// click/type/scroll/screenshot need `scripting` + host permissions (a future broad-mode operator opt-in) and
-// return a clear error until then.
+// extension is only the executor for actions Foreman already APPROVED. Two capability tiers:
+//   Bounded (tabs API only): navigate (new tab), goto (same tab), back/forward (tab history), read (tab metadata).
+//   Broad (per-site grant): click / type / scroll via chrome.scripting on a page the operator EXPLICITLY allowed
+//     (the "Browser fill access" panel; chrome.permissions.contains is re-checked here, fail-closed). `type` may
+//     carry {{vault:...}} references — resolved at this last moment via cu_resolve_vault (the submitting agent
+//     never sees the value), all-or-nothing, and the plaintext is never logged or echoed back. screenshot is a
+//     separate future slice and still returns the bounded-mode error.
 
 // Resolve which tab an action acts on: an explicit args.tabId wins; else the operator's pinned focus; else the
 // active tab. So when a tab is pinned, an action with NO tabId runs IN the pinned tab and can never silently drift.
@@ -146,6 +149,101 @@ async function resolveTargetTab(args) {
     if (pinnedTab != null) return pinnedTab;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     return tab?.id ?? null;
+}
+
+// ── Broad-mode fill (click / type / scroll) ─────────────────────────────────────
+// Every scripting injection is fail-closed behind a per-site operator grant: we re-check
+// chrome.permissions.contains for the TARGET TAB'S REAL origin (from chrome.tabs.get, never from agent args), so
+// the agent can never make us touch a site the operator didn't allow in the "Browser fill access" panel.
+
+// Match the App's VaultReference grammar exactly: {{vault:<origin>/<field>}}. A fresh /g instance per call (no
+// shared lastIndex state). Field/origin shapes mirror Foreman.Core.Vault.VaultReference so we extract the same
+// whole tokens the server binds against.
+const vaultTokenRe = () => /\{\{vault:[A-Za-z0-9.\-]+(?::\d+)?\/[A-Za-z]+\}\}/g;
+
+// Resolve every {{vault:...}} token in `value` to its real secret via cu_resolve_vault, bound to this action and
+// the live tab host. All-or-nothing and fail-closed: if ANY token won't resolve, nothing is filled and the error
+// carries NO secret. The resolved values exist only in the returned string (typed into the page, then dropped) —
+// they are never logged, never put in cu_complete_action, never returned to the submitting agent.
+async function resolveVaultTokens(actionId, value, liveOrigin) {
+    const tokens = [...new Set(String(value).match(vaultTokenRe()) || [])];
+    if (tokens.length === 0) return { ok: true, value };          // plain text — no vault round-trip
+    if (!actionId) return { ok: false, error: 'Vault reference present but the action has no id to bind to.' };
+    const map = new Map();
+    for (const tok of tokens) {
+        const r = await mcpCall('cu_resolve_vault', { actionId, reference: tok, liveOrigin });
+        if (!r || r.ok !== true || typeof r.value !== 'string')
+            return { ok: false, error: (r && r.reason) || 'A vault reference could not be resolved.' };
+        map.set(tok, r.value);
+    }
+    // Single pass over the ORIGINAL string so a resolved secret that happens to contain a {{vault:}}-shaped
+    // substring is never itself re-substituted.
+    const filled = String(value).replace(vaultTokenRe(), (m) => (map.has(m) ? map.get(m) : m));
+    map.clear();
+    return { ok: true, value: filled };
+}
+
+// The per-site gate: resolve the tab's REAL origin and confirm the operator granted it. Returns the bare host as
+// `liveOrigin` for cu_resolve_vault's domain-binding. http(s) only (mirrors the grant UI's https-only pattern;
+// chrome://, file://, etc. are never fillable and can't be granted anyway).
+async function fillGate(tab) {
+    if (!tab || tab.id == null) return { ok: false, error: 'No tab to act on.' };
+    let u;
+    try { u = new URL(tab.url || ''); } catch { return { ok: false, error: 'That tab has no fillable page URL.' }; }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:')
+        return { ok: false, error: `Foreman fills only http(s) pages, not '${u.protocol}'.` };
+    const pattern = `${u.protocol}//${u.hostname}/*`;
+    let granted = false;
+    try { granted = await chrome.permissions.contains({ origins: [pattern] }); } catch { granted = false; }
+    if (!granted)
+        return { ok: false, error: `Foreman isn't allowed to act on ${u.hostname}. Open the side panel and click "Allow Foreman on the current site" first.` };
+    return { ok: true, host: u.hostname };
+}
+
+// ── Functions injected into the page (ISOLATED world; must be fully self-contained, no closures) ──
+// Each returns ONLY structural info (tag/name) — never the typed value — so nothing sensitive flows back out.
+
+function injFill(selector, value) {
+    try {
+        const el = selector ? document.querySelector(selector) : document.activeElement;
+        if (!el) return { ok: false, error: selector ? `No element matches '${selector}'.` : 'No focused element to type into.' };
+        const tag = (el.tagName || '').toLowerCase();
+        if (el.isContentEditable) {
+            el.focus();
+            el.textContent = value;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+            return { ok: true, tag, name: el.getAttribute && el.getAttribute('name') || null };
+        }
+        if (tag !== 'input' && tag !== 'textarea')
+            return { ok: false, error: `<${tag}> is not a fillable field.` };
+        el.focus();
+        // Use the native value setter so framework-controlled inputs (React/Vue) observe the change.
+        const proto = tag === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (setter && setter.set) setter.set.call(el, value); else el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, tag, name: el.getAttribute('name') || null };
+    } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+
+function injClick(selector) {
+    try {
+        const el = document.querySelector(selector);
+        if (!el) return { ok: false, error: `No element matches '${selector}'.` };
+        if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' });
+        if (typeof el.click === 'function') el.click(); else return { ok: false, error: 'Element is not clickable.' };
+        return { ok: true, tag: (el.tagName || '').toLowerCase() };
+    } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+
+function injScroll(selector, dx, dy) {
+    try {
+        const target = selector ? document.querySelector(selector) : null;
+        if (target && typeof target.scrollBy === 'function') target.scrollBy(dx, dy);
+        else window.scrollBy(dx, dy);
+        return { ok: true };
+    } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 }
 
 async function executeCuAction(act) {
@@ -206,11 +304,53 @@ async function executeCuAction(act) {
             else await chrome.tabs.goForward(tabId);
             return { ok: true, result: { tabId, action: verb } };
         }
-        case 'click':
-        case 'type':
-        case 'scroll':
+        case 'type': {
+            const tabId = await resolveTargetTab(args);
+            if (tabId == null) return { ok: false, error: 'No tab to type into.' };
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            const gate = await fillGate(tab);
+            if (!gate.ok) return gate;
+            // Resolve {{vault:...}} at the last moment, bound to this action + the live host (all-or-nothing).
+            const resolved = await resolveVaultTokens(act.actionId, String(args.value ?? args.text ?? ''), gate.host);
+            if (!resolved.ok) return { ok: false, error: resolved.error };   // carries no secret
+            let value = resolved.value;
+            const selector = typeof args.selector === 'string' && args.selector ? args.selector : null;
+            let res;
+            try { [res] = await chrome.scripting.executeScript({ target: { tabId }, func: injFill, args: [selector, value] }); }
+            finally { value = ''; }   // drop the plaintext from the worker as soon as it's handed to the page
+            const out = res && res.result;
+            if (!out || !out.ok) return { ok: false, error: (out && out.error) || 'Could not fill the field.' };
+            return { ok: true, result: { tabId, selector, tag: out.tag, name: out.name } };   // never the value
+        }
+        case 'click': {
+            const selector = typeof args.selector === 'string' && args.selector ? args.selector : null;
+            if (!selector) return { ok: false, error: 'click requires a CSS selector (args.selector).' };
+            const tabId = await resolveTargetTab(args);
+            if (tabId == null) return { ok: false, error: 'No tab to click in.' };
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            const gate = await fillGate(tab);
+            if (!gate.ok) return gate;
+            const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: injClick, args: [selector] });
+            const out = res && res.result;
+            if (!out || !out.ok) return { ok: false, error: (out && out.error) || 'Could not click the element.' };
+            return { ok: true, result: { tabId, selector, tag: out.tag } };
+        }
+        case 'scroll': {
+            const tabId = await resolveTargetTab(args);
+            if (tabId == null) return { ok: false, error: 'No tab to scroll.' };
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            const gate = await fillGate(tab);
+            if (!gate.ok) return gate;
+            const dx = Number(args.dx ?? 0) || 0;
+            const dy = Number(args.dy ?? args.amount ?? 0) || 0;
+            const selector = typeof args.selector === 'string' && args.selector ? args.selector : null;
+            const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: injScroll, args: [selector, dx, dy] });
+            const out = res && res.result;
+            if (!out || !out.ok) return { ok: false, error: (out && out.error) || 'Could not scroll.' };
+            return { ok: true, result: { tabId, dx, dy } };
+        }
         case 'screenshot':
-            return { ok: false, error: `'${verb}' needs broad browser-use mode (scripting + host permissions), which is not enabled in this build.` };
+            return { ok: false, error: `'screenshot' is a separate capability slice and is not enabled in this build.` };
         default:
             return { ok: false, error: `Unsupported browser-use verb '${verb}'.` };
     }
