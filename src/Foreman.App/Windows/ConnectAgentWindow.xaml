@@ -227,7 +227,7 @@
                     <StackPanel>
                         <TextBlock Text="LM Studio" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
-                                   Text="Writes a remote &quot;foreman&quot; server into LM Studio's ~/.lmstudio/mcp.json (a backup is saved first; LM Studio reloads it automatically). Caveat emptor: LM Studio's MCP support is newer — if your build doesn't honour the Authorization header, Foreman will reject the connection as unauthorized. Verify it in LM Studio's MCP / Program panel after connecting." />
+                                   Text="Writes a local &quot;foreman&quot; bridge into LM Studio's ~/.lmstudio/mcp.json (a backup is saved first; LM Studio reloads it). This works around an LM Studio bug (#1892) where it drops the Authorization header on REMOTE MCP servers — so instead LM Studio launches a small local mcp-remote bridge (via npx; needs Node) that injects Foreman's token itself and forwards to the loopback endpoint. After connecting, click Restart in LM Studio's Integrations panel. Heads-up: the bridge pulls mcp-remote from npm on first run." />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Content="Connect automatically" Click="ConnectLmStudioClick" Margin="0,0,8,0"
                                     Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />

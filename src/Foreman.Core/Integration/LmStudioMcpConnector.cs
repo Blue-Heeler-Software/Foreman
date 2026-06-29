@@ -5,15 +5,22 @@ namespace Foreman.Core.Integration;
 
 /// <summary>
 /// One-click "connect LM Studio to Foreman Agent Safety": writes a <c>foreman</c> entry into LM Studio's
-/// <c>~/.lmstudio/mcp.json</c> under <c>mcpServers</c> as a remote server (<c>url</c> + an
-/// <c>Authorization: Bearer</c> header — LM Studio's remote-server shape mirrors the common <c>url</c> form,
-/// like Cursor; there is deliberately no <c>type</c> field).
+/// <c>~/.lmstudio/mcp.json</c> under <c>mcpServers</c>.
 ///
-/// CAVEAT EMPTOR: LM Studio's MCP support is newer and its <c>mcp.json</c> honoring a <c>headers</c> block for
-/// remote servers is NOT clearly documented. If a given LM Studio build ignores <c>headers</c>, Foreman's
-/// token-gated <c>/mcp</c> endpoint will reject the connection as unauthorized — verify in LM Studio's MCP /
-/// Program panel after connecting. Everything else (atomic write, backup, fail-safe parse) is hardened the
-/// same as the other connectors; only the headers-support assumption is unverified.
+/// LM Studio has a confirmed bug (lmstudio-ai/lmstudio-bug-tracker#1892) where it does NOT forward the
+/// <c>Authorization</c> header to REMOTE MCP servers, so a direct <c>{ url, headers }</c> entry reaches Foreman's
+/// token-gated <c>/mcp</c> unauthenticated and is rejected (LM Studio then falls back to OAuth, which Foreman
+/// does not implement). The DEFAULT shape is therefore a LOCAL stdio bridge: LM Studio launches
+/// <c>mcp-remote</c> (a small, widely-used stdio-to-HTTP MCP proxy) which injects the bearer header itself and
+/// forwards to Foreman's loopback endpoint. Local stdio servers are not affected by #1892, so this works today.
+/// The bearer value is passed via an <c>AUTH</c> env var and referenced as <c>--header "Authorization:${AUTH}"</c>
+/// (mcp-remote's documented form for header values containing a space).
+///
+/// TRADE-OFF: the bridge needs Node/<c>npx</c> on PATH and pulls <c>mcp-remote</c> from npm on first run (a
+/// third-party dependency - flagged plainly, since Foreman otherwise warns about npx-fetched packages). Pass
+/// <paramref name="useHeaderBridge"/> = false to emit the plain remote <c>{ url, headers }</c> form instead (the
+/// spec-correct shape that will work once LM Studio fixes #1892, and the right choice if you don't want npx).
+/// Everything else (atomic write, backup, fail-safe parse) is hardened the same as the other connectors.
 /// </summary>
 public static class LmStudioMcpConnector
 {
@@ -22,22 +29,36 @@ public static class LmStudioMcpConnector
 
     public static string Url(int port) => $"http://localhost:{port}/mcp";
 
-    private static JsonObject ServerObject(int port, string token) => new()
+    // Plain remote form: spec-correct, but LM Studio #1892 drops the header today.
+    private static JsonObject RemoteServerObject(int port, string token) => new()
     {
         ["url"]     = Url(port),
         ["headers"] = new JsonObject { ["Authorization"] = $"Bearer {token}" },
     };
+
+    // Local stdio bridge (default): mcp-remote injects the header and proxies to the loopback endpoint, sidestepping
+    // #1892. Token rides an env var; "Authorization:${AUTH}" is mcp-remote's documented way to send a value with a space.
+    private static JsonObject BridgeServerObject(int port, string token) => new()
+    {
+        ["command"] = "npx",
+        ["args"]    = new JsonArray("-y", "mcp-remote", Url(port), "--header", "Authorization:${AUTH}"),
+        ["env"]     = new JsonObject { ["AUTH"] = $"Bearer {token}" },
+    };
+
+    private static JsonObject ServerObject(int port, string token, bool useHeaderBridge) =>
+        useHeaderBridge ? BridgeServerObject(port, token) : RemoteServerObject(port, token);
 
     private static readonly JsonSerializerOptions _pretty = new() { WriteIndented = true };
     private static readonly JsonDocumentOptions _lenient =
         new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
     /// <summary>The full mcpServers wrapper to paste into ~/.lmstudio/mcp.json (merge into mcpServers).</summary>
-    public static string BuildConfigSnippet(int port, string token) =>
-        new JsonObject { ["mcpServers"] = new JsonObject { ["foreman"] = ServerObject(port, token) } }
+    public static string BuildConfigSnippet(int port, string token, bool useHeaderBridge = true) =>
+        new JsonObject { ["mcpServers"] = new JsonObject { ["foreman"] = ServerObject(port, token, useHeaderBridge) } }
             .ToJsonString(_pretty);
 
-    /// <summary>True if mcp.json already has an mcpServers.foreman remote entry for this port with a token.</summary>
+    /// <summary>True if mcp.json already has a foreman entry for this port - either the bridge form (npx mcp-remote
+    /// pointed at this port) or the remote form (url + an Authorization header).</summary>
     public static bool IsConfigured(int port, string? configPath = null)
     {
         try
@@ -46,20 +67,32 @@ public static class LmStudioMcpConnector
             if (!File.Exists(path)) return false;
             var entry = (JsonNode.Parse(File.ReadAllText(path), documentOptions: _lenient) as JsonObject)?["mcpServers"]?["foreman"];
             if (entry is null) return false;
+
+            // Remote form: url for this port + a non-empty Authorization header.
             var url  = entry["url"]?.GetValue<string>();
             var auth = entry["headers"]?["Authorization"]?.GetValue<string>();
-            return string.Equals(url, Url(port), StringComparison.OrdinalIgnoreCase)
-                   && !string.IsNullOrWhiteSpace(auth);
+            if (string.Equals(url, Url(port), StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(auth))
+                return true;
+
+            // Bridge form: a command server whose args reference mcp-remote and this port's loopback url.
+            if (entry["args"] is JsonArray args)
+            {
+                var hasRemote = args.Any(a => string.Equals(a?.GetValue<string>(), "mcp-remote", StringComparison.OrdinalIgnoreCase));
+                var hasUrl    = args.Any(a => string.Equals(a?.GetValue<string>(), Url(port), StringComparison.OrdinalIgnoreCase));
+                if (hasRemote && hasUrl) return true;
+            }
+            return false;
         }
         catch { return false; }
     }
 
     /// <summary>
-    /// Adds or updates the foreman remote server under mcpServers, preserving every other entry. Backs up the
-    /// original and swaps atomically. A malformed existing file fails safely (returns Failed; the user can
-    /// copy-paste) rather than being clobbered.
+    /// Adds or updates the foreman server under mcpServers, preserving every other entry. Defaults to the stdio
+    /// bridge (works around LM Studio #1892); pass <paramref name="useHeaderBridge"/> = false for the plain remote
+    /// form. Backs up the original and swaps atomically. A malformed existing file fails safely (returns Failed;
+    /// the user can copy-paste) rather than being clobbered.
     /// </summary>
-    public static ConnectResult Connect(int port, string token, string? configPath = null)
+    public static ConnectResult Connect(int port, string token, bool useHeaderBridge = true, string? configPath = null)
     {
         var path = configPath ?? DefaultConfigPath;
         try
@@ -75,7 +108,7 @@ public static class LmStudioMcpConnector
             }
 
             var existed = servers["foreman"] is not null;
-            servers["foreman"] = ServerObject(port, token);
+            servers["foreman"] = ServerObject(port, token, useHeaderBridge);
 
             string? backup = null;
             if (original.Length > 0)
@@ -87,11 +120,14 @@ public static class LmStudioMcpConnector
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             AtomicWrite(path, root.ToJsonString(_pretty));
 
+            var how = useHeaderBridge
+                ? " (via a local mcp-remote bridge - needs Node/npx, works around LM Studio bug #1892)"
+                : "";
             return new ConnectResult(
                 existed ? ConnectStatus.Updated : ConnectStatus.Added,
-                existed
-                    ? "Updated the foreman MCP entry in LM Studio's config (~/.lmstudio/mcp.json)."
-                    : "Added a foreman MCP entry to LM Studio's config (~/.lmstudio/mcp.json).",
+                (existed
+                    ? "Updated the foreman MCP entry in LM Studio's config (~/.lmstudio/mcp.json)"
+                    : "Added a foreman MCP entry to LM Studio's config (~/.lmstudio/mcp.json)") + how + ".",
                 backup);
         }
         catch (Exception ex)
