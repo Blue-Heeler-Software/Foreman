@@ -79,6 +79,23 @@ public partial class SettingsWindow : Window
         PresenceLockStatus.Text = on
             ? $"Armed ({Security.PresenceGuard.AuthenticatorLabel ?? "authenticator"})."
             : Security.PresenceGuard.IsAvailable ? "Off." : "Off — no authenticator available.";
+        PinEveryTapCheck.IsChecked = _settings.PresenceLock.RequireUserVerification;
+        PinEveryTapCheck.IsEnabled = Security.PresenceGuard.IsAvailable;
+    }
+
+    // Touch-only (default, unchecked) vs full PIN/biometric on roaming keys. Persisted immediately — like the
+    // enroll button, independent of the Save button — and read live by the verifier, so it takes effect on the
+    // next tap. Not a sealed field (a silent flip can't help a rogue agent that still can't touch the key), so
+    // saving leaves the settings seal unchanged.
+    private void PinEveryTapClick(object sender, RoutedEventArgs e)
+    {
+        _settings.PresenceLock.RequireUserVerification = PinEveryTapCheck.IsChecked == true;
+        try { SettingsStore.Save(_settings); }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not save the setting: {ex.Message}", "Foreman Agent Safety — Presence lock",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     // Enroll / disarm the presence lock from the (visible, on-screen) Settings dialog — the reliable WebAuthn

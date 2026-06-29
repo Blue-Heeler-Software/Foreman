@@ -49,6 +49,17 @@ public sealed class PresenceLockSettings
 
     /// <summary>Friendly label of the enrolled authenticator for the UI ("Windows Hello", "Security key"). Cosmetic.</summary>
     public string? AuthenticatorLabel { get; set; }
+
+    /// <summary>
+    /// When true, every presence assertion demands full user VERIFICATION (a FIDO2 PIN or biometric), not just
+    /// user PRESENCE (a touch). Default FALSE = touch-only (WebAuthn user-verification DISCOURAGED): a roaming
+    /// FIDO2/U2F key (YubiKey) needs only a single touch, no PIN prompt. Touch alone already stops the rogue-agent
+    /// threat (software cannot touch a physical key); UV only adds physical-key-theft hardening, for operators who
+    /// opt in. NB: the platform authenticator (Windows Hello) always verifies fully regardless — this setting only
+    /// changes roaming keys. Deliberately NOT part of the settings seal: a silent flip to touch-only cannot help a
+    /// rogue agent (it still can't touch the key), so sealing it would only buy a false tamper verdict on upgrade.
+    /// </summary>
+    public bool RequireUserVerification { get; set; } = false;
 }
 
 /// <summary>
@@ -81,4 +92,25 @@ public static class PresenceLockPolicy
         if (action == WeakeningAction.ExitForeman) return settings.Scope == LockScope.Strict;
         return StandardGated.Contains(action);
     }
+
+    // These actions grant durable desktop-input authority or override the operator's own panic STOP. They ALWAYS
+    // demand full user VERIFICATION (PIN/biometric) where the key supports it, even when the global default is
+    // touch-only — "a human deliberately stopped this; prove it's the SAME human re-enabling it." Hardcoded (not a
+    // settings field) so a settings.json edit can't downgrade them. PREFERRED degrades to touch on a PIN-less key,
+    // so this costs nothing there; it only adds the PIN prompt on exactly the highest-stakes actions.
+    private static readonly HashSet<WeakeningAction> ForcedUserVerification =
+    [
+        WeakeningAction.ResumeComputerUse,
+        WeakeningAction.BindCuWindow,
+        WeakeningAction.EnrollLocalAgentHost,
+        WeakeningAction.ApproveCuDesktopAction,
+    ];
+
+    /// <summary>
+    /// True if <paramref name="action"/> must use full user verification (PIN/biometric) regardless of the global
+    /// touch-only default — the desktop-input-authority grants and the panic-resume override. The vault-release and
+    /// ordinary weakening taps are NOT here: they follow <see cref="PresenceLockSettings.RequireUserVerification"/>
+    /// (default touch-only), since their dominant threat is remote software (which can't touch a key at all).
+    /// </summary>
+    public static bool ForcesUserVerification(WeakeningAction action) => ForcedUserVerification.Contains(action);
 }

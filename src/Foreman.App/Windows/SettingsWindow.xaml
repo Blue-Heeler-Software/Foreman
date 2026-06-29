@@ -194,6 +194,10 @@
                     <TextBlock x:Name="PresenceLockStatus" VerticalAlignment="Center" Margin="12,0,0,0"
                                Foreground="{StaticResource TextMutedBrush}" />
                 </StackPanel>
+                <CheckBox x:Name="PinEveryTapCheck" Margin="0,10,0,0" Click="PinEveryTapClick"
+                          Content="Require PIN / biometric on every tap (security keys)" />
+                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
+                           Text="Off (default): a roaming security key (YubiKey) needs just a single touch — no PIN every time. On: also require the key's FIDO2 PIN or a biometric (stronger, but prompts every tap). A physical touch is always required either way; Windows Hello always verifies fully regardless of this setting." />
 
                 <Separator Margin="0,16,0,8" />
                 <TextBlock Text="HARDENED GUARDIAN (ADVANCED)" FontSize="10" FontWeight="Bold"

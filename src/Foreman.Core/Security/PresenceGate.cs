@@ -81,10 +81,14 @@ public sealed class PresenceGate
             return false;
         }
 
+        // Touch-only (user presence) is the default; full user verification (PIN/biometric) is demanded when the
+        // operator opted in globally OR the action is a desktop-input-authority / panic-override one (forced in code).
+        var requireUv = s.RequireUserVerification || PresenceLockPolicy.ForcesUserVerification(action);
+
         PresenceResult r;
         try
         {
-            r = await _verifier.VerifyAsync(s.CredentialId, PromptReason(action), ct).ConfigureAwait(false);
+            r = await _verifier.VerifyAsync(s.CredentialId, PromptReason(action), requireUv, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

@@ -59,7 +59,8 @@ public static class PresenceGuard
     {
         if (_settings is null) return (false, "Presence lock not initialized.");
         var enroll = await _verifier.EnrollAsync(
-            "Enroll this device to authorize Foreman's security-weakening actions").ConfigureAwait(false);
+            "Enroll this device to authorize Foreman's security-weakening actions",
+            _settings.PresenceLock.RequireUserVerification).ConfigureAwait(false);
         if (!enroll.Ok) return (false, enroll.FailureReason ?? "Enrollment failed.");
 
         var s = _settings.PresenceLock;
@@ -82,7 +83,8 @@ public static class PresenceGuard
         if (s.Enabled && !string.IsNullOrEmpty(s.CredentialId))
         {
             PresenceResult r;
-            try { r = await _verifier.VerifyAsync(s.CredentialId, "Authorize disabling the presence lock").ConfigureAwait(false); }
+            // Disabling the lock entirely is the ultimate weakening, so demand full verification, not just a touch.
+            try { r = await _verifier.VerifyAsync(s.CredentialId, "Authorize disabling the presence lock", requireUserVerification: true).ConfigureAwait(false); }
             catch { return (false, "Verifier error — lock stays armed."); }
             if (!r.Verified) return (false, "Presence not verified — lock stays armed.");
         }

@@ -19,10 +19,10 @@ public sealed class CompositePresenceVerifier : IPresenceVerifier
 
     public bool IsAvailable => _webauthn.IsAvailable || _hello.IsAvailable;
 
-    public Task<EnrollResult> EnrollAsync(string reason, CancellationToken ct = default)
-        => Enroller.EnrollAsync(reason, ct);
+    public Task<EnrollResult> EnrollAsync(string reason, bool requireUserVerification, CancellationToken ct = default)
+        => Enroller.EnrollAsync(reason, requireUserVerification, ct);
 
-    public Task<PresenceResult> VerifyAsync(string credentialId, string reason, CancellationToken ct = default)
+    public Task<PresenceResult> VerifyAsync(string credentialId, string reason, bool requireUserVerification, CancellationToken ct = default)
         => (credentialId == HelloPresenceVerifier.CredentialId ? (IPresenceVerifier)_hello : _webauthn)
-            .VerifyAsync(credentialId, reason, ct);
+            .VerifyAsync(credentialId, reason, requireUserVerification, ct);
 }

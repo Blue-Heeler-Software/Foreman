@@ -27,9 +27,13 @@ public interface IPresenceVerifier
     /// <summary>True if any presence authenticator is usable here (Hello configured and/or a key attachable).</summary>
     bool IsAvailable { get; }
 
-    /// <summary>Enroll an authenticator once (the user taps); returns the credential id to pin in settings.</summary>
-    Task<EnrollResult> EnrollAsync(string reason, CancellationToken ct = default);
+    /// <summary>Enroll an authenticator once (the user taps); returns the credential id to pin in settings.
+    /// <paramref name="requireUserVerification"/>: true demands full verification (PIN/biometric); false allows
+    /// touch-only (user presence) on roaming keys. The platform Hello authenticator always verifies fully.</summary>
+    Task<EnrollResult> EnrollAsync(string reason, bool requireUserVerification, CancellationToken ct = default);
 
-    /// <summary>Assert presence with the pinned credential. Verified only on a real, fresh human tap.</summary>
-    Task<PresenceResult> VerifyAsync(string credentialId, string reason, CancellationToken ct = default);
+    /// <summary>Assert presence with the pinned credential. Verified only on a real, fresh human tap.
+    /// <paramref name="requireUserVerification"/>: true demands full verification (PIN/biometric) where the key
+    /// supports it; false = touch-only (presence) on roaming keys. Platform Hello always verifies fully.</summary>
+    Task<PresenceResult> VerifyAsync(string credentialId, string reason, bool requireUserVerification, CancellationToken ct = default);
 }

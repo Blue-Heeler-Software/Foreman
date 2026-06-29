@@ -8,8 +8,9 @@ namespace Foreman.App.Security;
 /// <summary>
 /// <see cref="IPresenceVerifier"/> over the Windows WebAuthn picker (<see cref="WebAuthnInterop"/>) — the true
 /// "all authenticators" path: one native dialog offers Windows Hello (platform) AND roaming FIDO2/U2F keys
-/// (YubiKey). Enrollment pins the real FIDO credential id; verification asserts THAT credential with
-/// user-verification required, so it's a genuine tap/touch — the one thing a same-user process can't fake.
+/// (YubiKey). Enrollment pins the real FIDO credential id; verification asserts THAT credential. The
+/// user-verification requirement follows <see cref="RequireUserVerification"/> (default touch-only) — but every
+/// ceremony needs at least a physical touch, the one thing a same-user process can't fake.
 ///
 /// Two Win32 realities are handled here: the calls are SYNCHRONOUS/blocking (run off the UI thread via
 /// Task.Run, or the app freezes), and they need a valid FOREGROUND HWND to parent the native dialog — the tray
@@ -26,14 +27,14 @@ public sealed class WebAuthnPresenceVerifier : IPresenceVerifier
         get { try { return WebAuthnInterop.ApiVersion() > 0; } catch { return false; } }
     }
 
-    public async Task<EnrollResult> EnrollAsync(string reason, CancellationToken ct = default)
+    public async Task<EnrollResult> EnrollAsync(string reason, bool requireUserVerification, CancellationToken ct = default)
     {
         try
         {
             var (hwnd, transient) = await OnUiAsync(AcquireHwnd).ConfigureAwait(false);
             try
             {
-                var (ok, id, err) = await Task.Run(() => WebAuthnInterop.MakeCredential(hwnd, RpId, RpName), ct).ConfigureAwait(false);
+                var (ok, id, err) = await Task.Run(() => WebAuthnInterop.MakeCredential(hwnd, RpId, RpName, requireUserVerification), ct).ConfigureAwait(false);
                 if (ok && id is { Length: > 0 }) return EnrollResult.Success(Base64Url(id), "Security key / Windows Hello");
                 Foreman.App.CrashLog.Note("WebAuthn enroll", new Exception(err ?? "no credential returned"));
                 return EnrollResult.Fail(err ?? "Enrollment failed.");
@@ -43,7 +44,7 @@ public sealed class WebAuthnPresenceVerifier : IPresenceVerifier
         catch (Exception ex) { Foreman.App.CrashLog.Note("WebAuthn enroll", ex); return EnrollResult.Fail($"WebAuthn error: {ex.GetType().Name}: {ex.Message}"); }
     }
 
-    public async Task<PresenceResult> VerifyAsync(string credentialId, string reason, CancellationToken ct = default)
+    public async Task<PresenceResult> VerifyAsync(string credentialId, string reason, bool requireUserVerification, CancellationToken ct = default)
     {
         byte[] id;
         try { id = Base64UrlDecode(credentialId); }
@@ -54,7 +55,7 @@ public sealed class WebAuthnPresenceVerifier : IPresenceVerifier
             var (hwnd, transient) = await OnUiAsync(AcquireHwnd).ConfigureAwait(false);
             try
             {
-                var (ok, err) = await Task.Run(() => WebAuthnInterop.GetAssertion(hwnd, RpId, id), ct).ConfigureAwait(false);
+                var (ok, err) = await Task.Run(() => WebAuthnInterop.GetAssertion(hwnd, RpId, id, requireUserVerification), ct).ConfigureAwait(false);
                 if (ok) return PresenceResult.Ok("Security key / Windows Hello");
                 Foreman.App.CrashLog.Note("WebAuthn verify", new Exception(err ?? "not verified"));
                 return PresenceResult.Fail(err ?? "not verified");

@@ -32,7 +32,10 @@ public sealed class HelloPresenceVerifier : IPresenceVerifier
         }
     }
 
-    public async Task<EnrollResult> EnrollAsync(string reason, CancellationToken ct = default)
+    // requireUserVerification is ignored: the platform Hello authenticator (UserConsentVerifier) always performs
+    // full user verification (PIN/face/fingerprint) — there is no touch-only mode for it. The parameter only
+    // affects roaming FIDO2/U2F keys (see WebAuthnPresenceVerifier).
+    public async Task<EnrollResult> EnrollAsync(string reason, bool requireUserVerification, CancellationToken ct = default)
     {
         try
         {
@@ -50,7 +53,7 @@ public sealed class HelloPresenceVerifier : IPresenceVerifier
         catch (Exception ex) { return EnrollResult.Fail($"Windows Hello error: {ex.Message}"); }
     }
 
-    public async Task<PresenceResult> VerifyAsync(string credentialId, string reason, CancellationToken ct = default)
+    public async Task<PresenceResult> VerifyAsync(string credentialId, string reason, bool requireUserVerification, CancellationToken ct = default)
     {
         try
         {

@@ -94,6 +94,17 @@ public sealed class SettingsSealTests
         Assert.Equal(SettingsSealVerdict.Sealed, SettingsSeal.Verify(s, seal, Secret));
     }
 
+    [Fact]   // RequireUserVerification is DELIBERATELY not sealed: a silent flip to touch-only can't help a rogue
+             // agent (which still can't touch the key), and sealing it would only trip a false tamper verdict on
+             // upgrade for every existing install. Toggling it must leave the seal valid.
+    public void RequireUserVerification_IsNotSealed()
+    {
+        var s = Base();
+        var seal = SettingsSeal.Compute(s, Secret);
+        s.PresenceLock.RequireUserVerification = !s.PresenceLock.RequireUserVerification;
+        Assert.Equal(SettingsSealVerdict.Sealed, SettingsSeal.Verify(s, seal, Secret));
+    }
+
     [Fact]   // the seal is order-independent (re-serialization can't cause a false tamper)
     public void ProjectionIsOrderIndependent()
     {

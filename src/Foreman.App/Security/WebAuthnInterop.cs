@@ -6,10 +6,12 @@ namespace Foreman.App.Security;
 /// <summary>
 /// Minimal P/Invoke over <c>webauthn.dll</c> (Windows WebAuthn platform API) for a LOCAL presence check —
 /// enroll one credential, then assert it. The native picker aggregates the platform authenticator (Windows
-/// Hello) AND roaming FIDO2/U2F keys (YubiKey), so one path covers "all authenticators". We require
-/// user-verification (a real PIN/biometric/touch) and attestation NONE (we are not a relying-party server —
-/// HRESULT S_OK from a fresh ceremony IS the proof a present human authorized it; there is no replay surface
-/// for a same-machine process because the OS runs the ceremony itself).
+/// Hello) AND roaming FIDO2/U2F keys (YubiKey), so one path covers "all authenticators". The user-verification
+/// requirement is caller-chosen: DISCOURAGED (touch-only, the default — a roaming key needs just a touch, no PIN)
+/// or PREFERRED (PIN/biometric when the key supports it). Either way attestation is NONE (we are not a
+/// relying-party server — HRESULT S_OK from a fresh ceremony IS the proof a present human authorized it; there is
+/// no replay surface for a same-machine process because the OS runs the ceremony itself), and a fresh ceremony
+/// always requires at least a physical touch, which is the one thing a same-user process cannot fake.
 ///
 /// Definitions verified against the canonical Microsoft <c>webauthn.h</c>. Marshalling is manual (explicit
 /// IntPtrs, deterministic alloc/free) — no ambiguity about who frees what. Struct layouts are
@@ -18,10 +20,12 @@ namespace Foreman.App.Security;
 /// </summary>
 internal static class WebAuthnInterop
 {
-    // PREFERRED, not REQUIRED: Hello (platform) still does full PIN/biometric, but a roaming key becomes
-    // insert + a single touch — no forced FIDO2 PIN, no resident-passkey slot. Touch-only still fully stops the
-    // rogue-agent threat (software can't touch a physical key); REQUIRED only added physical-key-theft hardening.
+    // DISCOURAGED (default) = touch-only: a roaming key is insert + a single touch, no forced FIDO2 PIN. That
+    // alone fully stops the rogue-agent threat (software can't touch a physical key). PREFERRED (opt-in) adds
+    // full PIN/biometric where the key supports it — physical-key-theft hardening. The caller picks per-ceremony;
+    // see PresenceLockSettings.RequireUserVerification. (Hello/platform always verifies fully regardless.)
     private const int WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED = 2;
+    private const int WEBAUTHN_USER_VERIFICATION_REQUIREMENT_DISCOURAGED = 3;
     private const int WEBAUTHN_AUTHENTICATOR_ATTACHMENT_ANY = 0;          // platform (Hello) + cross-platform (keys)
     private const int WEBAUTHN_ATTESTATION_CONVEYANCE_PREFERENCE_NONE = 1;
     private const int COSE_ES256 = -7;
@@ -119,7 +123,7 @@ internal static class WebAuthnInterop
     }
 
     /// <summary>Enroll a credential (the user taps Hello or a key). Returns the credential id bytes, or null + an error.</summary>
-    public static (bool Ok, byte[]? CredentialId, string? Error) MakeCredential(IntPtr hWnd, string rpId, string rpName)
+    public static (bool Ok, byte[]? CredentialId, string? Error) MakeCredential(IntPtr hWnd, string rpId, string rpName, bool requireUserVerification)
     {
         var keep = new List<IntPtr>();
         var ppAtt = IntPtr.Zero;
@@ -146,7 +150,9 @@ internal static class WebAuthnInterop
                 dwVersion = 1, dwTimeoutMilliseconds = TIMEOUT_MS,
                 dwAuthenticatorAttachment = WEBAUTHN_AUTHENTICATOR_ATTACHMENT_ANY,
                 bRequireResidentKey = 0,                                            // non-discoverable: we keep the id
-                dwUserVerificationRequirement = WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED,
+                dwUserVerificationRequirement = requireUserVerification
+                    ? WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED
+                    : WEBAUTHN_USER_VERIFICATION_REQUIREMENT_DISCOURAGED,
                 dwAttestationConveyancePreference = WEBAUTHN_ATTESTATION_CONVEYANCE_PREFERENCE_NONE,
             };
 
@@ -168,7 +174,7 @@ internal static class WebAuthnInterop
     }
 
     /// <summary>Assert the pinned credential (the user taps). Returns true only on a verified ceremony (S_OK).</summary>
-    public static (bool Ok, string? Error) GetAssertion(IntPtr hWnd, string rpId, byte[] credentialId)
+    public static (bool Ok, string? Error) GetAssertion(IntPtr hWnd, string rpId, byte[] credentialId, bool requireUserVerification)
     {
         var keep = new List<IntPtr>();
         var ppAssert = IntPtr.Zero;
@@ -184,7 +190,9 @@ internal static class WebAuthnInterop
             {
                 dwVersion = 1, dwTimeoutMilliseconds = TIMEOUT_MS, CredentialList = credList,
                 dwAuthenticatorAttachment = WEBAUTHN_AUTHENTICATOR_ATTACHMENT_ANY,
-                dwUserVerificationRequirement = WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED,
+                dwUserVerificationRequirement = requireUserVerification
+                    ? WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED
+                    : WEBAUTHN_USER_VERIFICATION_REQUIREMENT_DISCOURAGED,
             };
 
             var hr = WebAuthNAuthenticatorGetAssertion(hWnd, rpId, ref clientData, ref options, out ppAssert);

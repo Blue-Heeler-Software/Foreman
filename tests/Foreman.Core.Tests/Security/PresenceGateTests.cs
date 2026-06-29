@@ -8,12 +8,14 @@ public sealed class PresenceGateTests
     private sealed class FakeVerifier(PresenceResult? result = null, Exception? throws = null) : IPresenceVerifier
     {
         public int VerifyCalls { get; private set; }
+        public bool? LastRequireUv { get; private set; }   // records the UV requirement the gate asked for
         public bool IsAvailable => true;
-        public Task<EnrollResult> EnrollAsync(string reason, CancellationToken ct = default) =>
+        public Task<EnrollResult> EnrollAsync(string reason, bool requireUserVerification, CancellationToken ct = default) =>
             Task.FromResult(EnrollResult.Success("cred-1", "Fake"));
-        public Task<PresenceResult> VerifyAsync(string credentialId, string reason, CancellationToken ct = default)
+        public Task<PresenceResult> VerifyAsync(string credentialId, string reason, bool requireUserVerification, CancellationToken ct = default)
         {
             VerifyCalls++;
+            LastRequireUv = requireUserVerification;
             if (throws is not null) throw throws;
             return Task.FromResult(result ?? PresenceResult.Ok("Fake"));
         }
@@ -38,6 +40,29 @@ public sealed class PresenceGateTests
         Assert.True(await gate.AuthorizeAsync(WeakeningAction.LowerTrust, "trust 4→2"));
         Assert.Equal(0, v.VerifyCalls);   // never touched the authenticator
         Assert.Empty(log);                // not a gated decision → nothing to record
+    }
+
+    [Fact]   // desktop-input-authority / panic-override actions force full UV even when the global default is touch-only
+    public async Task HighStakesAction_ForcesUserVerification_EvenWhenGlobalTouchOnly()
+    {
+        var s = On();   // RequireUserVerification defaults false (touch-only)
+        var (gate, _, v) = Make(s);
+        Assert.True(await gate.AuthorizeAsync(WeakeningAction.ResumeComputerUse, "resume", forcePresence: true, freshTap: true));
+        Assert.True(v.LastRequireUv!.Value);   // forced UV for the panic-resume action despite the touch-only default
+    }
+
+    [Fact]   // ordinary weakening / vault taps follow the global touch-only default (and the opt-in)
+    public async Task OrdinaryAction_FollowsGlobalUserVerificationSetting()
+    {
+        var touchOnly = On();   // RequireUserVerification = false
+        var (g1, _, v1) = Make(touchOnly);
+        Assert.True(await g1.AuthorizeAsync(WeakeningAction.LowerTrust, "trust 4→2"));
+        Assert.False(v1.LastRequireUv!.Value);   // touch-only by default
+
+        var optedIn = On(); optedIn.RequireUserVerification = true;
+        var (g2, _, v2) = Make(optedIn);
+        Assert.True(await g2.AuthorizeAsync(WeakeningAction.LowerTrust, "trust 4→2"));
+        Assert.True(v2.LastRequireUv!.Value);   // operator opted into PIN/biometric globally
     }
 
     [Fact]
