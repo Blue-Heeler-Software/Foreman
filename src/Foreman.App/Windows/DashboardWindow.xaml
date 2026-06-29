@@ -668,5 +668,6 @@
       <TabItem Header="Harnesses"><ContentControl x:Name="HarnessSlot" /></TabItem>
       <TabItem Header="Behavior"><ContentControl x:Name="BehaviorSlot" /></TabItem>
       <TabItem Header="Event Log"><ContentControl x:Name="LogSlot" /></TabItem>
+      <TabItem Header="Vault"><ContentControl x:Name="VaultSlot" /></TabItem>
     </TabControl>
 </Window>

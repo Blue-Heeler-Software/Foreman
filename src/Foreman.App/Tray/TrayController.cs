@@ -577,7 +577,8 @@ public sealed class TrayController : IEventSink, IDisposable
                     ResetBehaviorProfile  ?? (_ => { }),
                     GetProcessesByHarness ?? (_ => []),
                     KillHarness           ?? (_ => { })),
-                log: new LogWindow());
+                log: new LogWindow(),
+                vault: Vault is null ? null : new Foreman.App.Windows.VaultView(Vault));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
             _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap
