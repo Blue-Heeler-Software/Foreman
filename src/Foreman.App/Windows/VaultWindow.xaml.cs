@@ -24,7 +24,21 @@ public partial class VaultWindow : Window
     {
         _vault = vault;
         InitializeComponent();
+        // Enter in any password field triggers that screen's primary action, so unlocking / enrolling / saving
+        // never needs a mouse trip to the button.
+        EnrollPw.KeyDown      += (_, e) => SubmitOnEnter(e, EnrollClick);
+        EnrollConfirm.KeyDown += (_, e) => SubmitOnEnter(e, EnrollClick);
+        UnlockPw.KeyDown      += (_, e) => SubmitOnEnter(e, UnlockClick);
+        AddPw.KeyDown         += (_, e) => SubmitOnEnter(e, SaveItemClick);
         RefreshState();
+    }
+
+    // Treat Enter in an input as a click of that screen's primary button.
+    private void SubmitOnEnter(System.Windows.Input.KeyEventArgs e, RoutedEventHandler action)
+    {
+        if (e.Key != System.Windows.Input.Key.Enter) return;
+        e.Handled = true;
+        action(this, new RoutedEventArgs());
     }
 
     private void RefreshState()
