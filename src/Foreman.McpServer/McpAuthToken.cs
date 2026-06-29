@@ -34,6 +34,33 @@ public sealed class McpAuthToken
     /// <summary>Absolute path of the token file, so the host can harden its ACL on Windows.</summary>
     public string TokenFilePath => _tokenPath;
 
+    /// <summary>
+    /// LastWriteTime (UTC) of the persisted token file, or null when it does not exist or can't be read.
+    /// LoadOrCreate regenerates the file ONLY when it is missing/empty, so a recent write time is the only
+    /// honest signal that the install secret was actually rotated.
+    /// </summary>
+    public DateTimeOffset? TokenFileWriteTimeUtc
+    {
+        get
+        {
+            try { return File.Exists(_tokenPath) ? new DateTimeOffset(File.GetLastWriteTimeUtc(_tokenPath)) : null; }
+            catch { return null; }
+        }
+    }
+
+    // A token file (re)written within this window of now reads as a recent regeneration -> the install
+    // secret was plausibly rotated. Outside it, the file is old, so rotation is NOT a safe claim.
+    private static readonly TimeSpan RegenRecencyWindow = TimeSpan.FromHours(1);
+
+    /// <summary>True if the token file was (re)written within the default recency window, i.e. the install
+    /// secret was plausibly rotated recently. False when the file is old (the common case) or its time can't
+    /// be read.</summary>
+    public bool RecentlyRegenerated() => RecentlyRegenerated(RegenRecencyWindow);
+
+    /// <summary>True if the token file was (re)written within <paramref name="window"/> of now.</summary>
+    public bool RecentlyRegenerated(TimeSpan window) =>
+        TokenFileWriteTimeUtc is { } when && DateTimeOffset.UtcNow - when < window;
+
     public McpAuthToken(string? baseDirectory = null)
     {
         var dir = baseDirectory ?? Path.Combine(

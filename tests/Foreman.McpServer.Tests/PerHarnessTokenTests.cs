@@ -106,6 +106,31 @@ public sealed class McpAuthTokenTests : IDisposable
     [InlineData("fmh1.QmFkSWQ.zzz")]    // decodes to "BadId" — uppercase, not a plausible harness id
     public void LooksLikeStaleHarnessToken_JunkOrImplausibleId_IsFalse(string? presented)
         => Assert.False(_token.LooksLikeStaleHarnessToken(presented, out _));
+
+    // ── Stale-token notice: only attributes "rotated" when the token file was actually written recently ──
+    // Regression: a 20-day-untouched mcp.token (secret NOT rotated) used to still claim rotation as the cause.
+    [Fact]
+    public void StaleTokenNotice_OldTokenFile_DoesNotClaimRotation()
+    {
+        File.SetLastWriteTimeUtc(_token.TokenFilePath, DateTime.UtcNow.AddDays(-20));
+        Assert.False(_token.RecentlyRegenerated());
+
+        var notice = McpServerHost.BuildStaleTokenNotice("codex", _token.RecentlyRegenerated());
+        Assert.DoesNotContain("rotat", notice, StringComparison.OrdinalIgnoreCase);   // no "rotated"/"rotation"
+        Assert.Contains("reconnect", notice, StringComparison.OrdinalIgnoreCase);     // still points at the fix
+        Assert.Contains("forged token", notice);                                      // still keeps the theft caveat
+    }
+
+    [Fact]
+    public void StaleTokenNotice_FreshlyWrittenTokenFile_MayClaimRotation()
+    {
+        File.SetLastWriteTimeUtc(_token.TokenFilePath, DateTime.UtcNow);
+        Assert.True(_token.RecentlyRegenerated());
+
+        var notice = McpServerHost.BuildStaleTokenNotice("codex", _token.RecentlyRegenerated());
+        Assert.Contains("rotated", notice, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("forged token", notice);
+    }
 }
 
 // ── Tool scoping: a per-harness caller can't see or act on another harness ───────

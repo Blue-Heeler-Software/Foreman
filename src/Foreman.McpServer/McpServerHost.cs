@@ -346,11 +346,13 @@ public sealed class McpServerHost : IAsyncDisposable
             (_settings.McpPeerBindingEnforce ? " Request blocked." : " (Alert-only; binding enforcement is off.)")));
     }
 
-    // A previously-minted per-harness token that no longer validates is almost always STALE: Foreman's install
-    // secret was rotated (e.g. mcp.token deleted/regenerated), orphaning the harness's saved token so it 401s
-    // silently with no hint to reconnect. Surface a throttled, operator-facing notice (via the bus, so it lands
-    // in the hash-chained event log, the OS event log, and the tray) pointing at the one-click fix. The id is the
-    // token's UNVERIFIED claim (bounded by McpAuthToken.LooksLikeStaleHarnessToken); we never act on it.
+    // A previously-minted per-harness token that no longer validates is usually STALE: the harness's saved
+    // token was minted under a different install secret, so it 401s silently with no hint to reconnect.
+    // Surface a throttled, operator-facing notice (via the bus, so it lands in the hash-chained event log,
+    // the OS event log, and the tray) pointing at the one-click fix. We attribute it to a recent secret
+    // rotation ONLY when the token file was actually (re)written recently (LoadOrCreate regenerates it only
+    // when missing/empty); otherwise we stay neutral about the cause. The id is the token's UNVERIFIED claim
+    // (bounded by McpAuthToken.LooksLikeStaleHarnessToken); we never act on it.
     private void MaybeReportStaleToken(string? presented)
     {
         if (!_authToken.LooksLikeStaleHarnessToken(presented, out var id)) return;
@@ -361,10 +363,20 @@ public sealed class McpServerHost : IAsyncDisposable
         _staleTokenSeen[id] = now;
 
         _bus.Publish(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.McpAuth",
-            $"Harness '{id}' presented a Foreman MCP token this server can't validate — most likely Foreman's token " +
-            $"secret was rotated, so '{id}'s saved token is stale. Open Connect Agent and reconnect '{id}' to re-issue " +
-            "its token. If you didn't expect this, it could be a forged token from another local process."));
+            BuildStaleTokenNotice(id, _authToken.RecentlyRegenerated())));
     }
+
+    // Operator-facing text for a per-harness token this server can't validate. The install secret is
+    // regenerated ONLY when mcp.token is missing/empty (see McpAuthToken.LoadOrCreate), so claim "rotated"
+    // ONLY when the token file was actually written recently; otherwise stay neutral about the cause (the
+    // secret usually was NOT rotated). Either way keep the reconnect fix and the forged-token possibility.
+    public static string BuildStaleTokenNotice(string id, bool secretRecentlyRotated) =>
+        secretRecentlyRotated
+            ? $"Harness '{id}' presented a Foreman MCP token this server can't validate. Foreman's token secret " +
+              $"was rotated recently, so '{id}'s saved token is stale. Open Connect Agent and reconnect '{id}' to " +
+              "re-issue its token. If you didn't expect this, it could be a forged token from another local process."
+            : $"Foreman can't validate '{id}'s saved token. Open Connect Agent and reconnect '{id}' to re-issue it. " +
+              "If you didn't expect this, it could be a forged token from another local process.";
 
     private static bool IsExtensionHarness(string? harnessId) =>
         string.Equals(harnessId, "liveweave", StringComparison.OrdinalIgnoreCase)
