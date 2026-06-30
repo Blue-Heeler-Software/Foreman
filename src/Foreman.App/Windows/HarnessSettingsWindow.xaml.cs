@@ -17,11 +17,16 @@ public partial class HarnessSettingsWindow : Window
     private readonly string _harnessId;
     private readonly ForemanSettings _settings;
     private readonly List<CheckBox> _modalityChecks = [];
+    private readonly Func<string?>? _getCuDriver;
+    private readonly Action<string?>? _setCuDriver;
 
-    public HarnessSettingsWindow(string harnessId, string displayName, ForemanSettings settings)
+    public HarnessSettingsWindow(string harnessId, string displayName, ForemanSettings settings,
+        Func<string?>? getCuDriver = null, Action<string?>? setCuDriver = null)
     {
         _harnessId = harnessId;
         _settings = settings;
+        _getCuDriver = getCuDriver;
+        _setCuDriver = setCuDriver;
         InitializeComponent();
         TitleText.Text = $"{displayName} — Foreman settings";
         Populate();
@@ -57,6 +62,34 @@ public partial class HarnessSettingsWindow : Window
             _modalityChecks.Add(cb);
             ModalityPanel.Children.Add(cb);
         }
+
+        // Computer-use DRIVER (global, operator-only). Distinct from the Allow/Ask/Block capability above: only the
+        // ONE designated driver harness may actually drive a CU/BU session. Hidden when the host didn't wire the hook
+        // (e.g. headless). This is what authorizes an agent past the "No computer-use driver has been selected" gate.
+        if (_setCuDriver is null)
+        {
+            CuDriverCheck.Visibility = Visibility.Collapsed;
+            CuDriverNote.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            var driver = _getCuDriver?.Invoke();
+            CuDriverCheck.IsChecked = IsCurrentDriver(driver);
+            CuDriverNote.Text = string.IsNullOrWhiteSpace(driver)
+                ? "No harness is authorized to drive computer/browser use yet. Check this to authorize this one (it becomes the sole driver). An agent can never appoint itself."
+                : IsCurrentDriver(driver)
+                    ? "This harness currently drives computer/browser use. Uncheck to revoke."
+                    : $"Current driver: {driver}. Checking this makes THIS harness the sole driver instead.";
+        }
+    }
+
+    /// <summary>True if the current driver string (null / "*" / comma-joined ids) authorizes THIS harness.</summary>
+    private bool IsCurrentDriver(string? driver)
+    {
+        if (string.IsNullOrWhiteSpace(driver)) return false;
+        if (driver.Trim() == "*") return true;   // "any harness" includes this one
+        return driver.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                     .Any(d => string.Equals(d, _harnessId, StringComparison.OrdinalIgnoreCase));
     }
 
     private double CurrentTrust() =>
@@ -146,6 +179,16 @@ public partial class HarnessSettingsWindow : Window
                 Foreman.Core.Security.WeakeningAction.RelaxHarnessCapabilityRestriction,
                 $"{_harnessId}: high-risk tool restrictions relaxed"))
             return;
+
+        // CU driver toggle (global, operator-only, persisted via the CuBroker's own persister - separate from the
+        // per-harness dicts below). Mirrors cu_set_driver's operator-only gate; the operator is acting in the UI.
+        if (_setCuDriver is not null)
+        {
+            var wasDriver = IsCurrentDriver(_getCuDriver?.Invoke());
+            var nowDriver = CuDriverCheck.IsChecked == true;
+            if (nowDriver && !wasDriver) _setCuDriver(_harnessId);   // authorize THIS harness as the sole driver
+            else if (!nowDriver && wasDriver) _setCuDriver(null);     // revoke driving authority entirely
+        }
 
         _settings.HarnessTrust[_harnessId] = newTrust;
         _settings.HarnessModalities[_harnessId] = newModalities;

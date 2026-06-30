@@ -88,6 +88,8 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="140" />
@@ -105,6 +107,12 @@
                 <TextBlock Grid.Row="3" Grid.Column="0" Text="Browser use" VerticalAlignment="Center"
                            Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
                 <ComboBox x:Name="BrowserUseCombo" Grid.Row="3" Grid.Column="1" MinWidth="160" />
+
+                <CheckBox x:Name="CuDriverCheck" Grid.Row="4" Grid.ColumnSpan="2" Margin="0,16,0,0"
+                          Content="Let this harness DRIVE computer &amp; browser use (make it the CU driver)"
+                          Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
+                <TextBlock x:Name="CuDriverNote" Grid.Row="5" Grid.ColumnSpan="2" Style="{StaticResource Muted}"
+                           Margin="0,4,0,0" />
             </Grid>
         </Border>
 

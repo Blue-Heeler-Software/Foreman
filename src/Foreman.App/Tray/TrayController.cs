@@ -568,9 +568,14 @@ public sealed class TrayController : IEventSink, IDisposable
 
             // The monitoring views are now tabs inside the dashboard; build them here (the tray is the
             // composition root that holds the data providers) and hand them to the dashboard to host.
+            var harnessesView = new HarnessesWindow(_settings, snap, GetWakeRequests)
+            {
+                GetCuDriver = GetCuDriver,   // wired to the CuBroker by App; lets the per-harness popup set the CU driver
+                SetCuDriver = SetCuDriver,
+            };
             w.HostViews(
                 processes: new ProcessMonitorWindow(snap, GetNetRate, RequestHarnessCleanup),
-                harnesses: new HarnessesWindow(_settings, snap, GetWakeRequests),
+                harnesses: harnessesView,
                 behavior:  new BehaviorMetricsWindow(
                     _settings,
                     GetBehaviorProfiles   ?? (() => []),

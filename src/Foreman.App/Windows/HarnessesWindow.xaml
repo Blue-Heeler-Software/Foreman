@@ -84,7 +84,9 @@
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding DisplayName}"
                                                Foreground="{StaticResource TextPrimaryBrush}"
-                                               FontWeight="SemiBold" FontSize="13" />
+                                               FontWeight="SemiBold" FontSize="13"
+                                               Cursor="Hand" MouseLeftButtonUp="HarnessNameClick"
+                                               ToolTip="Open settings — Trust, modalities, computer/browser-use permissions, and CU driver" />
                                     <TextBlock Text="{Binding Description}"
                                                Foreground="{StaticResource TextMutedBrush}"
                                                FontSize="10" TextWrapping="Wrap" Margin="0,2,0,0" />

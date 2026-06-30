@@ -22,6 +22,11 @@ public partial class HarnessesWindow : UserControl
     /// <summary>Opens the Connect-Agent guide. Set by the hosting DashboardWindow.</summary>
     public Action? OpenConnectAgent { get; set; }
 
+    /// <summary>Read / set the global computer-use driver (operator-only). Wired by the hosting TrayController to the
+    /// CuBroker so the per-harness settings popup can authorize a harness past the "no CU driver selected" gate.</summary>
+    public Func<string?>? GetCuDriver { get; set; }
+    public Action<string?>? SetCuDriver { get; set; }
+
     public HarnessesWindow(
         ForemanSettings settings,
         Func<IEnumerable<ProcessRecord>> getSnapshot,
@@ -228,11 +233,20 @@ public partial class HarnessesWindow : UserControl
     // the row's Trust badge.
     private void SettingsClick(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: HarnessVm vm })
-        {
-            var w = new HarnessSettingsWindow(vm.Id, vm.DisplayName, _settings) { Owner = Window.GetWindow(this) };
-            if (w.ShowDialog() == true) Refresh();
-        }
+        if (sender is FrameworkElement { Tag: HarnessVm vm }) OpenSettings(vm);
+    }
+
+    // Clicking the harness name opens the same settings dialog - a more discoverable affordance than the small gear link.
+    private void HarnessNameClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: HarnessVm vm }) OpenSettings(vm);
+    }
+
+    private void OpenSettings(HarnessVm vm)
+    {
+        var w = new HarnessSettingsWindow(vm.Id, vm.DisplayName, _settings, GetCuDriver, SetCuDriver)
+        { Owner = Window.GetWindow(this) };
+        if (w.ShowDialog() == true) Refresh();
     }
 
     // ── Placeholder visibility ────────────────────────────────────────────
