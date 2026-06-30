@@ -159,4 +159,93 @@ public sealed class VaultServiceTests : IDisposable
         Assert.True(svc.SelfSignup("b1.com", "b1.com", "b").Ok);    // overall = 5
         Assert.False(svc.SelfSignup("b2.com", "b2.com", "b").Ok);   // overall cap hit
     }
+
+    // ── Locked-vault deposit queue (P-BM4b) ──────────────────────────────────────
+
+    [Fact]
+    public void Enroll_GeneratesDepositKeypairAndSidecar()
+    {
+        var svc = NewService(new XorProtector(0x5A));
+        svc.Enroll(Pw);
+        Assert.Equal(VaultService.DepositKeyStatus.Generated, svc.LastDepositStatus);
+        Assert.True(File.Exists(Path.Combine(_dir, "vault-deposit.pub")));   // clear sidecar written
+        Assert.Equal(0, svc.PendingDepositCount);
+    }
+
+    [Fact]   // locked sign-up queues an encrypted deposit + returns the password; unlock drains it for review
+    public void LockedSignupDeposit_QueuesThenDrainsOnUnlock()
+    {
+        var svc = NewService(new XorProtector(0x5A));
+        svc.Enroll(Pw);
+        svc.Lock();
+
+        var r = svc.SelfSignupDeposit("Example.com", "example.com", "claude-code");
+        Assert.True(r.Ok);
+        Assert.False(string.IsNullOrWhiteSpace(r.Value));
+        Assert.Equal(1, svc.PendingDepositCount);
+
+        svc.Unlock(Pw);
+        var drain = svc.DrainDeposits();
+        Assert.False(drain.KeyTampered);
+        Assert.Equal(0, drain.Failed);
+        Assert.Single(drain.Deposits);
+        Assert.Equal("example.com", drain.Deposits[0].Origin);
+        Assert.Equal(r.Value, drain.Deposits[0].Password);
+        Assert.Equal("claude-code", drain.Deposits[0].ByHarness);
+    }
+
+    [Fact]   // committing a reviewed deposit stores it OPERATOR-ONLY via the no-clobber path
+    public void CommitDeposit_StoresOperatorOnly_NoClobber()
+    {
+        var svc = NewService(new XorProtector(0x5A));
+        svc.Enroll(Pw);
+        svc.Lock();
+        var r = svc.SelfSignupDeposit("acme.test", "acme.test", "claude-code");
+        svc.Unlock(Pw);
+        var deposit = svc.DrainDeposits().Deposits.Single();
+
+        Assert.True(svc.CommitDeposit(deposit).Ok);
+        // operator can read it back; the creating harness cannot (operator-only ACL = no phishing self-grant)
+        Assert.Equal(r.Value, svc.Resolver.Resolve("{{vault:acme.test/password}}", "acme.test", harnessId: null, isOperator: true).Resolved);
+        Assert.False(svc.Resolver.Resolve("{{vault:acme.test/password}}", "acme.test", "claude-code", isOperator: false).Ok);
+        Assert.False(svc.CommitDeposit(deposit).Ok);   // committing again is refused (no-clobber)
+    }
+
+    [Fact]   // a replayed (duplicate) queue line collapses to a single deposit on drain
+    public void DrainDeposits_DedupesReplay()
+    {
+        var svc = NewService(new XorProtector(0x5A));
+        svc.Enroll(Pw);
+        svc.Lock();
+        svc.SelfSignupDeposit("dup.test", "dup.test", "claude-code");
+
+        var queuePath = Path.Combine(_dir, "vault-deposits.jsonl");
+        var line = File.ReadAllLines(queuePath).First(l => !string.IsNullOrWhiteSpace(l));
+        File.AppendAllText(queuePath, line + Environment.NewLine);   // replay the SAME envelope
+
+        svc.Unlock(Pw);
+        Assert.Single(svc.DrainDeposits().Deposits);   // the exact replay is collapsed
+    }
+
+    [Fact]   // a swapped clear public-key sidecar is detected on unlock; the queue is then not trusted
+    public void SwappedSidecar_DetectedOnUnlock()
+    {
+        var svc = NewService(new XorProtector(0x5A));
+        svc.Enroll(Pw);
+        svc.Lock();
+
+        var (attackerPub, _) = DepositCrypto.GenerateKeyPair();
+        File.WriteAllBytes(Path.Combine(_dir, "vault-deposit.pub"), attackerPub);   // attacker swaps the sidecar key
+
+        svc.Unlock(Pw);
+        Assert.Equal(VaultService.DepositKeyStatus.Tampered, svc.LastDepositStatus);
+        Assert.True(svc.DrainDeposits().KeyTampered);
+    }
+
+    [Fact]   // locked sign-up refuses when there's no deposit key yet (vault never unlocked since the feature)
+    public void LockedSignupDeposit_RefusesWithoutKeypair()
+    {
+        var svc = NewService(new XorProtector(0x5A));   // not enrolled -> no clear sidecar
+        Assert.False(svc.SelfSignupDeposit("x.test", "x.test", "claude-code").Ok);
+    }
 }

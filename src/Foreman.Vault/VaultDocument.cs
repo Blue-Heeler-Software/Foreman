@@ -6,6 +6,13 @@ namespace Foreman.Vault;
 public sealed class VaultDocument
 {
     public List<VaultEntry> Items { get; set; } = [];
+
+    /// <summary>The locked-vault DEPOSIT keypair (P-256), generated at enroll (or lazily on the first unlock of an
+    /// older vault). The PRIVATE key lives only here, inside the sealed document; a copy of the PUBLIC key is also
+    /// mirrored to a clear sidecar so a locked Foreman can encrypt new sign-ups to it. On unlock the clear sidecar is
+    /// compared against this sealed public key to detect a swapped sidecar. See DepositCrypto / DepositQueue.</summary>
+    public byte[]? DepositPublicKeySpki { get; set; }
+    public byte[]? DepositPrivateKeyPkcs8 { get; set; }
 }
 
 /// <summary>One credential. <see cref="Origins"/> drives domain-binding; <see cref="Harnesses"/> is the resolve ACL

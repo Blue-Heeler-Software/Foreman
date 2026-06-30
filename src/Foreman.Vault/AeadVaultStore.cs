@@ -168,6 +168,29 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         }
     }
 
+    /// <summary>The sealed deposit keypair (SPKI public, PKCS#8 private), or (null,null) if not yet generated. Requires
+    /// an unlocked vault (the keys live in the encrypted document).</summary>
+    public (byte[]? Pub, byte[]? Priv) GetDepositKeys()
+    {
+        lock (_gate)
+        {
+            EnsureUnlockedLocked();
+            return (_doc!.DepositPublicKeySpki, _doc.DepositPrivateKeyPkcs8);
+        }
+    }
+
+    /// <summary>Store the deposit keypair in the sealed document and persist. Requires an unlocked vault.</summary>
+    public void SetDepositKeys(byte[] publicSpki, byte[] privatePkcs8)
+    {
+        lock (_gate)
+        {
+            EnsureUnlockedLocked();
+            _doc!.DepositPublicKeySpki = publicSpki;
+            _doc.DepositPrivateKeyPkcs8 = privatePkcs8;
+            SaveLocked();
+        }
+    }
+
     public void WipeInMemoryKeys()
     {
         lock (_gate)

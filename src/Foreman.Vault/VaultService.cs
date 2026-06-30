@@ -18,6 +18,8 @@ public sealed class VaultService
     private readonly AeadVaultStore _store;
     private readonly VaultResolver _resolver;
     private readonly object _gate = new();
+    private readonly string _depositPubPath;   // clear sidecar: the deposit PUBLIC key, usable while the vault is locked
+    private readonly DepositQueue _deposits;    // clear, append-only ciphertext queue of locked-time sign-ups
     // Rate guard for agent self-signup (a WRITE). SECONDARY brake only: the primary control is that each signup is now
     // an explicitly operator-approved CU action (the fast-path auditor HOLDs it) plus a distinct presence tap. This caps
     // SUCCESSFUL creations in a sliding window, both overall and per harness (so one runaway harness can't exhaust the
@@ -35,6 +37,9 @@ public sealed class VaultService
         _protector = protector;
         _store = new AeadVaultStore(vaultPath);
         _resolver = new VaultResolver(_store);   // stable; reflects _store.IsUnlocked, so it fails closed while locked
+        var dir = Path.GetDirectoryName(Path.GetFullPath(vaultPath)) ?? ".";
+        _depositPubPath = Path.Combine(dir, "vault-deposit.pub");
+        _deposits = new DepositQueue(Path.Combine(dir, "vault-deposits.jsonl"));
     }
 
     /// <summary>A vault exists on disk (both the sealed component and the encrypted vault file).</summary>
@@ -57,6 +62,7 @@ public sealed class VaultService
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllBytes(_componentPath, _protector.Protect(component));
                 _store.Provision(masterPassword, component);
+                LastDepositStatus = EnsureDepositKeysLocked();   // generate the deposit keypair + write the clear sidecar
             }
             finally { Array.Clear(component); }
         }
@@ -72,6 +78,7 @@ public sealed class VaultService
             var component = _protector.Unprotect(File.ReadAllBytes(_componentPath));
             try { _store.Open(masterPassword, component); }
             finally { Array.Clear(component); }
+            LastDepositStatus = EnsureDepositKeysLocked();   // migrate older vaults + detect a swapped clear sidecar
         }
     }
 
@@ -132,10 +139,7 @@ public sealed class VaultService
                 return (false, null, $"signup origin does not match the live target '{liveOrigin}'");
 
             var who = string.IsNullOrEmpty(byHarness) ? "operator" : byHarness;
-            var now = DateTimeOffset.UtcNow;
-            _recentSignups.RemoveAll(t => now - t.At > SignupWindow);
-            if (_recentSignups.Count >= MaxSignupsPerWindow
-                || _recentSignups.Count(t => string.Equals(t.Who, who, StringComparison.OrdinalIgnoreCase)) >= MaxSignupsPerHarnessPerWindow)
+            if (!RateGuardAllowsLocked(who))
                 return (false, null, "too many sign-ups in a short window; try again shortly");
 
             // OPERATOR-ONLY (no harness on the ACL): the creating agent cannot later auto-resolve this credential.
@@ -150,9 +154,154 @@ public sealed class VaultService
             if (!_store.TryAddNew(entry))
                 return (false, null, "a credential already exists for this site; signup would overwrite it");
 
-            _recentSignups.Add((now, who));
+            RecordSignupLocked(who);
             return (true, entry.Password, "");
         }
+    }
+
+    // ── Locked-vault deposit queue (P-BM4b) ──────────────────────────────────────────────────────────────────────
+    // A self-signup that arrives while the vault is LOCKED can't write the encrypted store, so Foreman encrypts the
+    // generated credential to the deposit PUBLIC key (clear sidecar) and queues the ciphertext; the operator reviews +
+    // commits each one on unlock. Because the public key is in the clear the queue is FORGEABLE, so: nothing
+    // auto-commits, the review UI must show origin/harness/time as unverified CLAIMS, commit routes through the same
+    // no-clobber operator-only path as live signup, and a swapped clear sidecar is detected on unlock.
+
+    /// <summary>Result of reconciling the deposit keypair on enroll/unlock.</summary>
+    public enum DepositKeyStatus { None, Ok, Generated, Tampered }
+
+    /// <summary>Set on the last enroll/unlock: Generated (first run / migrated older vault), Ok, or Tampered (the clear
+    /// public-key sidecar does NOT match the sealed copy - a swap; the deposit queue must not be trusted/drained).</summary>
+    public DepositKeyStatus LastDepositStatus { get; private set; } = DepositKeyStatus.None;
+
+    /// <summary>Number of locked-time sign-ups waiting for operator review (readable any time; needs no key).</summary>
+    public int PendingDepositCount => _deposits.Count;
+
+    /// <summary>
+    /// LOCKED-vault self-signup: generate a strong password, encrypt it (+ origin/harness/time) to the deposit public
+    /// key, and queue it for operator review on unlock; return the password so the agent can still fill the form now.
+    /// Gated like the unlocked path (domain-binding to the live target + the per-harness/overall rate guard) plus the
+    /// queue's hard size cap. Refuses if the vault has never been unlocked since the feature shipped (no deposit key
+    /// yet). The caller still requires the operator-approved CU action + the distinct presence tap.
+    /// </summary>
+    public (bool Ok, string? Value, string Reason) SelfSignupDeposit(string origin, string liveOrigin, string? byHarness)
+    {
+        lock (_gate)
+        {
+            var pub = ReadClearPubkey();
+            if (pub is null)
+                return (false, null, "locked sign-up isn't available yet - unlock the vault once to enable it");
+
+            var host = VaultDomainBinding.NormalizeHost(origin);
+            if (string.IsNullOrEmpty(host)) return (false, null, "invalid signup origin");
+            if (!string.Equals(host, VaultDomainBinding.NormalizeHost(liveOrigin), StringComparison.OrdinalIgnoreCase))
+                return (false, null, $"signup origin does not match the live target '{liveOrigin}'");
+
+            var who = string.IsNullOrEmpty(byHarness) ? "operator" : byHarness;
+            if (!RateGuardAllowsLocked(who))
+                return (false, null, "too many sign-ups in a short window; try again shortly");
+
+            var deposit = new DepositQueue.PendingDeposit(
+                host, Username: null, Password: VaultPasswordGenerator.Generate(20), ByHarness: who,
+                CreatedAtUtc: DateTimeOffset.UtcNow.ToString("o"));
+            if (!_deposits.Enqueue(pub, deposit))
+                return (false, null, "the locked sign-up queue is full - unlock the vault to review pending sign-ups");
+
+            RecordSignupLocked(who);
+            return (true, deposit.Password, "");
+        }
+    }
+
+    /// <summary>Unlock-time: decrypt + dedupe the queued deposits for operator review. NEVER commits. Returns the
+    /// pending deposits, a count of lines that failed to decrypt (tamper/corruption), and whether the deposit key
+    /// itself was tampered (a swapped sidecar - the queue is then NOT trusted and nothing is returned).</summary>
+    public (IReadOnlyList<DepositQueue.PendingDeposit> Deposits, int Failed, bool KeyTampered) DrainDeposits()
+    {
+        lock (_gate)
+        {
+            if (!_store.IsUnlocked) return ([], 0, false);
+            if (LastDepositStatus == DepositKeyStatus.Tampered) return ([], 0, true);
+            var (_, priv) = _store.GetDepositKeys();
+            if (priv is null) return ([], 0, false);
+            var r = _deposits.Drain(priv);
+            return (Dedupe(r.Deposits), r.Failed, false);
+        }
+    }
+
+    /// <summary>Operator action: commit ONE reviewed deposit into the vault via the same no-clobber, OPERATOR-ONLY path
+    /// as live self-signup (so a forged deposit can neither clobber a real login nor self-grant a harness ACL). Requires
+    /// an unlocked vault. Returns (ok, reason).</summary>
+    public (bool Ok, string Reason) CommitDeposit(DepositQueue.PendingDeposit deposit)
+    {
+        lock (_gate)
+        {
+            if (!_store.IsUnlocked) return (false, "vault is locked");
+            var host = VaultDomainBinding.NormalizeHost(deposit.Origin);
+            if (string.IsNullOrEmpty(host)) return (false, "invalid origin");
+            var entry = new VaultEntry
+            {
+                Name = host,
+                Origins = { host },
+                Password = deposit.Password,
+                Notes = $"created via agent self-signup while locked ({deposit.ByHarness})",
+            };
+            return _store.TryAddNew(entry) ? (true, "") : (false, "a credential already exists for this site");
+        }
+    }
+
+    /// <summary>Remove the deposit queue file (only AFTER the operator has reviewed + committed/rejected every deposit).</summary>
+    public void ClearDeposits() { lock (_gate) _deposits.Clear(); }
+
+    // Generate the deposit keypair if absent (enroll / older-vault migration), else verify the clear sidecar matches the
+    // sealed public key (swap detection). Must be called while UNLOCKED (reads/writes the sealed keys).
+    private DepositKeyStatus EnsureDepositKeysLocked()
+    {
+        var (pub, priv) = _store.GetDepositKeys();
+        if (pub is null || priv is null)
+        {
+            var (newPub, newPriv) = DepositCrypto.GenerateKeyPair();
+            _store.SetDepositKeys(newPub, newPriv);
+            WriteClearPubkey(newPub);
+            return DepositKeyStatus.Generated;
+        }
+        var clear = ReadClearPubkey();
+        if (clear is null) { WriteClearPubkey(pub); return DepositKeyStatus.Ok; }   // sidecar missing -> restore from sealed
+        return clear.AsSpan().SequenceEqual(pub) ? DepositKeyStatus.Ok : DepositKeyStatus.Tampered;
+    }
+
+    private byte[]? ReadClearPubkey()
+    {
+        try { return File.Exists(_depositPubPath) ? File.ReadAllBytes(_depositPubPath) : null; }
+        catch { return null; }
+    }
+
+    private void WriteClearPubkey(byte[] pub)
+    {
+        var dir = Path.GetDirectoryName(_depositPubPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        File.WriteAllBytes(_depositPubPath, pub);
+    }
+
+    // Rate guard shared by the unlocked + locked sign-up paths (in-memory; per-harness + overall sliding window).
+    private bool RateGuardAllowsLocked(string who)
+    {
+        var now = DateTimeOffset.UtcNow;
+        _recentSignups.RemoveAll(t => now - t.At > SignupWindow);
+        return _recentSignups.Count < MaxSignupsPerWindow
+            && _recentSignups.Count(t => string.Equals(t.Who, who, StringComparison.OrdinalIgnoreCase)) < MaxSignupsPerHarnessPerWindow;
+    }
+
+    private void RecordSignupLocked(string who) => _recentSignups.Add((DateTimeOffset.UtcNow, who));
+
+    // Collapse exact replays (same origin + password + harness): a captured envelope re-appended to the clear queue
+    // must not surface as a second committable credential.
+    private static IReadOnlyList<DepositQueue.PendingDeposit> Dedupe(IReadOnlyList<DepositQueue.PendingDeposit> deposits)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var outp = new List<DepositQueue.PendingDeposit>();
+        foreach (var d in deposits)
+            if (seen.Add($"{d.Origin} {d.Password} {d.ByHarness}"))
+                outp.Add(d);
+        return outp;
     }
 
     /// <summary>Item metadata for the management UI (no secret values). Requires an unlocked vault.</summary>
