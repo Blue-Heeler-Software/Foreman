@@ -1,6 +1,7 @@
 using Foreman.Core.Settings;
 using Microsoft.Win32;
 using System.IO;
+using System.Linq;
 
 namespace Foreman.App;
 
@@ -17,8 +18,9 @@ public static class StartupManager
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(StartupRegistration.RunKeyPath);
-            return key?.GetValue(StartupRegistration.RunValueName) is string ||
-                   key?.GetValue(StartupRegistration.LegacyRunValueName) is string;
+            if (key is null) return false;
+            return key.GetValue(StartupRegistration.RunValueName) is string
+                || StartupRegistration.LegacyRunValueNames.Any(n => key.GetValue(n) is string);
         }
         catch
         {
@@ -37,13 +39,15 @@ public static class StartupManager
             var exe = Environment.ProcessPath
                 ?? throw new InvalidOperationException("Cannot resolve Foreman Agent Safety's executable path.");
             key.SetValue(StartupRegistration.RunValueName, StartupRegistration.BuildCommand(exe));
-            key.DeleteValue(StartupRegistration.LegacyRunValueName, throwOnMissingValue: false);
         }
         else
         {
             key.DeleteValue(StartupRegistration.RunValueName, throwOnMissingValue: false);
-            key.DeleteValue(StartupRegistration.LegacyRunValueName, throwOnMissingValue: false);
         }
+        // Always drop every legacy alias (incl. the no-space "ForemanAgentSafety") so neither enabling nor
+        // disabling can leave a stranded duplicate Run entry behind.
+        foreach (var name in StartupRegistration.LegacyRunValueNames)
+            key.DeleteValue(name, throwOnMissingValue: false);
     }
 
     /// <summary>
@@ -58,7 +62,7 @@ public static class StartupManager
         {
             using var key = Registry.CurrentUser.OpenSubKey(StartupRegistration.RunKeyPath);
             var value = (key?.GetValue(StartupRegistration.RunValueName) as string)
-                     ?? (key?.GetValue(StartupRegistration.LegacyRunValueName) as string);
+                     ?? StartupRegistration.LegacyRunValueNames.Select(n => key?.GetValue(n) as string).FirstOrDefault(v => v is not null);
             var exe = StartupRegistration.ParseExePath(value);
             if (exe is null) return null;   // feature off / malformed
 
@@ -87,23 +91,24 @@ public static class StartupManager
             if (key is null) return;
 
             var currentValue = key.GetValue(StartupRegistration.RunValueName) as string;
-            var legacyValue = key.GetValue(StartupRegistration.LegacyRunValueName) as string;
-            var hasCurrentName = currentValue is not null;
-            var hasLegacyName = legacyValue is not null;
-            if (!hasCurrentName && !hasLegacyName) return;
+            // First present legacy alias ("Foreman", "ForemanAgentSafety", …) from any older build.
+            var legacyValue = StartupRegistration.LegacyRunValueNames
+                .Select(n => key.GetValue(n) as string)
+                .FirstOrDefault(v => v is not null);
+            if (currentValue is null && legacyValue is null) return;   // feature off — nothing to do
 
             var value = currentValue ?? legacyValue!;
-
             var current = Environment.ProcessPath;
             if (current is null) return;
 
             if (StartupRegistration.NeedsRepair(value, current, File.Exists))
                 key.SetValue(StartupRegistration.RunValueName, StartupRegistration.BuildCommand(current));
-            else if (hasLegacyName && !hasCurrentName)
-                key.SetValue(StartupRegistration.RunValueName, value);
+            else if (currentValue is null)
+                key.SetValue(StartupRegistration.RunValueName, value);   // migrate a legacy-only entry to the canonical name
 
-            if (hasLegacyName)
-                key.DeleteValue(StartupRegistration.LegacyRunValueName, throwOnMissingValue: false);
+            // Always remove EVERY legacy alias so a stale duplicate (e.g. the no-space name) can't double-launch at logon.
+            foreach (var name in StartupRegistration.LegacyRunValueNames)
+                key.DeleteValue(name, throwOnMissingValue: false);
         }
         catch { /* best-effort */ }
     }

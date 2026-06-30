@@ -18,6 +18,15 @@ public static class StartupRegistration
     /// <summary>Older public startup value name, kept so upgrades preserve the user's setting.</summary>
     public const string LegacyRunValueName = "Foreman";
 
+    /// <summary>
+    /// Every older Run value name to clean up when managing the canonical entry. Includes the no-space variant
+    /// "ForemanAgentSafety" that a prior build wrote: leaving it stranded a SECOND Run entry, so Windows launched
+    /// Foreman twice at sign-in. The single-instance mutex blocked the duplicate, but it cost a stray "already
+    /// running" prompt + a false "blocked duplicate" in the OS log every logon. <see cref="LegacyRunValueName"/>
+    /// is included so callers can iterate this one list.
+    /// </summary>
+    public static readonly string[] LegacyRunValueNames = { LegacyRunValueName, "ForemanAgentSafety" };
+
     /// <summary>Relative registry path of the per-user Run key.</summary>
     public const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
