@@ -296,10 +296,10 @@ public sealed class VaultService
     // must not surface as a second committable credential.
     private static IReadOnlyList<DepositQueue.PendingDeposit> Dedupe(IReadOnlyList<DepositQueue.PendingDeposit> deposits)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<(string, string, string)>();
         var outp = new List<DepositQueue.PendingDeposit>();
         foreach (var d in deposits)
-            if (seen.Add($"{d.Origin} {d.Password} {d.ByHarness}"))
+            if (seen.Add((d.Origin, d.Password, d.ByHarness)))
                 outp.Add(d);
         return outp;
     }
