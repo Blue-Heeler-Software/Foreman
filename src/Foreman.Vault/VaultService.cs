@@ -49,6 +49,10 @@ public sealed class VaultService
     /// <summary>Always non-null; resolves only while unlocked (otherwise returns a "vault is locked" failure).</summary>
     public IVaultResolver Resolver => _resolver;
 
+    /// <summary>Raised after a successful Unlock (outside the lock). The App uses it to surface a swapped-key tamper
+    /// alert (see <see cref="LastDepositStatus"/>) and any pending locked-time deposits for operator review.</summary>
+    public event Action? Unlocked;
+
     /// <summary>First-run: generate a random key component, protect it for this user+machine, and create the vault.</summary>
     public void Enroll(string masterPassword)
     {
@@ -80,6 +84,7 @@ public sealed class VaultService
             finally { Array.Clear(component); }
             LastDepositStatus = EnsureDepositKeysLocked();   // migrate older vaults + detect a swapped clear sidecar
         }
+        Unlocked?.Invoke();   // after releasing the gate: subscribers may read PendingDepositCount / DrainDeposits
     }
 
     /// <summary>Forget the in-memory key + decrypted document (panic / exit). Safe to call when already locked.</summary>

@@ -31,6 +31,9 @@ public partial class App : Application
     private System.IO.FileStream? _cuPilotPin;
     private System.IO.FileStream? _etwSidecarPin;
     private Foreman.Vault.VaultService? _vaultService;
+    // Locked-time deposits drained for the current review session (id -> the real deposit incl. its generated
+    // password). Kept App-side so the deposit-review WINDOW only ever sees id/origin/harness/time, never a secret.
+    private readonly Dictionary<string, Foreman.Vault.DepositQueue.PendingDeposit> _drainedDeposits = new();
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
     private ElevatedSidecarController? _sidecar;
@@ -419,11 +422,19 @@ public partial class App : Application
             // first - the auto-Allow path a benign-looking 'type' can ride must never reach a vault WRITE.
             if (Foreman.Core.Vault.VaultReference.TrySignup(text, out var signupOrigin))
             {
+                // When the vault is LOCKED we can't write the store, so the signup is QUEUED (encrypted to the deposit
+                // public key) for operator review on the next unlock - existing creds stay sealed. The presence prompt
+                // names the queued case so the operator's consent is accurate. Unlocked = the immediate write path.
+                var queued = !_vaultService.IsUnlocked;
+                var prompt = queued
+                    ? $"QUEUE a new saved password for '{signupOrigin}' (agent self-signup; you'll review it when you next unlock)"
+                    : $"CREATE a new saved password for '{signupOrigin}' (agent self-signup)";
                 if (!await Security.PresenceGuard.AuthorizeAsync(
-                        Foreman.Core.Security.WeakeningAction.SelfSignupVaultCredential,
-                        $"CREATE a new saved password for '{signupOrigin}' (agent self-signup)", forcePresence: true))
+                        Foreman.Core.Security.WeakeningAction.SelfSignupVaultCredential, prompt, forcePresence: true))
                     return (false, null, "presence not verified (enroll Windows Hello to let agents create credentials)");
-                return _vaultService.SelfSignup(signupOrigin, liveOrigin, byHarness);
+                return queued
+                    ? _vaultService.SelfSignupDeposit(signupOrigin, liveOrigin, byHarness)
+                    : _vaultService.SelfSignup(signupOrigin, liveOrigin, byHarness);
             }
             // Read-resolve: RELEASE an existing credential. freshTap is left default so the approval-cache TTL keeps a
             // single login from prompting per field (operator can set TTL=0 to tap every time).
@@ -434,6 +445,48 @@ public partial class App : Application
             var r = _vaultService.Resolver.Resolve(text, liveOrigin, byHarness, isOperator: string.IsNullOrEmpty(byHarness));
             return (r.Ok, r.Resolved, r.Reason);
         };
+
+        // Locked-vault deposit queue (P-BM4b): the operator reviews + commits the agent sign-ups that were QUEUED while
+        // the vault was locked. The review WINDOW only ever sees id/origin/harness/time; the App keeps the real deposits
+        // (with their generated passwords) in _drainedDeposits and commits via the same no-clobber, operator-only path.
+        _tray.PendingDepositCount = () => _vaultService?.PendingDepositCount ?? 0;
+        _tray.GetDepositReview = () =>
+        {
+            _drainedDeposits.Clear();
+            if (_vaultService is null) return new Foreman.App.Windows.DepositReviewSnapshot([], 0, false);
+            var (deposits, failed, tampered) = _vaultService.DrainDeposits();
+            var items = new List<Foreman.App.Windows.DepositReviewItem>();
+            var n = 0;
+            foreach (var d in deposits)
+            {
+                var id = (++n).ToString();
+                _drainedDeposits[id] = d;
+                items.Add(new Foreman.App.Windows.DepositReviewItem(id, d.Origin, d.ByHarness, d.CreatedAtUtc));
+            }
+            return new Foreman.App.Windows.DepositReviewSnapshot(items, failed, tampered);
+        };
+        _tray.AcceptDeposit = id =>
+            _vaultService is not null && _drainedDeposits.TryGetValue(id, out var dep)
+                ? _vaultService.CommitDeposit(dep)
+                : (false, "unknown deposit");
+        // Reject drops the deposit from THIS review session only; the encrypted line stays in the queue until the
+        // operator's "Finish & clear" (a re-open would re-surface it). ClearDepositQueue is the durable removal.
+        _tray.RejectDeposit = id => _drainedDeposits.Remove(id);
+        _tray.ClearDepositQueue = () => { _vaultService?.ClearDeposits(); _drainedDeposits.Clear(); };
+
+        // On unlock: alert on a swapped deposit-key sidecar; otherwise surface any sign-ups queued while locked.
+        if (_vaultService is not null)
+            _vaultService.Unlocked += () =>
+            {
+                if (_vaultService.LastDepositStatus == Foreman.Vault.VaultService.DepositKeyStatus.Tampered)
+                    EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.High,
+                        "Foreman.Vault", "The vault deposit-key sidecar does not match the sealed key (possible swap) - " +
+                        "locked-time sign-ups are NOT trusted. Review them via the tray."));
+                else if (_vaultService.PendingDepositCount > 0)
+                    EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Low,
+                        "Foreman.Vault", $"{_vaultService.PendingDepositCount} agent sign-up(s) were queued while the " +
+                        "vault was locked - review them in the tray (\"Review pending sign-ups\")."));
+            };
         _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
             () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
         if (!_panicHotkey.Registered)

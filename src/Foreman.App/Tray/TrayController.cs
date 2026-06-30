@@ -29,6 +29,7 @@ public sealed class TrayController : IEventSink, IDisposable
     private MuteManagerWindow? _muteWindow;
     private Foreman.App.Windows.VaultWindow? _vaultWindow;
     private Foreman.App.Windows.CuApprovalsWindow? _cuApprovalsWindow;
+    private Foreman.App.Windows.DepositReviewWindow? _depositReviewWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -107,6 +108,14 @@ public sealed class TrayController : IEventSink, IDisposable
     public Func<IReadOnlyList<Foreman.App.Windows.HeldCuView>>? GetHeldCuActions     { get; set; }
     public Func<string, Task<(bool Ok, string Reason)>>?       ApproveCuAction       { get; set; }
     public Func<string, string?, (bool Ok, string Reason)>?    RejectCuAction        { get; set; }
+
+    /// <summary>Injected from App — locked-vault deposit review: pending count, a drained snapshot (no secrets), and
+    /// per-item accept (commit via the no-clobber operator-only path) / reject / clear-queue.</summary>
+    public Func<int>?                                          PendingDepositCount   { get; set; }
+    public Func<Foreman.App.Windows.DepositReviewSnapshot>?    GetDepositReview      { get; set; }
+    public Func<string, (bool Ok, string Reason)>?            AcceptDeposit          { get; set; }
+    public Action<string>?                                    RejectDeposit          { get; set; }
+    public Action?                                            ClearDepositQueue      { get; set; }
 
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
@@ -681,6 +690,13 @@ public sealed class TrayController : IEventSink, IDisposable
                 () => OpenCuApprovalsWindow());
             menu.Items.Add(new Separator());
         }
+        // Locked-time agent sign-ups awaiting review. Only shown when the vault is UNLOCKED + something is pending,
+        // since reviewing (draining) needs the key; the queue count is readable while locked but can't be decrypted then.
+        if (Vault?.IsUnlocked == true && GetDepositReview is not null && (PendingDepositCount?.Invoke() ?? 0) > 0)
+        {
+            AddMenuItem(menu, $"✅ Review pending sign-ups ({PendingDepositCount!()})…", () => OpenDepositReviewWindow());
+            menu.Items.Add(new Separator());
+        }
         AddMenuItem(menu, "Dashboard", () => OpenDashboardWindow());
         AddMenuItem(menu, "Open Log", () => OpenLogWindow());
         AddMenuItem(menu, "Process Monitor…", () => OpenProcessMonitorWindow());
@@ -838,6 +854,20 @@ public sealed class TrayController : IEventSink, IDisposable
             w.Show();
         }
         WindowActivation.Surface(_vaultWindow);
+    }
+
+    // Operator review of locked-time agent sign-ups (the P-BM4b deposit queue): drain on open, accept/reject each, clear.
+    private void OpenDepositReviewWindow()
+    {
+        if (GetDepositReview is null || AcceptDeposit is null || RejectDeposit is null || ClearDepositQueue is null) return;
+        if (_depositReviewWindow is null)
+        {
+            var w = new Foreman.App.Windows.DepositReviewWindow(GetDepositReview(), AcceptDeposit, RejectDeposit, ClearDepositQueue);
+            w.Closed += (_, _) => _depositReviewWindow = null;
+            _depositReviewWindow = w;
+            w.Show();
+        }
+        WindowActivation.Surface(_depositReviewWindow);
     }
 
     // Operator approve/reject for held CU actions — the in-app counterpart to the operator-only cu_approve MCP tool.
