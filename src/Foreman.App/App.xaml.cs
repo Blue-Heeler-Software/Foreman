@@ -335,6 +335,53 @@ public partial class App : Application
         // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
         _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);
+
+        // Held-CU operator approve/reject for the tray's approvals window. Mirrors the cu_approve / cu_reject MCP tools
+        // (incl. the desktop presence tap) so the operator has an IN-APP way to clear a held action - there was none,
+        // which left the hardened self-signup (and default-held desktop actions) uncompletable from the UI.
+        static string SummarizeCuArgs(Foreman.Core.ComputerUse.CuAction a)
+        {
+            var joined = string.Join("  ", a.Args.Select(kv => $"{kv.Key}={kv.Value}"));
+            var red = Foreman.Core.Security.SecretRedactor.Redact(joined);
+            return red.Length <= 240 ? red : red[..240] + "…";
+        }
+        _tray.GetHeldCuActions = () =>
+        {
+            var cu = _mcpHost.State.Cu;
+            if (cu is null) return [];
+            return cu.ListHeld().Select(i => new Foreman.App.Windows.HeldCuView(
+                i.ActionId, i.Action.Verb, i.Action.Modality.ToString(),
+                string.IsNullOrEmpty(i.Action.ByHarness) ? "operator" : i.Action.ByHarness!,
+                i.Verdict?.Reason ?? "held for operator review",
+                SummarizeCuArgs(i.Action))).ToArray();
+        };
+        _tray.ApproveCuAction = async id =>
+        {
+            var cu = _mcpHost.State.Cu;
+            if (cu is null) return (false, "computer use is not available");
+            // INV-16: a held DESKTOP action needs a fresh presence tap, exactly as cu_approve enforces.
+            if (cu.Get(id)?.Action.Modality == Foreman.Core.ComputerUse.CuModality.Desktop)
+            {
+                var gate = _mcpHost.State.CuDesktopApprovalGate;
+                var authed = false;
+                if (gate is not null) { try { authed = await gate().ConfigureAwait(false); } catch { authed = false; } }
+                if (!authed) return (false, "a presence tap (Windows Hello / FIDO2) is required to approve a desktop action");
+            }
+            var (ok, reason) = cu.ApproveHeld(id);
+            if (ok) EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
+                $"Operator APPROVED held computer-use action [{id}] (dashboard)."));
+            return (ok, reason);
+        };
+        _tray.RejectCuAction = (id, reason) =>
+        {
+            var cu = _mcpHost.State.Cu;
+            if (cu is null) return (false, "computer use is not available");
+            var redacted = string.IsNullOrWhiteSpace(reason) ? null : Foreman.Core.Security.SecretRedactor.Redact(reason!.Trim());
+            var (ok, r) = cu.RejectHeld(id, redacted);
+            if (ok) EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
+                $"Operator REJECTED held computer-use action [{id}] (dashboard)."));
+            return (ok, r);
+        };
         var panicController = new Foreman.App.ComputerUse.PanicController(
             panicState, EventBus.Instance, _osLog, () => _osLogEnabled);
         _tray.Panic = panicController;

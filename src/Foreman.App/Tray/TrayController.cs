@@ -28,6 +28,7 @@ public sealed class TrayController : IEventSink, IDisposable
     private ConnectAgentWindow? _connectWindow;
     private MuteManagerWindow? _muteWindow;
     private Foreman.App.Windows.VaultWindow? _vaultWindow;
+    private Foreman.App.Windows.CuApprovalsWindow? _cuApprovalsWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -100,6 +101,12 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — read/set the mediated computer-use (cu_*) driver harness in-process (operator).</summary>
     public Func<string?>?                                     GetCuDriver           { get; set; }
     public Action<string?>?                                   SetCuDriver           { get; set; }
+
+    /// <summary>Injected from App — held CU actions for the operator approve/reject window, plus the approve (mirrors
+    /// cu_approve incl. the desktop presence tap) and reject actions. Lets the operator clear a held action in-app.</summary>
+    public Func<IReadOnlyList<Foreman.App.Windows.HeldCuView>>? GetHeldCuActions     { get; set; }
+    public Func<string, Task<(bool Ok, string Reason)>>?       ApproveCuAction       { get; set; }
+    public Func<string, string?, (bool Ok, string Reason)>?    RejectCuAction        { get; set; }
 
     /// <summary>Injected from App — the MCP bearer token, for building Claude Code connect config/commands.</summary>
     public Func<string>?                                      GetMcpToken           { get; set; }
@@ -664,6 +671,16 @@ public sealed class TrayController : IEventSink, IDisposable
                 AddMenuItem(menu, "⛔ STOP computer use (panic)", () => panic.Halt("tray STOP"));
             menu.Items.Add(new Separator());
         }
+        // Held CU actions awaiting operator approval (an agent self-signup, a default-held desktop action). Shown
+        // whenever CU is available - the only in-app route to approve/reject a held action. The count can briefly lag
+        // a menu rebuild, so the item is always present (not count-gated) and the window itself shows the live list.
+        if (Panic is not null && GetHeldCuActions is not null)
+        {
+            var heldCu = GetHeldCuActions().Count;
+            AddMenuItem(menu, heldCu > 0 ? $"✅ Review held CU actions ({heldCu})…" : "Review held CU actions…",
+                () => OpenCuApprovalsWindow());
+            menu.Items.Add(new Separator());
+        }
         AddMenuItem(menu, "Dashboard", () => OpenDashboardWindow());
         AddMenuItem(menu, "Open Log", () => OpenLogWindow());
         AddMenuItem(menu, "Process Monitor…", () => OpenProcessMonitorWindow());
@@ -821,6 +838,20 @@ public sealed class TrayController : IEventSink, IDisposable
             w.Show();
         }
         WindowActivation.Surface(_vaultWindow);
+    }
+
+    // Operator approve/reject for held CU actions — the in-app counterpart to the operator-only cu_approve MCP tool.
+    private void OpenCuApprovalsWindow()
+    {
+        if (GetHeldCuActions is null || ApproveCuAction is null || RejectCuAction is null) return;
+        if (_cuApprovalsWindow is null)
+        {
+            var w = new Foreman.App.Windows.CuApprovalsWindow(GetHeldCuActions, ApproveCuAction, RejectCuAction);
+            w.Closed += (_, _) => _cuApprovalsWindow = null;
+            _cuApprovalsWindow = w;
+            w.Show();
+        }
+        WindowActivation.Surface(_cuApprovalsWindow);
     }
 
     private void OpenMuteManagerWindow()
