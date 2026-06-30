@@ -84,7 +84,7 @@ Recognized/profiled, but needs broader field testing:
 | `amazon-q` | Amazon Q Developer | process classification |
 | `aider` | Aider | process classification |
 | `github-copilot` | GitHub Copilot CLI | one-click MCP setup (~/.copilot/mcp-config.json), process classification |
-| `lm-studio` | LM Studio | one-click MCP setup (~/.lmstudio/mcp.json) — **caveat emptor**: header-auth support is unverified, confirm in LM Studio's MCP panel |
+| `lm-studio` | LM Studio | one-click MCP setup (~/.lmstudio/mcp.json) via a local `mcp-remote` stdio bridge that forwards the bearer token (works around LM Studio dropping the `Authorization` header on remote MCP servers, [bug #1892](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1892)); needs `npx`/Node |
 | `cline` | Cline / Continue / Roo | process classification |
 
 > **T3 Code is a control plane — there's no "T3 auth" to configure.** T3 Code runs an *underlying* agent
@@ -157,8 +157,14 @@ Manual Codex setup in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.foreman]
 url = "http://localhost:54321/mcp"
-http_headers = { Authorization = "Bearer <paste-token-from-mcp.token>" }
+bearer_token_env_var = "FOREMAN_MCP_TOKEN_CODEX"
 enabled = true
+```
+
+Codex reads the bearer token from that environment variable; its inline `http_headers` Authorization is **ignored** (Codex lists such a server as "Auth: Unsupported"). Set the variable to the token from `mcp.token`, then start Codex in a **new** terminal so it inherits the value:
+
+```bash
+setx FOREMAN_MCP_TOKEN_CODEX "<paste-token-from-mcp.token>"
 ```
 
 Add this marked section to `~/.codex/AGENTS.md` as well, then restart Codex:

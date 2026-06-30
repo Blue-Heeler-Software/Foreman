@@ -32,12 +32,17 @@ The vault **key** never leaves the App. The submitting agent only ever held the 
 
 ## Storage & keys
 
-- **Format:** KDBX 4 via `KeePassLib.Standard` (GPL-2.0-or-later, compatible with Foreman's
-  GPL-3.0-or-later). We do **not** hand-roll the KDBX format. **TOTP:** `Otp.NET` (MIT, RFC-6238).
-- **Unlock (composite):** master password (KDBX Argon2id KDF) **+** a high-entropy key-file component
-  that Foreman **TPM-seals via the Guardian** and releases only on a **Windows Hello tap**. A stolen
-  vault file is useless without the TPM (PC-bound); same-user malware is useless without the master
-  password. The derived key lives in memory only while unlocked and is **wiped on panic/lock/exit**.
+- **Format:** native, in-box. **AES-256-GCM** (AEAD) over the JSON document, key derived by **Argon2id**
+  (`Konscious.Security.Cryptography.Argon2`, MIT). We do **not** hand-roll a cipher, and we do **not** pull
+  KeePassLib into the live crypto path (its `Microsoft.AspNetCore.DataProtection` / `System.Drawing.Common`
+  deps don't belong there); KDBX interop is a deferred import/export converter (P2) that never touches the
+  live key. The header (version + KDF params + salt) is bound as the AES-GCM associated data **and** feeds
+  the KDF, so any header tamper fails authentication (double-bound). **TOTP:** `Otp.NET` (MIT, RFC-6238).
+- **Unlock (composite):** master password (Argon2id) **+** a high-entropy random key component that the
+  `IVaultKeyProtector` (**DPAPI**, CurrentUser, App-side) binds to **this user + machine** at rest. A stolen
+  vault file is useless without BOTH the master password AND the DPAPI scope (this user+machine). The derived
+  key lives in memory only while unlocked and is **wiped on panic/lock/exit**. Releasing a credential to an
+  AGENT additionally demands a live **Windows Hello / FIDO2 tap** (the same-user boundary; see the release gate).
 
 ## Release gate (per resolution)
 
@@ -60,7 +65,7 @@ The vault **key** never leaves the App. The submitting agent only ever held the 
 |---|---|
 | Agent requests credential for the WRONG target | Domain-binding: live target must match item origin |
 | Agent tries to have the secret ECHOED back | Never returned to caller; `SecretRedactor` at every egress |
-| Agent reads the vault file directly | File ACL + SACL read-audit (decoy path) + TPM-sealed key |
+| Agent reads the vault file directly | File ACL + SACL read-audit (decoy path) + DPAPI-bound key component (this user+machine) + master password |
 | Agent triggers mass rotation / exfil | Mutations operator-only + rate-limit + Ask/Audit gate |
 | Master-key brute force | Argon2id KDF + TPM binding (key is PC-bound, not just password) |
 | Malicious browser import | Operator-only, format-validated, logged with source + timestamp |
@@ -94,8 +99,9 @@ The agent-facing resolve (`cu_resolve_vault`) is the most sensitive surface; its
   `VaultDomainBinding` (pure origin match), `VaultTotp` (Otp.NET), `IVaultStore`/`IVaultResolver`,
   `VaultResolver` (pure logic over an injected store), models. Plus
   `WeakeningAction.ResolveVaultCredential`.
-- **`Foreman.Vault/`** (Windows, P1.2): `KdbxVaultStore : IVaultStore` (KeePassLib + Otp.NET),
-  composite-key open, TPM-seal of the key-file component, in-memory wipe.
+- **`Foreman.Vault/`**: `AeadVaultStore : IVaultStore` (native AES-256-GCM + Argon2id via `VaultCrypto`),
+  composite-key open, DPAPI-protected key component, in-memory wipe; `VaultService` lifecycle
+  (enroll/unlock/lock + self-signup); `DepositCrypto`/`DepositQueue` (ECIES locked-vault deposit queue).
 - **`Foreman.App`** wires the resolver into the executor (the injection hooks — small, surgical,
   done last to avoid colliding with concurrent CU work), the tray UI, panic-wipe, and the seal.
 
@@ -132,8 +138,9 @@ bounded (tabs API only; `type`/`click`/`scroll` error). Per-site grant model cho
 
 ## Phasing
 
-- **P1** — vault core (this), KDBX store + TPM-seal + panic-wipe, resolver + release gate, the two
-  injection hooks. Delivers: use stored creds + Foreman 2FA; generate + self-signup.
+- **P1** — vault core (this), native AEAD store (AES-256-GCM + Argon2id) + DPAPI-protected key component +
+  panic-wipe, resolver + release gate, the two injection hooks. Delivers: use stored creds + Foreman 2FA;
+  generate + self-signup.
 - **P2** — browser import (Chrome/Edge DPAPI), agent-driven rotate-all, KDBX import/export.
 
 Each phase ends with a threat-model pass + adversarial review, as with the CU layers.
