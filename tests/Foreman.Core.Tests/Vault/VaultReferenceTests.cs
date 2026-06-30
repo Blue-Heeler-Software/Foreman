@@ -32,4 +32,24 @@ public sealed class VaultReferenceTests
     [Fact]
     public void Replace_NoReference_Passthrough()
         => Assert.Equal("nothing here", VaultReference.Replace("nothing here", (_, _) => "x"));
+
+    [Fact]
+    public void TrySignup_DetectsWholeSignupToken()
+    {
+        Assert.True(VaultReference.TrySignup("{{vault:example.com/signup}}", out var o));
+        Assert.Equal("example.com", o);
+        Assert.True(VaultReference.TrySignup("  {{vault:Example.com:8443/signup}}  ", out var o2));   // trims + port (origin case preserved)
+        Assert.Equal("Example.com:8443", o2);
+    }
+
+    [Fact]
+    public void TrySignup_RejectsMixedReadOrPartialOrMiscased()
+    {
+        Assert.False(VaultReference.TrySignup("u {{vault:example.com/signup}}", out _));               // not the whole value
+        Assert.False(VaultReference.TrySignup("{{vault:example.com/password}}", out _));               // a read field, not signup
+        Assert.False(VaultReference.TrySignup("{{vault:a.com/signup}}{{vault:b.com/signup}}", out _)); // two tokens
+        Assert.False(VaultReference.TrySignup("{{vault:example.com/SIGNUP}}", out _));                 // case-sensitive: not 'signup'
+        Assert.False(VaultReference.TrySignup("{{VAULT:example.com/signup}}", out _));                 // case-sensitive: not 'vault:'
+        Assert.False(VaultReference.TrySignup("", out _));
+    }
 }

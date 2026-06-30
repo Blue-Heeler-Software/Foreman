@@ -1457,9 +1457,11 @@ public static class ForemanMcpTools
 
     [McpServerTool, Description(
         "CU executor only: resolve a {{vault:origin/field}} reference in an APPROVED, EXECUTING browser action to its " +
-        "real value for the live target origin you are about to fill. The submitting harness can never call this; the " +
-        "value is returned only to the browser-extension executor and is never logged. Domain-binding: the live origin " +
-        "must match the credential's registered origin (and an allowed harness / the operator), or resolution is refused.")]
+        "real value for the live target origin you are about to fill. Also handles {{vault:origin/signup}} - a WRITE " +
+        "that GENERATES + stores a NEW password for the live origin (operator-approved + presence-tapped) and returns it " +
+        "to fill into a signup form. The submitting harness can never call this; the value is returned only to the " +
+        "browser-extension executor and is never logged. Domain-binding: the live origin must match the credential's " +
+        "registered origin (and an allowed harness / the operator), or resolution is refused.")]
     public static async Task<object> CuResolveVault(
         [Description("actionId being executed")] string actionId,
         [Description("The {{vault:origin/field}} reference to resolve (must be one present in the approved action)")] string reference,
@@ -1495,6 +1497,12 @@ public static class ForemanMcpTools
             && item.Action.Args.Values.SelectMany(v => Foreman.Core.Vault.VaultReference.Tokens(v))
                    .Any(t => string.Equals(t, want, StringComparison.OrdinalIgnoreCase));
         if (!inAction) return new { ok = false, reason = "That reference was not part of the approved action." };
+        // A signup is a WRITE that fills the WHOLE field with a freshly-minted password; it is only valid as the ENTIRE
+        // arg value, never embedded in other text. Requiring whole-arg here makes the WRITE agree with the fast-path
+        // HOLD (which forces any signup-bearing action to operator approval) so an embedded signup token can never mint.
+        if (Foreman.Core.Vault.VaultReference.TrySignup(want, out _)
+            && !item.Action.Args.Values.Any(v => string.Equals((v ?? string.Empty).Trim(), want, StringComparison.OrdinalIgnoreCase)))
+            return new { ok = false, reason = "A signup reference must be the entire field value." };
 
         var resolve = state.ResolveVaultAsync;
         if (resolve is null) return new { ok = false, reason = "The credential vault is not available." };
@@ -1507,9 +1515,14 @@ public static class ForemanMcpTools
             state.Cu.Get(actionId.Trim())?.State != Foreman.Core.ComputerUse.CuActionState.Executing)
             return new { ok = false, reason = "Action was halted or is no longer executing — release voided." };
 
-        // Audit the EVENT + which field (the reference names it) — NEVER the value.
+        // Audit the EVENT + which field (the reference names it) — NEVER the value. A signup is a CREATE (the first
+        // agent-initiated vault WRITE), so it gets a distinct high-signal line so an operator reviewing the durable log
+        // sees a credential was CREATED, not merely released.
+        var isSignup = Foreman.Core.Vault.VaultReference.TrySignup(want, out _);
         EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Vault",
-            rok ? $"Released vault credential {want} into '{liveOrigin.Trim()}' for action [{item.ActionId}]."
+            rok ? (isSignup
+                    ? $"CREATED a new vault credential for '{liveOrigin.Trim()}' via agent self-signup for action [{item.ActionId}] (harness {item.Action.ByHarness ?? "operator"})."
+                    : $"Released vault credential {want} into '{liveOrigin.Trim()}' for action [{item.ActionId}].")
                 : $"Refused vault reference {want} for action [{item.ActionId}] into '{liveOrigin.Trim()}': {reason}"));
         return rok ? new { ok = true, value } : new { ok = false, reason };
     }

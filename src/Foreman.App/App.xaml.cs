@@ -361,11 +361,25 @@ public partial class App : Application
         _mcpHost.State.ResolveVaultAsync = async (text, liveOrigin, byHarness) =>
         {
             if (_vaultService is null) return (false, null, "credential vault unavailable");
-            // forcePresence: a credential RELEASE to an agent ALWAYS demands a live operator tap (Windows Hello / FIDO2),
-            // regardless of the lock setting - this is the one boundary a same-user adversary (who could mint a
-            // 'browser-extension' token) cannot forge. Fails closed when no authenticator is enrolled, so agent vault
-            // injection requires presence enrollment. freshTap is left default so the approval-cache TTL keeps a single
-            // login from prompting per field (operator can set TTL=0 to tap every time).
+            // forcePresence: every credential touch by an agent ALWAYS demands a live operator tap (Windows Hello /
+            // FIDO2), regardless of the lock setting - the one boundary a same-user adversary (who could mint a
+            // 'browser-extension' token) cannot forge. Fails closed when no authenticator is enrolled.
+            //
+            // Self-signup ({{vault:origin/signup}}) is a WRITE that CREATES a new credential, not a read. Branch FIRST
+            // so the consent is INFORMED: a DISTINCT prompt naming the new origin (so the operator can refuse a
+            // phishing/look-alike site) and a DISTINCT WeakeningAction (forces full user-verification; treats the write
+            // as the high-stakes op it is). The fast-path auditor also HOLDs a signup so the operator must cu_approve it
+            // first - the auto-Allow path a benign-looking 'type' can ride must never reach a vault WRITE.
+            if (Foreman.Core.Vault.VaultReference.TrySignup(text, out var signupOrigin))
+            {
+                if (!await Security.PresenceGuard.AuthorizeAsync(
+                        Foreman.Core.Security.WeakeningAction.SelfSignupVaultCredential,
+                        $"CREATE a new saved password for '{signupOrigin}' (agent self-signup)", forcePresence: true))
+                    return (false, null, "presence not verified (enroll Windows Hello to let agents create credentials)");
+                return _vaultService.SelfSignup(signupOrigin, liveOrigin, byHarness);
+            }
+            // Read-resolve: RELEASE an existing credential. freshTap is left default so the approval-cache TTL keeps a
+            // single login from prompting per field (operator can set TTL=0 to tap every time).
             if (!await Security.PresenceGuard.AuthorizeAsync(
                     Foreman.Core.Security.WeakeningAction.ResolveVaultCredential,
                     $"release a credential into '{liveOrigin}'", forcePresence: true))

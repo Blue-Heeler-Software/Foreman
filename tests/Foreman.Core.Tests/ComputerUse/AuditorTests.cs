@@ -48,6 +48,22 @@ public sealed class AuditorTests
     public void FastPath_TypingIntoPasswordField_Holds()
         => Assert.Equal(CuDecision.Hold, FastPathAuditor.Judge(TypeInto("hunter2", "password"), new CuContext()).Decision);
 
+    [Fact]   // a self-signup ({{vault:o/signup}}) WRITE is held even with a benign fieldType, and the hold is FINAL
+    public void FastPath_SignupType_HoldsAndIsFinal()
+    {
+        var v = FastPathAuditor.Judge(TypeInto("{{vault:example.com/signup}}", "text"), new CuContext());
+        Assert.Equal(CuDecision.Hold, v.Decision);
+        Assert.True(v.Final);   // deterministic policy hold the deep judge must not clear
+    }
+
+    [Fact]   // an EMBEDDED signup token (not the whole arg) must ALSO be held final - the WRITE keys on the token too
+    public void FastPath_EmbeddedSignupToken_HoldsAndIsFinal()
+    {
+        var v = FastPathAuditor.Judge(TypeInto("x {{vault:example.com/signup}}", "text"), new CuContext());
+        Assert.Equal(CuDecision.Hold, v.Decision);
+        Assert.True(v.Final);
+    }
+
     [Fact]
     public void Project_IncludesUrlAndTypedText()
     {
@@ -88,6 +104,16 @@ public sealed class AuditorTests
         Assert.Equal(CuDecision.Block, v.Decision);
         Assert.Equal("cloud", v.Source);
         Assert.Equal(1, deep.Calls);
+    }
+
+    [Fact]   // blocker-1 robustness: a FINAL hold (a vault WRITE) is never escalated, so a cloud judge can't auto-clear it
+    public async Task Pipeline_FinalHold_NotEscalated_EvenIfDeepJudgeWouldAllow()
+    {
+        var deep = new FakeAuditor(CuVerdict.Allow("cloud", "would-clear"));
+        var pipe = new AuditPipeline(new FakeAuditor(CuVerdict.Hold("fast-path", "self-signup write", final: true)), deep);
+        var v = await pipe.JudgeAsync(TypeInto("{{vault:example.com/signup}}", "text"), new CuContext());
+        Assert.Equal(CuDecision.Hold, v.Decision);   // operator must approve; cloud can't auto-clear a vault WRITE
+        Assert.Equal(0, deep.Calls);
     }
 
     [Fact]

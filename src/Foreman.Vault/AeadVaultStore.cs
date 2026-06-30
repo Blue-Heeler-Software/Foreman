@@ -108,6 +108,26 @@ public sealed class AeadVaultStore(string path) : IVaultStore
     }
 
     /// <summary>
+    /// NON-destructive add (for agent self-signup, a WRITE): add <paramref name="entry"/> only if NO existing item
+    /// shares its Name OR any of its origins. Returns false (and changes nothing) on any collision. Unlike
+    /// <see cref="Upsert"/> — which deletes any same-named item before adding — this can never clobber an operator
+    /// credential, so the by-name store op agrees with the by-origin no-clobber intent. Requires an unlocked vault.
+    /// </summary>
+    public bool TryAddNew(VaultEntry entry)
+    {
+        lock (_gate)
+        {
+            EnsureUnlockedLocked();
+            var nameTaken = _doc!.Items.Any(i => string.Equals(i.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
+            var originTaken = entry.Origins.Any(o => FindEntryLocked(o) is not null);
+            if (nameTaken || originTaken) return false;
+            _doc.Items.Add(entry);
+            SaveLocked();
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Edit the item currently named <paramref name="originalName"/>, replacing it with <paramref name="updated"/>.
     /// A null/blank secret field (Username/Password/TotpSeedBase32/Notes) in <paramref name="updated"/> KEEPS the
     /// existing value — the management UI never sees secret values, so "leave blank to keep" is the only safe edit.

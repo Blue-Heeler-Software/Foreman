@@ -206,6 +206,31 @@ public sealed class CuToolsTests
         Assert.Equal("s3cret", res.RootElement.GetProperty("value").GetString());
     }
 
+    [Fact]   // a signup must be the WHOLE field value; an EMBEDDED signup token is refused (it can never mint a credential)
+    public async Task CuResolveVault_EmbeddedSignupToken_Refused()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "should-not-reach", "ok"));
+        var actionId = await ExecutingBrowserAction("x {{vault:example.com/signup}}");   // token smuggled inside other text
+
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, "{{vault:example.com/signup}}", "example.com", AsHarness("browser-extension")));
+        Assert.False(res.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]   // a whole-arg signup token IS accepted (reaches the SelfSignup write path)
+    public async Task CuResolveVault_WholeArgSignupToken_Accepted()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "generated-pw", "ok"));
+        var actionId = await ExecutingBrowserAction("{{vault:example.com/signup}}");
+
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, "{{vault:example.com/signup}}", "example.com", AsHarness("browser-extension")));
+        Assert.True(res.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("generated-pw", res.RootElement.GetProperty("value").GetString());
+    }
+
     [Fact]
     public async Task CuResolveVault_SubmittingHarness_Refused()
     {

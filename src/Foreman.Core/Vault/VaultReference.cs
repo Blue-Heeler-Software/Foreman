@@ -16,6 +16,25 @@ public static partial class VaultReference
 
     public static bool HasReference(string? text) => !string.IsNullOrEmpty(text) && Pattern().IsMatch(text);
 
+    // {{vault:<origin>/signup}} as the WHOLE value — a self-signup WRITE (generate + store a NEW password for the
+    // origin), not a read of an existing field. Anchored whole-string so "signup" can't be smuggled inside other text
+    // or mixed with read references. Case-SENSITIVE on the literal 'vault:'/'signup', exactly like the read Pattern()
+    // and the cu_resolve_vault binding gate, so both layers agree on what is a signup token (no mixed-case divergence).
+    [GeneratedRegex(@"^\s*\{\{vault:(?<origin>[A-Za-z0-9.\-]+(?::\d+)?)/signup\}\}\s*$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex SignupPattern();
+
+    /// <summary>True if <paramref name="text"/> is exactly one <c>{{vault:ORIGIN/signup}}</c> token; outputs ORIGIN.</summary>
+    public static bool TrySignup(string? text, out string origin)
+    {
+        origin = "";
+        if (string.IsNullOrEmpty(text)) return false;
+        var m = SignupPattern().Match(text);
+        if (!m.Success) return false;
+        origin = m.Groups["origin"].Value;
+        return true;
+    }
+
     /// <summary>Every well-formed <c>{{vault:o/f}}</c> token in <paramref name="text"/> (the literal matched substrings),
     /// so callers can check a requested reference against the WHOLE tokens an approved action actually contained — not a
     /// loose substring.</summary>

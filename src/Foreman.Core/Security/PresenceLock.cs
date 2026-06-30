@@ -20,6 +20,7 @@ public enum WeakeningAction
     EnrollLocalAgentHost,   // authorize a local AI agent to drive desktop CU (spec INV-16)
     ApproveCuDesktopAction, // approve a HELD desktop CU action - a fresh tap, not just the operator token (INV-16)
     ResolveVaultCredential, // release a stored credential/2FA into agent-driven CU/BU - a fresh tap per resolution
+    SelfSignupVaultCredential, // agent self-signup: CREATE + store a NEW credential for the live origin (a vault WRITE)
     ExitForeman,
 }
 
@@ -84,6 +85,7 @@ public static class PresenceLockPolicy
         WeakeningAction.EnrollLocalAgentHost,
         WeakeningAction.ApproveCuDesktopAction,
         WeakeningAction.ResolveVaultCredential,
+        WeakeningAction.SelfSignupVaultCredential,
     ];
 
     public static bool RequiresPresence(WeakeningAction action, PresenceLockSettings settings)
@@ -93,9 +95,9 @@ public static class PresenceLockPolicy
         return StandardGated.Contains(action);
     }
 
-    // These actions grant durable desktop-input authority or override the operator's own panic STOP. They ALWAYS
-    // demand full user VERIFICATION (PIN/biometric) where the key supports it, even when the global default is
-    // touch-only — "a human deliberately stopped this; prove it's the SAME human re-enabling it." Hardcoded (not a
+    // These actions grant durable desktop-input authority, CREATE a durable credential, or override the operator's own
+    // panic STOP. They ALWAYS demand full user VERIFICATION (PIN/biometric) where the key supports it, even when the
+    // global default is touch-only — "a human deliberately did this; prove it's the SAME human." Hardcoded (not a
     // settings field) so a settings.json edit can't downgrade them. PREFERRED degrades to touch on a PIN-less key,
     // so this costs nothing there; it only adds the PIN prompt on exactly the highest-stakes actions.
     private static readonly HashSet<WeakeningAction> ForcedUserVerification =
@@ -104,6 +106,7 @@ public static class PresenceLockPolicy
         WeakeningAction.BindCuWindow,
         WeakeningAction.EnrollLocalAgentHost,
         WeakeningAction.ApproveCuDesktopAction,
+        WeakeningAction.SelfSignupVaultCredential, // a vault WRITE that mints a new credential - the highest-stakes vault op
     ];
 
     /// <summary>

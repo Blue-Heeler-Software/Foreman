@@ -37,6 +37,9 @@ public sealed class AuditPipeline : IAuditor
     {
         var fast = await _fastPath.JudgeAsync(action, context, ct).ConfigureAwait(false);
         if (fast.Decision == CuDecision.Block) return fast;   // obvious-bad: blocked offline, no deep judge
+        // A FINAL hold is a deterministic policy decision (e.g. an agent self-signup vault WRITE) the operator must
+        // approve in person — never escalate it to the advisory deep judge, which could otherwise auto-Allow it.
+        if (fast.Decision == CuDecision.Hold && fast.Final) return fast;
 
         var ambiguous = fast.Decision == CuDecision.Hold
             || (fast.Decision == CuDecision.Allow && fast.Confidence < _opts.AmbiguityThreshold);

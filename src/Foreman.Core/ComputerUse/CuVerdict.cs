@@ -16,13 +16,17 @@ public sealed record CuVerdict(
     string Reason,
     string Source,
     ForemanSeverity Severity,
-    double Confidence)
+    double Confidence,
+    // A FINAL hold is a deterministic POLICY decision (e.g. a vault WRITE that the operator must approve in person),
+    // not an ambiguity the pipeline may escalate. The pipeline never hands a final hold to the advisory deep judge, so
+    // a cloud model can never auto-clear it - "the cloud judge can never authorize beyond policy" (CU plan invariant).
+    bool Final = false)
 {
     public static CuVerdict Allow(string source, string reason = "no policy concern", double confidence = 1.0)
         => new(CuDecision.Allow, reason, source, ForemanSeverity.Info, confidence);
 
-    public static CuVerdict Hold(string source, string reason, ForemanSeverity severity = ForemanSeverity.High)
-        => new(CuDecision.Hold, reason, source, severity, 1.0);
+    public static CuVerdict Hold(string source, string reason, ForemanSeverity severity = ForemanSeverity.High, bool final = false)
+        => new(CuDecision.Hold, reason, source, severity, 1.0, final);
 
     public static CuVerdict Block(string source, string reason, ForemanSeverity severity = ForemanSeverity.Critical)
         => new(CuDecision.Block, reason, source, severity, 1.0);
