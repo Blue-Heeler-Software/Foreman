@@ -891,6 +891,18 @@ public partial class App : Application
             EventBus.Instance.Publish(new MonitoringNoticeEvent(
                 DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Settings", settingsFault));
 
+        // Launch-context canary: the OS resolves our data directory into a DIFFERENT real path — a sandbox or
+        // container overlay is virtualizing it (e.g. Foreman was relaunched from inside an AI-agent session whose
+        // harness sandboxes file I/O). Everything this instance reads/writes is then a private COPY of Foreman's
+        // state, divorced from the real install's — the split-brain that makes the rollback witness cry wolf on
+        // every flip between the two lineages and quietly forks the security posture (vault, settings, tokens).
+        var dataDir = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman");
+        if (DataDirRedirectionProbe.DetectRedirect(dataDir) is { } actualDataDir)
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.LaunchContext",
+                DataDirRedirection.BuildNotice(dataDir, actualDataDir)));
+
         // Tamper canary: settings.json was edited by something other than Foreman (the seal didn't match). A
         // same-user agent can't be PREVENTED from editing a file it owns, but this makes it LOUD — High so it
         // hits the tray and the OS event log (the durable external record), not a silent posture weakening.
