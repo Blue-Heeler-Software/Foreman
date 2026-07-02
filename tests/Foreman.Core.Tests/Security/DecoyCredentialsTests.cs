@@ -35,6 +35,27 @@ public sealed class DecoyCredentialsTests
     }
 
     [Fact]
+    public void Plant_AdoptsAnExistingForemanDecoy_AndRefreshesItsSentinel()
+    {
+        var fs = new FakeFs();
+        // Another lineage planted this decoy earlier (a prior install, or a sandbox-diverged instance): the
+        // static marker is present but the per-install sentinel belongs to the OTHER install.
+        var slot = Full("HOME", ".npmrc");
+        fs.Files[slot] = DecoyCredentialPolicy.GenerateContent(
+            DecoyKind.Npmrc, new DecoyCredentialSettings { InstanceSentinel = "OLDINSTANCE00000000000000000000" });
+
+        var settings = new DecoyCredentialSettings();
+        var result = new DecoyCredentialManager(fs).Plant(settings);
+
+        // Adopted = tracked (and thus read-audited), never silently skipped as "occupied".
+        Assert.Contains(slot, result.Planted);
+        Assert.DoesNotContain(slot, result.SkippedExisting);
+        // Content refreshed under THIS install's sentinel so cred-040 carries the right token.
+        Assert.Contains(settings.InstanceSentinel!, fs.Files[slot]);
+        Assert.DoesNotContain("OLDINSTANCE00000000000000000000", fs.Files[slot]);
+    }
+
+    [Fact]
     public void EveryPlantedDecoy_CarriesTheSentinel()
     {
         var fs = new FakeFs();

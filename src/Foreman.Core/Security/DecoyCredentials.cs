@@ -19,8 +19,10 @@ namespace Foreman.Core.Security;
 ///      beacons when the stolen key is USED against AWS.
 ///
 /// Placement is GAPS-ONLY: a decoy is written only where no real file exists, so a working ~/.aws/credentials
-/// or ~/.npmrc is never shadowed. Removal only deletes files that still carry the Foreman sentinel, so a real
-/// file the user later created in a decoy slot is never destroyed.
+/// or ~/.npmrc is never shadowed. A slot occupied by an EXISTING Foreman decoy (sentinel present — a prior
+/// install or a diverged settings lineage) is adopted and refreshed rather than skipped, so enabling decoys
+/// always ends with the on-disk decoys tracked. Removal only deletes files that still carry the Foreman
+/// sentinel, so a real file the user later created in a decoy slot is never destroyed.
 /// </summary>
 public sealed class DecoyCredentialSettings
 {
@@ -317,7 +319,17 @@ public sealed class DecoyCredentialManager(IDecoyFileSystem fs)
         foreach (var spec in DecoyCredentialPolicy.Candidates)
         {
             var full = DecoyCredentialPolicy.FullPath(fs.HomeDirectory, spec);
-            if (fs.Exists(full)) { skipped.Add(full); continue; }   // never shadow a real credential file
+            if (fs.Exists(full))
+            {
+                // A file already occupies the slot. If it is a FOREMAN decoy (carries the sentinel — planted by
+                // a previous install, or by another instance whose settings lineage diverged, e.g. a sandboxed
+                // launch), ADOPT it: refresh its content under THIS install's sentinel and track it. Otherwise
+                // "decoys enabled with decoy files already on disk" silently tracks — and audits — NOTHING.
+                // A real user file (no sentinel) stays untouchable: gaps-only stands.
+                string existing;
+                try { existing = fs.ReadAllText(full); } catch { skipped.Add(full); continue; }
+                if (!DecoyCredentialPolicy.IsDecoyContent(existing)) { skipped.Add(full); continue; }
+            }
             fs.WriteAllText(full, DecoyCredentialPolicy.GenerateContent(spec.Kind, settings));
             planted.Add(full);
         }
