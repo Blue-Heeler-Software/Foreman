@@ -245,6 +245,16 @@ public partial class App : Application
                     "Event log persistence failed; live monitoring continues, but disk evidence is stale. " +
                     $"Reason: {error}"));
             });
+            // A load-time trim (or the canonicalization migration) rewrites the chain under a new genesis, which
+            // erases every head the OS log ever witnessed. Publish a superseding witness IMMEDIATELY (the rotate
+            // path's pattern) so a kill before the next clean stop doesn't leave the stale anchor to false-alarm
+            // the next launch as a rollback.
+            eventLog.ChainRewritten += anchor =>
+            {
+                if (_osLogEnabled && anchor.Count > 0)
+                    _osLog.Write(OsEventIds.LogChainAnchor, OsEventCategory.Lifecycle, ForemanSeverity.Info,
+                        SealAnchor(anchor).Format());
+            };
             LogWindow.LoadPersisted = () => eventLog.Load();
             LogWindow.RotateAndReseal = () => RotateEventLogAsync(eventLog);
             if (!integrity.Ok)

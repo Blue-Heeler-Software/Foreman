@@ -59,6 +59,16 @@ public sealed class EventLogStore
 
     public Exception? LastAppendError { get; private set; }
 
+    /// <summary>
+    /// Raised after the on-disk chain was REWRITTEN under a new genesis (the load-time trim to the entry cap, or
+    /// the one-time canonicalization migration): every retained record's hash changed, so any external anchor
+    /// witnessed before the rewrite no longer exists in the file. The subscriber must publish a SUPERSEDING
+    /// external anchor (the same pattern as the rotate path) — otherwise the very next launch compares the stale
+    /// witness against the rewritten chain and falsely reports a rollback. Raised while the store lock is held;
+    /// subscribers must not call back into this store.
+    /// </summary>
+    public event Action<LogAnchor>? ChainRewritten;
+
     /// <summary>Appends one event. Best-effort: any IO/serialization failure is swallowed.</summary>
     public void Append(ForemanEvent evt) => TryAppend(evt, out _);
 
@@ -469,6 +479,10 @@ public sealed class EventLogStore
                 _lastTemporalSessionId = last?.TemporalSessionId;
                 _lastMonotonicFrequency = last?.MonotonicFrequency ?? 0;
                 WriteHeadSeal(_signer.SealHead(prev!, n));
+                // The rewrite invalidated every previously-witnessed head — let the host publish a superseding
+                // external anchor NOW, not at the next clean stop (a kill in between would leave the stale witness
+                // to false-alarm the next launch as a rollback).
+                if (n > 0) ChainRewritten?.Invoke(new LogAnchor(prev!, n));
             }
         }
         catch { /* best-effort */ }

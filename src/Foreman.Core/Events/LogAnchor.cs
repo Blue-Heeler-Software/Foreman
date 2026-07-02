@@ -86,15 +86,16 @@ public enum AnchorVerdict
 }
 
 /// <summary>
-/// Pure decision for the external-anchor check. Deliberately trim-tolerant: Foreman trims the on-disk log to a
-/// cap during a RUNNING session (which re-anchors the hash chain and changes every retained record's hash), but
-/// it never trims while DOWN. So the test isn't "does the head still equal the anchor" (a trim would change it) —
-/// it's "is the anchored head still PRESENT anywhere in the chain":
+/// Pure decision for the external-anchor check. The test isn't "does the head still equal the anchor" — it's
+/// "is the anchored head still PRESENT anywhere in the chain":
 ///  - present as the last record  -> clean stop->start cycle, nothing touched while down;
 ///  - present as an interior record -> this session appended past the anchor then was killed (honest forward progress);
 ///  - ABSENT                       -> the on-disk log no longer contains the state we externally committed to = rollback.
-/// The residual false-positive (a single session appends more than the on-disk cap AND a trim evicts the anchored
-/// head from the front before a kill) is rare and surfaces as a recheck-worthy notice, never silent.
+/// NOTE on trims: the load-time trim to the entry cap REWRITES the chain under a new genesis — every retained
+/// record's hash changes, so a trim erases ALL previously-witnessed heads, not just the evicted front. That is
+/// why <see cref="EventLogStore.ChainRewritten"/> exists: the host publishes a superseding anchor at rewrite
+/// time (as the rotate path does), keeping the newest witness in step with the rewritten chain. Without it,
+/// every session that trims and is then killed would read here as a rollback.
 /// </summary>
 public static class AnchorPolicy
 {

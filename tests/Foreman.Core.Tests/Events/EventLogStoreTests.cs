@@ -99,6 +99,44 @@ public sealed class EventLogStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_TrimRewrite_RaisesChainRewritten_SoASupersedingAnchorCanBePublished()
+    {
+        var store = new EventLogStore(_dir, maxEntries: 5);
+        for (var i = 0; i < 12; i++)
+            store.Append(new InfoEvent(T, "src", $"e{i}"));
+        // What a prior launch (or clean stop) would have witnessed externally, BEFORE the trim.
+        var preTrimWitness = LogHeadReader.CurrentAnchor(store.FilePath);
+
+        LogAnchor? raised = null;
+        store.ChainRewritten += a => raised = a;
+        store.Load();
+
+        // The rewrite re-anchored the chain: the old witness is gone from the file (this is exactly the false
+        // rollback the event exists to prevent)...
+        var onDisk = LogHeadReader.ReadChainedHashes(store.FilePath);
+        Assert.Equal(AnchorVerdict.Rolledback, AnchorPolicy.Check(onDisk, preTrimWitness));
+        // ...and the raised anchor is the REWRITTEN head, which reads clean as the superseding witness.
+        Assert.NotNull(raised);
+        Assert.Equal(5, raised!.Count);
+        Assert.Equal(LogHeadReader.CurrentAnchor(store.FilePath).HeadHash, raised.HeadHash);
+        Assert.Equal(AnchorVerdict.Match, AnchorPolicy.Check(onDisk, raised));
+    }
+
+    [Fact]
+    public void Load_UnderTheCap_DoesNotRaiseChainRewritten()
+    {
+        var store = new EventLogStore(_dir, maxEntries: 10);
+        for (var i = 0; i < 3; i++)
+            store.Append(new InfoEvent(T, "src", $"e{i}"));
+
+        var raised = false;
+        store.ChainRewritten += _ => raised = true;
+        store.Load();
+
+        Assert.False(raised);
+    }
+
+    [Fact]
     public void Load_SkipsCorruptLines_DoesNotThrow()
     {
         var store = new EventLogStore(_dir);
