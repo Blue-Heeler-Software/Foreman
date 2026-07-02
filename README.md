@@ -278,6 +278,9 @@ The installer is per-user and requires no admin prompt. Both `Foreman.exe` (and 
 - Move from .NET 10 preview to a stable SDK when practical.
 - Add a full settings UI for LLM triage preferences.
 - Add first-class OpenCode/T3 MCP config adapters after more field testing.
+- Explore an Android/ADB computer-use bridge as a mediated CU modality: start with observe-only device inventory,
+  screenshot, UI dump, and logcat capture; only add approved tap/type/swipe after explicit device enrollment, audit,
+  and panic wiring. Do not expose raw `adb shell` as an MCP convenience bridge.
 - Add native Windows toast notifications in place of tray balloons.
 - Continue tuning false positives from real agent workflows.
 - Browser extension (alpha): pairs to this machine over loopback for at-a-glance Foreman Agent Safety status — connect via **Connect Agent → Pair browser extension**. See [extension/README.md](extension/README.md) and [docs/closed-loop-spec.md](docs/closed-loop-spec.md).

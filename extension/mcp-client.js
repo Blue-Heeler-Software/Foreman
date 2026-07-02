@@ -5,6 +5,17 @@
 
 const PROTOCOL = '2024-11-05';
 
+export class McpHttpError extends Error {
+    constructor(phase, status, body) {
+        const detail = String(body || '').slice(0, 160);
+        super(`${phase} failed (${status})${detail ? `: ${detail}` : ''}`);
+        this.name = 'McpHttpError';
+        this.phase = phase;
+        this.status = status;
+        this.body = body || '';
+    }
+}
+
 export async function openMcpSession(baseUrl, token, clientInfo = { name: 'foreman-extension', version: '0.1.0' }) {
     const headers = {
         'Content-Type': 'application/json',
@@ -28,7 +39,7 @@ export async function openMcpSession(baseUrl, token, clientInfo = { name: 'forem
     });
     if (!initRes.ok) {
         const err = await initRes.text().catch(() => '');
-        throw new Error(`initialize failed (${initRes.status}): ${err.slice(0, 160)}`);
+        throw new McpHttpError('initialize', initRes.status, err);
     }
 
     const initMsg = await readJsonRpc(initRes);
@@ -46,7 +57,7 @@ export async function openMcpSession(baseUrl, token, clientInfo = { name: 'forem
     });
     if (!initializedRes.ok && initializedRes.status !== 202) {
         const err = await initializedRes.text().catch(() => '');
-        throw new Error(`notifications/initialized failed (${initializedRes.status}): ${err.slice(0, 160)}`);
+        throw new McpHttpError('notifications/initialized', initializedRes.status, err);
     }
 
     return { baseUrl, headers: sessionHeaders, sessionId, serverInfo: initMsg?.result?.serverInfo };
@@ -65,7 +76,7 @@ export async function callMcpTool(session, name, args = {}) {
     });
     if (!res.ok) {
         const err = await res.text().catch(() => '');
-        throw new Error(`tools/call ${name} failed (${res.status}): ${err.slice(0, 160)}`);
+        throw new McpHttpError(`tools/call ${name}`, res.status, err);
     }
     const msg = await readJsonRpc(res);
     if (msg?.error) throw new Error(msg.error.message || 'tools/call error');

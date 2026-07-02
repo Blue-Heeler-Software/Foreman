@@ -183,6 +183,19 @@ public sealed class CuBrokerTests
         Assert.Equal("claude-code,codex", seen);
     }
 
+    [Fact]
+    public void SetDrivers_PreservesPinnedAttentionTab()
+    {
+        var b = new CuBroker(new FixedAuditor(CuVerdict.Allow("t")));
+        b.SetDriver("claude-code");
+        b.SetAttention("572647869");
+
+        b.SetDrivers(["claude-code", "codex"]);
+
+        Assert.Equal("572647869", b.AttentionTab);
+        Assert.True(b.CanDrive("codex", false));
+    }
+
     // ── Pinned shared-attention excursion gate ───────────────────────────────────
 
     [Fact]

@@ -1,11 +1,11 @@
 <Window x:Class="Foreman.App.Windows.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Foreman Agent Safety — Settings"
+        Title="Foreman Agent Safety - Settings"
         Icon="/Resources/foreman.ico"
-        Width="500" Height="820"
-        MinHeight="680"
-        ResizeMode="NoResize"
+        Width="820" Height="760"
+        MinWidth="720" MinHeight="620"
+        ResizeMode="CanResizeWithGrip"
         Background="{StaticResource BackgroundBrush}"
         Foreground="{StaticResource TextPrimaryBrush}"
         FontFamily="Segoe UI, Arial">
@@ -13,309 +13,379 @@
     <Window.Resources>
         <Style TargetType="Label">
             <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Padding" Value="0" />
         </Style>
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-            <Setter Property="BorderBrush" Value="#FF303540" />
-            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Padding" Value="7,5" />
             <Setter Property="HorizontalAlignment" Value="Left" />
         </Style>
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-            <Setter Property="Margin" Value="0,4,0,4" />
+            <Setter Property="Margin" Value="0,5,0,5" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
         <Style TargetType="Button">
-            <Setter Property="Background" Value="#FF1E2028" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-            <Setter Property="BorderBrush" Value="#FF303540" />
-            <Setter Property="Padding" Value="18,6" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Padding" Value="16,7" />
             <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="{StaticResource BackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+
+        <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style x:Key="BodyTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="HelpTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+            <Setter Property="Margin" Value="24,0,0,10" />
+        </Style>
+        <Style x:Key="FieldRowStyle" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style x:Key="SectionGapStyle" TargetType="Separator">
+            <Setter Property="Margin" Value="0,18,0,14" />
+            <Setter Property="Background" Value="{StaticResource BorderBrush}" />
         </Style>
     </Window.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <Grid Margin="24">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />   <!-- 0: header -->
-                <RowDefinition Height="16"   />
-                <RowDefinition Height="Auto" />   <!-- 2: general -->
-                <RowDefinition Height="16"   />
-                <RowDefinition Height="Auto" />   <!-- 4: MCP -->
-                <RowDefinition Height="16"   />
-                <RowDefinition Height="Auto" />   <!-- 6: process thresholds -->
-                <RowDefinition Height="16"   />
-                <RowDefinition Height="Auto" />   <!-- 8: notifications -->
-                <RowDefinition Height="16"   />
-                <RowDefinition Height="Auto" />   <!-- 10: escalation thresholds -->
-                <RowDefinition Height="*"    />
-                <RowDefinition Height="Auto" />   <!-- 12: buttons -->
-            </Grid.RowDefinitions>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <!-- ── Header ───────────────────────────────────────────────────── -->
-            <TextBlock Grid.Row="0" Text="SETTINGS" FontSize="12" FontWeight="Bold"
-                       Foreground="{StaticResource AccentBrush}" />
-
-            <!-- ── General ───────────────────────────────────────────────────── -->
-            <StackPanel Grid.Row="2">
-                <TextBlock Text="GENERAL" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8" />
-                <CheckBox x:Name="StartWithWindowsCheck"
-                          Content="Start Foreman Agent Safety when you sign in to Windows" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Adds a per-user startup entry (HKCU Run — no admin rights). Foreman Agent Safety starts quietly in the system tray, so monitoring and the MCP server are up before your first agent session." />
-
-                <CheckBox x:Name="GameModeCheck" Content="Game mode — pause popups while a fullscreen game/app is running"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Auto-detects fullscreen games, apps, and presentation mode (via the same Windows signal that mutes toast notifications) and holds Foreman Agent Safety's on-screen popups and alarm windows so they don't barge in. It keeps detecting, logging, and escalating silently, and shows a digest of what it held when you exit the game." />
-                <CheckBox x:Name="GameModeBreakThroughCheck" Content="…but still let Critical alerts interrupt"
-                          Margin="40,4,0,0" IsEnabled="{Binding IsChecked, ElementName=GameModeCheck}" />
+        <Border Grid.Row="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="24,18,24,14">
+            <StackPanel>
+                <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,4,0,0"
+                           Text="Tune monitoring, notifications, and safety controls. Presence lock and guardian actions apply immediately; other changes apply when you save." />
             </StackPanel>
+        </Border>
 
-            <!-- ── MCP Server ────────────────────────────────────────────────── -->
-            <StackPanel Grid.Row="4">
-                <TextBlock Text="MCP SERVER" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8" />
-                <StackPanel Orientation="Horizontal">
-                    <Label Content="Port:" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="McpPortBox" Width="80" />
-                </StackPanel>
-            </StackPanel>
+        <TabControl Grid.Row="1" Margin="20,16,20,12">
+            <TabItem Header="General">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="4,16,24,24" MaxWidth="680">
+                        <TextBlock Text="STARTUP" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="StartWithWindowsCheck"
+                                  Content="Start Foreman when Windows signs in" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Creates a per-user HKCU Run entry. No admin rights; Foreman starts in the tray before your first agent session." />
 
-            <!-- ── Process Thresholds ────────────────────────────────────────── -->
-            <StackPanel Grid.Row="6">
-                <TextBlock Text="PROCESS THRESHOLDS" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Hang threshold (min):" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="HangBox" Width="80" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Hook jam threshold (min):" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="HookBox" Width="80" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Coalesce repeat popups within (min):" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="SuppressBox" Width="80"
-                             ToolTip="After a hang/orphan popup for a harness, fold further popups of the same kind within this window into one rollup with a count (e.g. 'Codex process hang ×4'), instead of separate toasts. Every event still appears in the Event Log. 0 = off." />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <Label Content="Hang re-alert cooldown (min):" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="HangRealertBox" Width="80"
-                             ToolTip="After a hang alert for a process, wait this long before alerting on it again (stops bursty children re-firing). 0 = re-alert each idle stretch." />
-                </StackPanel>
-                <CheckBox x:Name="ScaleIdleCheck" Content="Scale the hang threshold by activity (operator presence + harness task)"
-                          Margin="0,10,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="A process quiet for the threshold means little if nobody's at the keyboard and the harness has no task running. When on, the hang timeout lengthens (up to a capped ceiling) while you're away and/or the harness is parked — it only ever waits LONGER, never shorter, so it can't add alerts or hide anything. Reads only idle duration (no keylogging). A genuine stall always alerts eventually." />
-            </StackPanel>
+                        <Separator Style="{StaticResource SectionGapStyle}" />
 
-            <!-- ── Notifications ─────────────────────────────────────────────── -->
-            <StackPanel Grid.Row="8">
-                <TextBlock Text="NOTIFICATIONS" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8" />
-                <CheckBox x:Name="NotifyHangCheck" Content="Notify on hang detected" />
-                <CheckBox x:Name="NotifyOrphanCheck" Content="Notify on orphaned process" />
-                <CheckBox x:Name="NotifyCriticalCheck" Content="Notify on critical command" />
-                <CheckBox x:Name="CoalesceNotifyCheck"
-                          Content="Coalesce repetitive hang/orphan popups (rollup)"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="When a harness floods you with hang/orphan notices, show only the first few per harness then fold the rest into one rollup notice per window. Security and critical alerts are never coalesced, and every event still appears in the log." />
-                <CheckBox x:Name="OsEventLogCheck"
-                          Content="Mirror lifecycle + significant events to the Windows Event Log"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Blackbox handoff (Defender-style): writes start/stop/crash and security-significant events to Event Viewer (Windows Logs → Application, source 'Foreman Agent Safety') so the record survives Foreman being killed. Needs Run Elevated once to register the source; until then it degrades to the on-disk log. Secrets are redacted." />
-                <CheckBox x:Name="PersistLogCheck" Content="Keep the event log across restarts" />
-                <CheckBox x:Name="MonitorAllCheck" Content="Monitor all processes (not just harness children)"
-                          Margin="0,12,0,4" />
-                <CheckBox x:Name="RunElevatedCheck"
-                          Content="Run elevated for per-process Network (opt-in)"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Launches a small, elevated ETW helper (one UAC prompt) that meters per-process network throughput — byte counts per process only, NOT packet contents or destinations (no deep packet inspection). Only the helper runs elevated; Foreman Agent Safety's UI, MCP server, and kill action stay unprivileged. Leave off if you don't need the Net column." />
-                <CheckBox x:Name="ScanMcpToolsCheck"
-                          Content="Scan MCP tool descriptions for injection (opt-in)"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Periodically connects to the HTTP/SSE MCP servers your harnesses use, lists their tools, and flags tool names or descriptions that read like prompt injection or data exfil (e.g. 'ignore previous instructions', 'email the .env'). This is the only feature that makes outbound connections to third-party servers; stdio servers are never launched. Leave off unless you want this network probe." />
-                <CheckBox x:Name="IdleCleanupCheck"
-                          Content="Ask idle harnesses to clean up after themselves (opt-in)"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="When an agent's whole process tree has been I/O-silent past the threshold, Foreman Agent Safety asks it over MCP to pack up cleanly: checkpoint work, stop leftover child processes, and reply or exit. A polite request only — nothing is killed, and an unanswered request just raises a notice. The manual trigger (Process Monitor → right-click → Request self-cleanup) always works." />
-                <StackPanel Orientation="Horizontal" Margin="22,6,0,0">
-                    <Label Content="Consider idle after (min):" VerticalAlignment="Center" Width="188" />
-                    <TextBox x:Name="IdleCleanupAfterBox" Width="60" />
+                        <TextBlock Text="MCP SERVER" Style="{StaticResource SectionHeaderStyle}" />
+                        <StackPanel Style="{StaticResource FieldRowStyle}">
+                            <Label Content="Local MCP port:" Width="180" VerticalAlignment="Center" />
+                            <TextBox x:Name="McpPortBox" Width="90" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,0,0,0"
+                                   Text="The local MCP endpoint listens on localhost only. Port changes take effect after a Foreman restart." />
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="GAME MODE" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="GameModeCheck"
+                                  Content="Pause popups while a fullscreen game or presentation is active" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Detection, logging, and escalation continue silently. Foreman shows a digest of held notifications after the fullscreen app exits." />
+                        <CheckBox x:Name="GameModeBreakThroughCheck"
+                                  Content="Let Critical alerts break through game mode"
+                                  Margin="24,0,0,0"
+                                  IsEnabled="{Binding IsChecked, ElementName=GameModeCheck}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Monitoring">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="4,16,24,24" MaxWidth="700">
+                        <TextBlock Text="PROCESS COVERAGE" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="MonitorAllCheck"
+                                  Content="Monitor every process, not just agent child processes" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Useful for broad investigations, but noisier. The default watches known harnesses and their descendants." />
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="HANG DETECTION" Style="{StaticResource SectionHeaderStyle}" />
+                        <StackPanel Style="{StaticResource FieldRowStyle}">
+                            <Label Content="No-I/O hang threshold (min):" Width="220" VerticalAlignment="Center" />
+                            <TextBox x:Name="HangBox" Width="80" />
+                        </StackPanel>
+                        <StackPanel Style="{StaticResource FieldRowStyle}">
+                            <Label Content="Re-alert same hung process after (min):" Width="220" VerticalAlignment="Center" />
+                            <TextBox x:Name="HangRealertBox" Width="80"
+                                     ToolTip="After a hang alert for a process, wait this long before alerting on that same PID again. 0 = re-alert each idle stretch." />
+                        </StackPanel>
+                        <CheckBox x:Name="ScaleIdleCheck"
+                                  Content="Lengthen hang timeout when the operator and harness are both idle" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Only makes the timeout longer, never shorter. It reduces false hangs while you are away or the harness has no active task; a genuine stall still alerts eventually." />
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="IDLE SELF-CLEANUP" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="IdleCleanupCheck"
+                                  Content="Ask idle harnesses to clean up after themselves" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Foreman sends a polite MCP request to checkpoint, stop leftover child processes, and reply or exit. It never kills anything automatically." />
+                        <StackPanel Style="{StaticResource FieldRowStyle}" Margin="24,0,0,8">
+                            <Label Content="Consider idle after (min):" Width="196" VerticalAlignment="Center" />
+                            <TextBox x:Name="IdleCleanupAfterBox" Width="70" />
+                        </StackPanel>
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="ADVANCED PROBES" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="RunElevatedCheck"
+                                  Content="Enable elevated helper for per-process network throughput" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="One UAC prompt. The helper records byte counts per process only - not packet contents, destinations, or deep-packet inspection. The main UI and MCP server stay unprivileged." />
+                        <CheckBox x:Name="ScanMcpToolsCheck"
+                                  Content="Scan HTTP/SSE MCP tool descriptions for injection wording" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Opt-in network probe. Foreman periodically lists tools from configured HTTP/SSE MCP servers and flags descriptions that look like prompt injection or data exfiltration. Stdio servers are never launched." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Notifications">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="4,16,24,24" MaxWidth="700">
+                        <TextBlock Text="POPUPS" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="NotifyHangCheck" Content="Notify when a process appears hung" />
+                        <CheckBox x:Name="NotifyOrphanCheck" Content="Notify on orphaned agent child processes" />
+                        <CheckBox x:Name="NotifyCriticalCheck" Content="Notify on critical command alerts" />
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="REPEAT NOISE" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="CoalesceNotifyCheck"
+                                  Content="Group repeat popups for the same incident" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Shows the first few notices, then keeps logging repeats without spamming the tray. Critical alerts and escalation transitions still surface individually." />
+                        <StackPanel Style="{StaticResource FieldRowStyle}" Margin="24,0,0,8">
+                            <Label Content="Repeat grouping window (min):" Width="196" VerticalAlignment="Center" />
+                            <TextBox x:Name="SuppressBox" Width="70"
+                                     ToolTip="Within this window, repeat popups for the same incident class are coalesced. Every event still appears in the Event Log. 0 = off." />
+                        </StackPanel>
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="EVENT RECORDS" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="OsEventLogCheck"
+                                  Content="Mirror lifecycle and security-significant events to Windows Event Log" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Writes start, stop, crash, and security-significant records to Windows Logs > Application under source 'Foreman Agent Safety'. Secrets are redacted." />
+                        <CheckBox x:Name="PersistLogCheck"
+                                  Content="Keep Foreman's local event log across restarts" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Security">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="4,16,24,24" MaxWidth="720">
+                        <TextBlock Text="PRESENCE LOCK" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,0,0,8"
+                                   Text="Require a Windows Hello or security-key tap before Foreman allows weakening actions: lowering trust, disabling read-auditing, disabling persistent logs, muting protected alerts, or disabling a harness." />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button x:Name="PresenceLockButton" Content="Enable presence lock..." Click="PresenceLockClick" Padding="12,6" />
+                            <TextBlock x:Name="PresenceLockStatus" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="{StaticResource TextMutedBrush}" />
+                        </StackPanel>
+                        <CheckBox x:Name="PinEveryTapCheck" Click="PinEveryTapClick"
+                                  Content="Require PIN or biometric verification on every security-key tap" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Off: a roaming security key needs physical touch only. On: also require the key's FIDO2 PIN or biometric. Windows Hello always verifies fully." />
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="HARDENED GUARDIAN" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,0,0,8"
+                                   Text="Optional LocalSystem service that holds Foreman's tamper-seal key outside your user session. This makes audit-log seal forgery much harder for same-user agents. One UAC prompt; restart Foreman to activate." />
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="GuardianButton" Content="Enable hardened guardian..." Click="HardenedGuardianClick" Padding="12,6" />
+                            <TextBlock x:Name="GuardianStatus" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="{StaticResource TextMutedBrush}" />
+                        </StackPanel>
+
+                        <Separator Style="{StaticResource SectionGapStyle}" />
+
+                        <TextBlock Text="DECOY CREDENTIALS" Style="{StaticResource SectionHeaderStyle}" />
+                        <CheckBox x:Name="DecoyCredsCheck"
+                                  Content="Plant decoy credential honeytokens" />
+                        <TextBlock Style="{StaticResource HelpTextStyle}"
+                                   Text="Creates believable fake credential files only at paths you do not already use. A real credential file is never shadowed or deleted." />
+                        <CheckBox x:Name="DecoyReadAuditCheck"
+                                  Content="Audit reads of decoys with the elevated helper"
+                                  Margin="24,2,0,2"
+                                  IsEnabled="{Binding IsChecked, ElementName=DecoyCredsCheck}" />
+                        <TextBlock Style="{StaticResource BodyTextStyle}" Margin="48,0,0,10"
+                                   Text="Catches direct file reads that do not invoke a shell command. Audit rules are reverted when disabled." />
+                        <CheckBox x:Name="DecoyAwsCanaryCheck"
+                                  Content="Embed an AWS canarytoken in the decoy set"
+                                  Margin="24,2,0,2"
+                                  IsEnabled="{Binding IsChecked, ElementName=DecoyCredsCheck}" />
+                        <Grid Margin="48,4,0,0" IsEnabled="{Binding IsChecked, ElementName=DecoyAwsCanaryCheck}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="canarytokens.org AWS access key id:" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4" />
+                            <TextBox Grid.Row="1" x:Name="DecoyAwsKeyIdBox" Width="420" />
+                            <TextBlock Grid.Row="2" Text="canarytokens.org AWS secret:" Style="{StaticResource BodyTextStyle}" Margin="0,10,0,4" />
+                            <TextBox Grid.Row="3" x:Name="DecoyAwsSecretBox" Width="420" />
+                        </Grid>
+                        <TextBlock x:Name="DecoyStatusText" Style="{StaticResource BodyTextStyle}" Margin="24,10,0,0" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Escalation">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Grid Margin="4,16,24,24" MaxWidth="760">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="28" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="THRESHOLDS" Style="{StaticResource SectionHeaderStyle}" />
+                            <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,0,0,12"
+                                       Text="These thresholds promote a harness from Watch to Alert, Alarm, then Emergency." />
+
+                            <TextBlock Text="ALERT" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,8" />
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Medium alerts:" Width="170" VerticalAlignment="Center" />
+                                <TextBox x:Name="AlertMediumBox" Width="70" />
+                            </StackPanel>
+
+                            <TextBlock Text="ALARM (any one trigger)" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,12,0,8" />
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="High alerts:" Width="170" VerticalAlignment="Center" />
+                                <TextBox x:Name="AlarmHighBox" Width="70" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Unique rules:" Width="170" VerticalAlignment="Center" />
+                                <TextBox x:Name="AlarmRulesBox" Width="70" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Threat categories:" Width="170" VerticalAlignment="Center" />
+                                <TextBox x:Name="AlarmCatsBox" Width="70" />
+                            </StackPanel>
+
+                            <TextBlock Text="EMERGENCY (any one trigger)" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource SeverityCritical}" Margin="0,12,0,8" />
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Total alerts:" Width="170" VerticalAlignment="Center" />
+                                <TextBox x:Name="EmergencyTotalBox" Width="70" />
+                            </StackPanel>
+                            <TextBlock Text="Emergency rule IDs:" Style="{StaticResource BodyTextStyle}" Margin="0,4,0,4" />
+                            <TextBox x:Name="EmergencyRulesBox"
+                                     MinWidth="300" Width="330"
+                                     TextWrapping="Wrap" AcceptsReturn="False"
+                                     Padding="7,7" />
+                            <TextBlock Text="Example: cred-004, cred-005, win-009"
+                                       FontSize="10" Foreground="{StaticResource TextMutedBrush}"
+                                       Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="AUTOMATIC RESPONSES" Style="{StaticResource SectionHeaderStyle}" />
+                            <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,0,0,12"
+                                       Text="Foreman can take these non-destructive actions when a harness reaches a tier. Auto-kill and auto-mute stay manual." />
+
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="90" />
+                                    <ColumnDefinition Width="82" />
+                                    <ColumnDefinition Width="86" />
+                                    <ColumnDefinition Width="92" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="1" Text="Ask" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="Audit" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
+                                <TextBlock Grid.Row="0" Grid.Column="3" Text="Cleanup" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Alert" VerticalAlignment="Center" FontSize="12" />
+                                <CheckBox Grid.Row="1" Grid.Column="1" x:Name="AlertAskCheck" />
+                                <CheckBox Grid.Row="1" Grid.Column="2" x:Name="AlertAuditCheck" IsEnabled="False"
+                                          ToolTip="Adversarial audit only fires at Alarm and above." />
+                                <CheckBox Grid.Row="1" Grid.Column="3" x:Name="AlertCleanupCheck" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Alarm" VerticalAlignment="Center" FontSize="12" />
+                                <CheckBox Grid.Row="2" Grid.Column="1" x:Name="AlarmAskCheck" />
+                                <CheckBox Grid.Row="2" Grid.Column="2" x:Name="AlarmAuditCheck" />
+                                <CheckBox Grid.Row="2" Grid.Column="3" x:Name="AlarmCleanupCheck" />
+
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Emergency" VerticalAlignment="Center" FontSize="12" />
+                                <CheckBox Grid.Row="3" Grid.Column="1" x:Name="EmergencyAskCheck" />
+                                <CheckBox Grid.Row="3" Grid.Column="2" x:Name="EmergencyAuditCheck" />
+                                <CheckBox Grid.Row="3" Grid.Column="3" x:Name="EmergencyCleanupCheck" />
+                            </Grid>
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Re-fire cooldown (min):" Width="170" VerticalAlignment="Center" />
+                                <TextBox x:Name="AutoResponseCooldownBox" Width="70"
+                                         ToolTip="Per harness and action, do not repeat the same automatic response within this window." />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="20,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Style="{StaticResource BodyTextStyle}" VerticalAlignment="Center"
+                           Margin="0,0,16,0"
+                           Text="Some changes, such as port and guardian activation, require a Foreman restart." />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" Click="CancelClick" Margin="0,0,8,0" MinWidth="92" />
+                    <Button Content="Save" Click="SaveClick" MinWidth="92"
+                            Background="{StaticResource AccentBrush}"
+                            Foreground="#FF0D0F12" FontWeight="Bold" />
                 </StackPanel>
-
-                <CheckBox x:Name="DecoyCredsCheck"
-                          Content="Plant decoy credential honeytokens (opt-in)"
-                          Margin="0,12,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Plants believable FAKE credential files only at paths you don't already use (~/.aws/credentials, ~/.npmrc, ~/.ssh/id_rsa, .git-credentials, …) so a Miasma-style harvester's own enumeration trips a near-zero-false-positive alert. A working credential file is never shadowed, and removing a decoy never deletes a real file. If you later need one of those paths for real credentials, just write them there — Foreman detects the decoy is gone and retires that slot automatically, never touching your real file. (Turning this off removes Foreman's decoys.)" />
-                <CheckBox x:Name="DecoyReadAuditCheck"
-                          Content="…and audit READS of decoys (elevated — catches the silent fopen)"
-                          Margin="40,6,0,0" />
-                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="62,2,0,0"
-                           Text="Runs the elevated sidecar (one UAC prompt) to place a Windows audit rule on each decoy and tail the Security log, so even a direct file read (no shell command) by a harvester fires a Critical alert. The audit rule + policy change are reverted when you turn this off. Applies on next launch / when toggled." />
-                <CheckBox x:Name="DecoyAwsCanaryCheck"
-                          Content="Embed an AWS canarytoken (beacons when a stolen decoy key is used)"
-                          Margin="40,6,0,0" />
-                <StackPanel Orientation="Vertical" Margin="40,4,0,0">
-                    <Label Content="canarytokens.org AWS access key id:" />
-                    <TextBox x:Name="DecoyAwsKeyIdBox" Width="320" />
-                    <Label Content="canarytokens.org AWS secret:" Margin="0,4,0,0" />
-                    <TextBox x:Name="DecoyAwsSecretBox" Width="320" />
-                </StackPanel>
-                <TextBlock x:Name="DecoyStatusText" TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="22,6,0,0" />
-
-                <Separator Margin="0,16,0,8" />
-                <TextBlock Text="PRESENCE LOCK" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6" />
-                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6"
-                           Text="Require a Windows Hello or security-key (YubiKey/FIDO2) tap to WEAKEN Foreman — lower a harness's Trust, disable read-auditing, disable the persistent log, mute a protected alert, or disable a harness. The tap is the one thing a rogue agent running as you can't satisfy. Disabling the lock needs a tap too." />
-                <StackPanel Orientation="Horizontal">
-                    <Button x:Name="PresenceLockButton" Content="Enable presence lock…" Click="PresenceLockClick" Padding="12,5" />
-                    <TextBlock x:Name="PresenceLockStatus" VerticalAlignment="Center" Margin="12,0,0,0"
-                               Foreground="{StaticResource TextMutedBrush}" />
-                </StackPanel>
-                <CheckBox x:Name="PinEveryTapCheck" Margin="0,10,0,0" Click="PinEveryTapClick"
-                          Content="Require PIN / biometric on every tap (security keys)" />
-                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="22,2,0,0"
-                           Text="Off (default): a roaming security key (YubiKey) needs just a single touch — no PIN every time. On: also require the key's FIDO2 PIN or a biometric (stronger, but prompts every tap). A physical touch is always required either way; Windows Hello always verifies fully regardless of this setting." />
-
-                <Separator Margin="0,16,0,8" />
-                <TextBlock Text="HARDENED GUARDIAN (ADVANCED)" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6" />
-                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,6"
-                           Text="Installs a small LocalSystem service that holds Foreman's tamper-seal key behind the SYSTEM boundary, so a monitored agent running as you can no longer forge the audit log's seal — moving that protection from tamper-EVIDENT to tamper-PROOF. One UAC prompt to install; restart Foreman to activate. The default per-user app is otherwise unchanged. Off by default — most users don't need it." />
-                <StackPanel Orientation="Horizontal">
-                    <Button x:Name="GuardianButton" Content="Enable hardened guardian…" Click="HardenedGuardianClick" Padding="12,5" />
-                    <TextBlock x:Name="GuardianStatus" VerticalAlignment="Center" Margin="12,0,0,0"
-                               Foreground="{StaticResource TextMutedBrush}" />
-                </StackPanel>
-            </StackPanel>
-
-            <!-- ── Escalation Thresholds ─────────────────────────────────────── -->
-            <StackPanel Grid.Row="10">
-                <TextBlock Text="ESCALATION THRESHOLDS" FontSize="10" FontWeight="Bold"
-                           Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,4" />
-                <TextBlock TextWrapping="Wrap" FontSize="10"
-                           Foreground="{StaticResource TextMutedBrush}"
-                           Margin="0,0,0,10">
-                    These thresholds control when Foreman Agent Safety promotes a harness from Watch → Alert → Alarm → Emergency.
-                </TextBlock>
-
-                <!-- Alert thresholds -->
-                <TextBlock Text="→ ALERT level" FontSize="10" FontWeight="SemiBold"
-                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,6" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Medium-severity alerts ≥:" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="AlertMediumBox" Width="60" />
-                </StackPanel>
-
-                <!-- Alarm thresholds -->
-                <TextBlock Text="→ ALARM level  (any one trigger)" FontSize="10" FontWeight="SemiBold"
-                           Foreground="{StaticResource AccentBrush}" Margin="0,6,0,6" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="High-severity alerts ≥:" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="AlarmHighBox" Width="60" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Unique rules fired ≥:" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="AlarmRulesBox" Width="60" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Distinct threat categories ≥:" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="AlarmCatsBox" Width="60" />
-                </StackPanel>
-
-                <!-- Emergency thresholds -->
-                <TextBlock Text="→ EMERGENCY level  (any one trigger)" FontSize="10" FontWeight="SemiBold"
-                           Foreground="#FFFF6666" Margin="0,6,0,6" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <Label Content="Total alerts ≥:" VerticalAlignment="Center" Width="210" />
-                    <TextBox x:Name="EmergencyTotalBox" Width="60" />
-                </StackPanel>
-                <StackPanel Orientation="Vertical" Margin="0,0,0,0">
-                    <Label Content="Emergency rule IDs (comma-separated):" />
-                    <TextBox x:Name="EmergencyRulesBox"
-                             Width="420" HorizontalAlignment="Left"
-                             TextWrapping="Wrap" AcceptsReturn="False"
-                             Padding="6,6" />
-                    <TextBlock Text="e.g. cred-004, cred-005, win-009, cred-018, cred-019"
-                               FontSize="9" Foreground="{StaticResource TextMutedBrush}"
-                               Margin="0,3,0,0" />
-                </StackPanel>
-
-                <!-- Automatic responses per tier -->
-                <TextBlock Text="→ AUTOMATIC RESPONSES" FontSize="10" FontWeight="SemiBold"
-                           Foreground="{StaticResource AccentBrush}" Margin="0,14,0,4" />
-                <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,8"
-                           Text="When a harness reaches a tier, Foreman Agent Safety can automatically take these non-destructive actions. There is deliberately no auto-kill or auto-mute here — destructive/silencing actions stay manual and confirmed. Adversarial audit only fires for security-relevant escalations (Alarm and above)." />
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Ask Harness" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
-                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Adv. Audit"  FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
-                    <TextBlock Grid.Row="0" Grid.Column="3" Text="Self-cleanup" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}" />
-
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Alert"     VerticalAlignment="Center" FontSize="11" />
-                    <CheckBox  Grid.Row="1" Grid.Column="1" x:Name="AlertAskCheck" />
-                    <CheckBox  Grid.Row="1" Grid.Column="2" x:Name="AlertAuditCheck" IsEnabled="False"
-                               ToolTip="Adversarial audit only fires at Alarm and above (Alert isn't audit-worthy on its own)." />
-                    <CheckBox  Grid.Row="1" Grid.Column="3" x:Name="AlertCleanupCheck" />
-
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Alarm"     VerticalAlignment="Center" FontSize="11" />
-                    <CheckBox  Grid.Row="2" Grid.Column="1" x:Name="AlarmAskCheck" />
-                    <CheckBox  Grid.Row="2" Grid.Column="2" x:Name="AlarmAuditCheck" />
-                    <CheckBox  Grid.Row="2" Grid.Column="3" x:Name="AlarmCleanupCheck" />
-
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Emergency" VerticalAlignment="Center" FontSize="11" />
-                    <CheckBox  Grid.Row="3" Grid.Column="1" x:Name="EmergencyAskCheck" />
-                    <CheckBox  Grid.Row="3" Grid.Column="2" x:Name="EmergencyAuditCheck" />
-                    <CheckBox  Grid.Row="3" Grid.Column="3" x:Name="EmergencyCleanupCheck" />
-                </Grid>
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                    <Label Content="Re-fire cooldown (min):" VerticalAlignment="Center" Width="150" />
-                    <TextBox x:Name="AutoResponseCooldownBox" Width="60"
-                             ToolTip="Per harness + action: don't repeat the same auto-response within this window." />
-                </StackPanel>
-            </StackPanel>
-
-            <!-- ── Buttons ───────────────────────────────────────────────────── -->
-            <StackPanel Grid.Row="12" Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Cancel" Click="CancelClick" Margin="0,0,8,0" />
-                <Button Content="Save" Click="SaveClick"
-                        Background="{StaticResource AccentBrush}"
-                        Foreground="#FF0D0F12" FontWeight="Bold" />
-            </StackPanel>
-        </Grid>
-    </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
 </Window>

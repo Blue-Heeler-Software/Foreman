@@ -22,6 +22,7 @@ let connected = false;
 let lastStatus = null;          // last foreman_status payload (or null)
 let lastAsks = [];              // pending Ask-Harness requests scoped to this extension
 let lastMcpError = null;
+let lastMcpAuthProblem = null;  // actionable repair state for stale/denied extension tokens
 let sidePanelPort = null;
 let pollTimer = null;
 let mcpSession = null;
@@ -78,6 +79,8 @@ async function pair(code) {
         cfg = { ...cfg, token: body.token || '', pairedOrigin: body.origin || selfOrigin(), harnessId: body.harnessId || 'browser-extension' };
         await saveSettings({ token: cfg.token, pairedOrigin: cfg.pairedOrigin, harnessId: cfg.harnessId });
         mcpSession = null;
+        lastMcpError = null;
+        lastMcpAuthProblem = null;
         await refresh();
         return { ok: true };
     } catch (e) {
@@ -101,6 +104,51 @@ async function ensureMcpSession() {
     return mcpSession;
 }
 
+function describeMcpFailure(e) {
+    const status = Number(e?.status) || null;
+    const body = String(e?.body || '').trim();
+    let detail = String(e?.message || e || '').trim();
+    if (body) {
+        try {
+            const parsed = JSON.parse(body);
+            detail = parsed?.error ? String(parsed.error) : body;
+        } catch {
+            detail = body;
+        }
+    }
+
+    if (status === 401) {
+        return {
+            kind: 'auth',
+            code: 'token-rejected',
+            status,
+            title: 'Saved browser token was rejected',
+            message: 'Foreman is running, but it rejected the token this extension stored when it paired. In Foreman, open Connect agent -> Pair browser extension, then enter the new code in this extension.',
+            detail,
+        };
+    }
+
+    if (status === 403) {
+        return {
+            kind: 'auth',
+            code: 'origin-denied',
+            status,
+            title: 'Browser extension is not allowed',
+            message: 'Foreman is running, but this extension origin is not allowed to call MCP. Pair the extension again so Foreman can allow-list this browser profile.',
+            detail,
+        };
+    }
+
+    return {
+        kind: 'error',
+        code: status ? `http-${status}` : 'mcp-error',
+        status,
+        title: 'MCP request failed',
+        message: detail || 'Foreman did not accept the MCP request.',
+        detail,
+    };
+}
+
 // Single place that opens (or reuses) the MCP session and calls a tool. On any failure it drops the cached
 // session so the next call reopens — Foreman uses short-lived per-request sessions, so a stale id is expected.
 async function mcpCall(name, args = {}) {
@@ -110,7 +158,9 @@ async function mcpCall(name, args = {}) {
         return await callMcpTool(session, name, args);
     } catch (e) {
         mcpSession = null;
-        lastMcpError = String(e?.message || e);
+        const problem = describeMcpFailure(e);
+        lastMcpError = problem.detail || problem.message;
+        if (problem.kind === 'auth') lastMcpAuthProblem = problem;
         return null;
     }
 }
@@ -159,14 +209,30 @@ async function resolveTargetTab(args) {
 // Match the App's VaultReference grammar exactly: {{vault:<origin>/<field>}}. A fresh /g instance per call (no
 // shared lastIndex state). Field/origin shapes mirror Foreman.Core.Vault.VaultReference so we extract the same
 // whole tokens the server binds against.
-const vaultTokenRe = () => /\{\{vault:[A-Za-z0-9.\-]+(?::\d+)?\/[A-Za-z]+\}\}/g;
+const vaultTokenRe = () => /\{\{vault:([A-Za-z0-9.\-]+(?::\d+)?)\/([A-Za-z]+)\}\}/g;
+
+function vaultRefs(value) {
+    const refs = [];
+    const seen = new Set();
+    for (const m of String(value).matchAll(vaultTokenRe())) {
+        if (seen.has(m[0])) continue;
+        seen.add(m[0]);
+        refs.push({ token: m[0], field: String(m[2] || '').toLowerCase() });
+    }
+    return refs;
+}
+
+function needsPasswordField(refs) {
+    // /signup returns a freshly generated password, so it gets the same page-side guard as /password.
+    return refs.some((r) => r.field === 'password' || r.field === 'signup');
+}
 
 // Resolve every {{vault:...}} token in `value` to its real secret via cu_resolve_vault, bound to this action and
 // the live tab host. All-or-nothing and fail-closed: if ANY token won't resolve, nothing is filled and the error
 // carries NO secret. The resolved values exist only in the returned string (typed into the page, then dropped) —
 // they are never logged, never put in cu_complete_action, never returned to the submitting agent.
-async function resolveVaultTokens(actionId, value, liveOrigin) {
-    const tokens = [...new Set(String(value).match(vaultTokenRe()) || [])];
+async function resolveVaultTokens(actionId, value, liveOrigin, refs = vaultRefs(value)) {
+    const tokens = refs.map((r) => r.token);
     if (tokens.length === 0) return { ok: true, value };          // plain text — no vault round-trip
     if (!actionId) return { ok: false, error: 'Vault reference present but the action has no id to bind to.' };
     const map = new Map();
@@ -197,17 +263,72 @@ async function fillGate(tab) {
     try { granted = await chrome.permissions.contains({ origins: [pattern] }); } catch { granted = false; }
     if (!granted)
         return { ok: false, error: `Foreman isn't allowed to act on ${u.hostname}. Open the side panel and click "Allow Foreman on the current site" first.` };
-    return { ok: true, host: u.hostname };
+    return { ok: true, host: u.hostname, origin: u.origin };
 }
 
 // ── Functions injected into the page (ISOLATED world; must be fully self-contained, no closures) ──
 // Each returns ONLY structural info (tag/name) — never the typed value — so nothing sensitive flows back out.
 
-function injFill(selector, value) {
-    try {
+function injInspectFillTarget(selector, policy) {
+    function inspect() {
+        const p = policy || {};
+        if (p.expectedOrigin && String(location.origin).toLowerCase() !== String(p.expectedOrigin).toLowerCase())
+            return { ok: false, error: 'Vault fill target origin changed before injection.' };
+        if (p.requireSelector && !selector)
+            return { ok: false, error: 'Vault fills require a CSS selector; focused-element fallback is disabled for secrets.' };
         const el = selector ? document.querySelector(selector) : document.activeElement;
         if (!el) return { ok: false, error: selector ? `No element matches '${selector}'.` : 'No focused element to type into.' };
         const tag = (el.tagName || '').toLowerCase();
+        if (p.requirePasswordField) {
+            const type = String(el.getAttribute && el.getAttribute('type') || 'text').toLowerCase();
+            if (tag !== 'input' || type !== 'password')
+                return { ok: false, error: 'Vault password fills require a selector that matches an input[type=password] field.' };
+        } else if (tag !== 'input' && tag !== 'textarea' && !el.isContentEditable) {
+            return { ok: false, error: `<${tag}> is not a fillable field.` };
+        }
+        if (el.disabled || el.readOnly) return { ok: false, error: 'The target field is disabled or read-only.' };
+        const style = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
+        if (style && (style.display === 'none' || style.visibility === 'hidden'))
+            return { ok: false, error: 'The target field is not visible.' };
+        if (typeof el.getClientRects === 'function' && el.getClientRects().length === 0)
+            return { ok: false, error: 'The target field is not visible.' };
+        return { ok: true, tag, name: el.getAttribute && el.getAttribute('name') || null };
+    }
+    try { return inspect(); }
+    catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+
+function injFill(selector, value, policy) {
+    try {
+        function inspect() {
+            const p = policy || {};
+            if (p.expectedOrigin && String(location.origin).toLowerCase() !== String(p.expectedOrigin).toLowerCase())
+                return { ok: false, error: 'Vault fill target origin changed before injection.' };
+            if (p.requireSelector && !selector)
+                return { ok: false, error: 'Vault fills require a CSS selector; focused-element fallback is disabled for secrets.' };
+            const target = selector ? document.querySelector(selector) : document.activeElement;
+            if (!target) return { ok: false, error: selector ? `No element matches '${selector}'.` : 'No focused element to type into.' };
+            const targetTag = (target.tagName || '').toLowerCase();
+            if (p.requirePasswordField) {
+                const type = String(target.getAttribute && target.getAttribute('type') || 'text').toLowerCase();
+                if (targetTag !== 'input' || type !== 'password')
+                    return { ok: false, error: 'Vault password fills require a selector that matches an input[type=password] field.' };
+            } else if (targetTag !== 'input' && targetTag !== 'textarea' && !target.isContentEditable) {
+                return { ok: false, error: `<${targetTag}> is not a fillable field.` };
+            }
+            if (target.disabled || target.readOnly) return { ok: false, error: 'The target field is disabled or read-only.' };
+            const style = typeof getComputedStyle === 'function' ? getComputedStyle(target) : null;
+            if (style && (style.display === 'none' || style.visibility === 'hidden'))
+                return { ok: false, error: 'The target field is not visible.' };
+            if (typeof target.getClientRects === 'function' && target.getClientRects().length === 0)
+                return { ok: false, error: 'The target field is not visible.' };
+            return { ok: true, el: target, tag: targetTag };
+        }
+
+        const checked = inspect();
+        if (!checked.ok) return checked;
+        const el = checked.el;
+        const tag = checked.tag;
         if (el.isContentEditable) {
             el.focus();
             el.textContent = value;
@@ -310,13 +431,30 @@ async function executeCuAction(act) {
             const tab = await chrome.tabs.get(tabId).catch(() => null);
             const gate = await fillGate(tab);
             if (!gate.ok) return gate;
+            const rawValue = String(args.value ?? args.text ?? '');
+            const refs = vaultRefs(rawValue);
+            const selector = typeof args.selector === 'string' && args.selector.trim() ? args.selector.trim() : null;
+            const fillPolicy = refs.length > 0 ? {
+                requireSelector: true,
+                requirePasswordField: needsPasswordField(refs),
+                expectedOrigin: gate.origin,
+            } : {};
+            if (refs.length > 0) {
+                const [pre] = await chrome.scripting.executeScript({
+                    target: { tabId },
+                    func: injInspectFillTarget,
+                    args: [selector, fillPolicy],
+                });
+                const checked = pre && pre.result;
+                if (!checked || !checked.ok)
+                    return { ok: false, error: (checked && checked.error) || 'Vault fill target could not be verified.' };
+            }
             // Resolve {{vault:...}} at the last moment, bound to this action + the live host (all-or-nothing).
-            const resolved = await resolveVaultTokens(act.actionId, String(args.value ?? args.text ?? ''), gate.host);
+            const resolved = await resolveVaultTokens(act.actionId, rawValue, gate.host, refs);
             if (!resolved.ok) return { ok: false, error: resolved.error };   // carries no secret
             let value = resolved.value;
-            const selector = typeof args.selector === 'string' && args.selector ? args.selector : null;
             let res;
-            try { [res] = await chrome.scripting.executeScript({ target: { tabId }, func: injFill, args: [selector, value] }); }
+            try { [res] = await chrome.scripting.executeScript({ target: { tabId }, func: injFill, args: [selector, value, fillPolicy] }); }
             finally { value = ''; }   // drop the plaintext from the worker as soon as it's handed to the page
             const out = res && res.result;
             if (!out || !out.ok) return { ok: false, error: (out && out.error) || 'Could not fill the field.' };
@@ -357,7 +495,7 @@ async function executeCuAction(act) {
 }
 
 async function pollCu() {
-    if (!cfg.token || !connected) return;
+    if (!cfg.token || !connected || lastMcpAuthProblem) return;
     const batch = await mcpCall('cu_poll_actions', { limit: 5 });
     const actions = Array.isArray(batch?.actions) ? batch.actions : [];
     for (const act of actions) {
@@ -382,24 +520,32 @@ async function pollCu() {
 
 // Tell Foreman which tab the operator pinned as shared attention, so the broker holds off-focus state changes.
 async function reportAttention() {
+    if (lastMcpAuthProblem) return;
     await mcpCall('cu_set_attention', { tabId: pinnedTab == null ? '' : String(pinnedTab) });
 }
 
 async function refresh() {
     connected = await checkHealth();
     lastMcpError = null;
-    lastStatus = connected ? await mcpCall('foreman_status') : null;
+    lastMcpAuthProblem = null;
+    lastStatus = null;
+    lastAsks = [];
+    if (connected && cfg.token)
+        lastStatus = await mcpCall('foreman_status');
     // Re-assert the pin each cycle so it survives a Foreman restart, and push a CLEAR exactly once when it goes to
     // null, so a restarted worker (or an unpin) always reconciles the broker to our true state before pollCu runs.
-    if (connected && (pinnedTab != null || lastReportedPin != null)) {
+    if (connected && !lastMcpAuthProblem && (pinnedTab != null || lastReportedPin != null)) {
         await reportAttention();
         lastReportedPin = pinnedTab;
     }
-    await pollCu();
+    if (!lastMcpAuthProblem)
+        await pollCu();
     // The inbox is scoped to THIS extension's harness ("browser-extension") by the token — it only ever shows
     // prompts Foreman routed to us, never a sibling's. Empty until orchestration routes work to the browser.
-    const asks = connected && cfg.token ? await mcpCall('list_ask_harness_requests', { includeAnswered: false, limit: 10 }) : null;
-    lastAsks = Array.isArray(asks?.requests) ? asks.requests : [];
+    if (connected && cfg.token && !lastMcpAuthProblem) {
+        const asks = await mcpCall('list_ask_harness_requests', { includeAnswered: false, limit: 10 });
+        lastAsks = Array.isArray(asks?.requests) ? asks.requests : [];
+    }
     broadcast();
 }
 
@@ -443,6 +589,7 @@ function broadcast() {
         status: lastStatus,
         asks: lastAsks,
         mcpError: lastMcpError,
+        authProblem: lastMcpAuthProblem,
         pinnedTab,                 // shared-attention pin so the panel can show "Claude's attention: this tab"
     });
 }
@@ -506,6 +653,8 @@ onSettingsChanged(async () => {
     try {
         cfg = { ...cfg, ...(await loadSettings()) };
         mcpSession = null;
+        lastMcpError = null;
+        lastMcpAuthProblem = null;
     } catch { /* keep */ }
 });
 chrome.runtime.onStartup.addListener(bootstrap);

@@ -353,14 +353,16 @@ public sealed class McpServerHost : IAsyncDisposable
     // rotation ONLY when the token file was actually (re)written recently (LoadOrCreate regenerates it only
     // when missing/empty); otherwise we stay neutral about the cause. The id is the token's UNVERIFIED claim
     // (bounded by McpAuthToken.LooksLikeStaleHarnessToken); we never act on it.
-    private void MaybeReportStaleToken(string? presented)
+    internal void MaybeReportStaleToken(string? presented)
     {
         if (!_authToken.LooksLikeStaleHarnessToken(presented, out var id)) return;
         var now = DateTimeOffset.UtcNow;
-        // De-dupe per claimed id (10 min); cap distinct ids so a forged-token spammer can't grow the dict / flood.
-        if (_staleTokenSeen.TryGetValue(id, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
+        // De-dupe per claimed id for this app run. A stale saved token is a persistent repair-needed state; if a
+        // polling connector retries every few seconds, repeating the same tray warning every few minutes is noise.
+        // The first notice remains visible/logged/OS-forwarded; reconnecting the agent is still the operator fix.
+        if (_staleTokenSeen.ContainsKey(id)) return;
         if (_staleTokenSeen.Count > 64 && !_staleTokenSeen.ContainsKey(id)) return;
-        _staleTokenSeen[id] = now;
+        if (!_staleTokenSeen.TryAdd(id, now)) return;
 
         _bus.Publish(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.McpAuth",
             BuildStaleTokenNotice(id, _authToken.RecentlyRegenerated())));

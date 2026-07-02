@@ -15,6 +15,9 @@ namespace Foreman.App.Windows;
 public partial class AlertDetailWindow : Window
 {
     private readonly ForemanEvent _event;
+    private string? _targetHarnessIdSnapshot;
+    private int? _targetPidSnapshot;
+    private string? _targetProcessNameSnapshot;
 
     /// <summary>Wired up by TrayController so the "Open Log" button can open the log window.</summary>
     public static Action? OpenLogRequested { get; set; }
@@ -30,14 +33,17 @@ public partial class AlertDetailWindow : Window
         _event = evt;
         InitializeComponent();
         DataContext = new AlertDetailVm(evt);
+        _targetPidSnapshot = ResolveTargetPidLive();
+        _targetProcessNameSnapshot = ResolveTargetProcessNameLive();
+        _targetHarnessIdSnapshot = ResolveTargetHarnessIdLive();
 
         // "Send for Audit" is only meaningful for alarming behavior (not hangs/mess/notices).
         SendForAuditButton.Visibility =
             AuditPolicy.QualifiesForAudit(evt) ? Visibility.Visible : Visibility.Collapsed;
         AskHarnessButton.Visibility =
-            string.IsNullOrWhiteSpace(ResolveTargetHarnessId()) ? Visibility.Collapsed : Visibility.Visible;
+            string.IsNullOrWhiteSpace(_targetHarnessIdSnapshot) ? Visibility.Collapsed : Visibility.Visible;
         KillProcessButton.Visibility =
-            ResolveTargetPid() is null ? Visibility.Collapsed : Visibility.Visible;
+            _targetPidSnapshot is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Opens an AlertDetailWindow for the given event and forces it to the foreground.</summary>
@@ -142,7 +148,7 @@ public partial class AlertDetailWindow : Window
                 MessageBox.Show(
                     $"Delivered a justify/act request to the live {Blank(result.MatchedClient, harnessId ?? "harness")} MCP session.\n\n" +
                     "This client accepts Foreman Agent Safety's notification, but does not support a direct query/reply round trip.\n" +
-                    "It can reply by calling ReplyToAskHarnessRequest with the pending request id.\n\n" +
+                    "It can reply by calling reply_to_ask_harness_request with the pending request id.\n\n" +
                     PendingLine(queued) + "\n\n" +
                     (clipped
                         ? "The prompt is also on your clipboard as a manual fallback."
@@ -280,7 +286,7 @@ public partial class AlertDetailWindow : Window
                     MessageBox.Show(
                         $"Delivered the audit request to the live {Blank(result.MatchedClient, selected.DisplayName)} MCP session.\n\n" +
                         "This client does not support a direct query/reply round trip. It can reply by calling " +
-                        "ReplyToAskHarnessRequest with the pending request id.\n\n" +
+                        "reply_to_ask_harness_request with the pending request id.\n\n" +
                         PendingLine(queued) +
                         routeNote,
                         "Foreman Agent Safety - Send for Audit", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -326,8 +332,8 @@ public partial class AlertDetailWindow : Window
         request is null
             ? "No pending Ask Harness request was queued."
             : $"Pending request id: {request.RequestId}\n" +
-              $"The harness can receive it with ListAskHarnessRequests(harnessId: \"{request.HarnessId}\") " +
-              "and reply with ReplyToAskHarnessRequest.";
+              $"The harness can receive it with list_ask_harness_requests(harnessId: \"{request.HarnessId}\") " +
+              "and reply with reply_to_ask_harness_request.";
 
     private static string ConnectionHelp(string? harnessId)
     {
@@ -694,7 +700,9 @@ public partial class AlertDetailWindow : Window
             $"Saved {auditor.DisplayName} as preferred auditor for {targetHarnessId}"));
     }
 
-    private int? ResolveTargetPid() => _event switch
+    private int? ResolveTargetPid() => _targetPidSnapshot ?? ResolveTargetPidLive();
+
+    private int? ResolveTargetPidLive() => _event switch
     {
         CommandAlertEvent cmd when cmd.ProcessId > 0 => cmd.ProcessId,
         HangDetectedEvent hang when hang.ProcessId > 0 => hang.ProcessId,
@@ -704,7 +712,9 @@ public partial class AlertDetailWindow : Window
         _ => null,
     };
 
-    private string? ResolveTargetProcessName() => _event switch
+    private string? ResolveTargetProcessName() => _targetProcessNameSnapshot ?? ResolveTargetProcessNameLive();
+
+    private string? ResolveTargetProcessNameLive() => _event switch
     {
         CommandAlertEvent cmd => Services?.GetProcessByPid(cmd.ProcessId)?.Name ?? ExtractProcessNameFromSource(cmd.Source),
         HangDetectedEvent hang => hang.ProcessName,
@@ -715,7 +725,9 @@ public partial class AlertDetailWindow : Window
         _ => null,
     };
 
-    private string? ResolveTargetHarnessId() => _event switch
+    private string? ResolveTargetHarnessId() => _targetHarnessIdSnapshot ?? ResolveTargetHarnessIdLive();
+
+    private string? ResolveTargetHarnessIdLive() => _event switch
     {
         CommandAlertEvent cmd => ResolveHarnessFromProcess(cmd.ProcessId),
         HangDetectedEvent hang => FirstNonBlank(

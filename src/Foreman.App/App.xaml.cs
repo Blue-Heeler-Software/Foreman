@@ -338,6 +338,7 @@ public partial class App : Application
         // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
         _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);
+        _tray.GetCuAttentionTab = () => _mcpHost.State.Cu?.AttentionTab;
 
         // Held-CU operator approve/reject for the tray's approvals window. Mirrors the cu_approve / cu_reject MCP tools
         // (incl. the desktop presence tap) so the operator has an IN-APP way to clear a held action - there was none,

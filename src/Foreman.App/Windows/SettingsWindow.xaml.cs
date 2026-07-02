@@ -31,7 +31,7 @@ public partial class SettingsWindow : Window
     private void RefreshGuardian()
     {
         var on = GuardianControl.IsInstalled;
-        GuardianButton.Content = on ? "Disable hardened guardian…" : "Enable hardened guardian…";
+        GuardianButton.Content = on ? "Disable hardened guardian..." : "Enable hardened guardian...";
         GuardianStatus.Text = on ? "Active (LocalSystem)." : "Off (per-user, tamper-evident).";
     }
 
@@ -75,7 +75,7 @@ public partial class SettingsWindow : Window
     private void RefreshPresenceLock()
     {
         var on = Security.PresenceGuard.IsEnabled;
-        PresenceLockButton.Content = on ? "Disable presence lock…" : "Enable presence lock…";
+        PresenceLockButton.Content = on ? "Disable presence lock..." : "Enable presence lock...";
         PresenceLockStatus.Text = on
             ? $"Armed ({Security.PresenceGuard.AuthenticatorLabel ?? "authenticator"})."
             : Security.PresenceGuard.IsAvailable ? "Off." : "Off — no authenticator available.";
@@ -150,7 +150,6 @@ public partial class SettingsWindow : Window
 
         // Process thresholds
         HangBox.Text       = _settings.HangThresholdMinutes.ToString();
-        HookBox.Text       = _settings.HookJamThresholdMinutes.ToString();
         SuppressBox.Text   = (_settings.CadenceGovernor.RepeatSuppressSeconds / 60).ToString();
         HangRealertBox.Text = _settings.HangRealertCooldownMinutes.ToString();
 
@@ -219,9 +218,6 @@ public partial class SettingsWindow : Window
         if (!int.TryParse(HangBox.Text, out var hang) || hang < 1)
         { MessageBox.Show("Hang threshold must be ≥ 1 minute.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
-        if (!int.TryParse(HookBox.Text, out var hook) || hook < 1)
-        { MessageBox.Show("Hook jam threshold must be ≥ 1 minute.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
-
         if (!int.TryParse(HangRealertBox.Text, out var hangRealert) || hangRealert < 0)
         { MessageBox.Show("Hang re-alert cooldown must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
@@ -283,7 +279,6 @@ public partial class SettingsWindow : Window
         _settings.RunElevated                = RunElevatedCheck.IsChecked == true;
         _settings.ScanMcpTools               = ScanMcpToolsCheck.IsChecked == true;
         _settings.HangThresholdMinutes       = hang;
-        _settings.HookJamThresholdMinutes    = hook;
         _settings.CadenceGovernor.RepeatSuppressSeconds = suppressMin * 60;
         _settings.HangRealertCooldownMinutes = hangRealert;
         _settings.NotifyOnHang               = NotifyHangCheck.IsChecked == true;

@@ -26,6 +26,7 @@ public partial class HarnessesWindow : UserControl
     /// CuBroker so the per-harness settings popup can authorize a harness past the "no CU driver selected" gate.</summary>
     public Func<string?>? GetCuDriver { get; set; }
     public Action<string?>? SetCuDriver { get; set; }
+    public Func<string?>? GetCuAttentionTab { get; set; }
 
     public HarnessesWindow(
         ForemanSettings settings,
@@ -244,7 +245,7 @@ public partial class HarnessesWindow : UserControl
 
     private void OpenSettings(HarnessVm vm)
     {
-        var w = new HarnessSettingsWindow(vm.Id, vm.DisplayName, _settings, GetCuDriver, SetCuDriver)
+        var w = new HarnessSettingsWindow(vm.Id, vm.DisplayName, _settings, GetCuDriver, SetCuDriver, GetCuAttentionTab)
         { Owner = Window.GetWindow(this) };
         if (w.ShowDialog() == true) Refresh();
     }

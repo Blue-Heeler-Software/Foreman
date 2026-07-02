@@ -121,17 +121,20 @@ bounded (tabs API only; `type`/`click`/`scroll` error). Per-site grant model cho
   setter + input/change) that returns only `{tag,name}` — never the value. The worker drops the plaintext (`value=''`)
   the instant it's handed to the page; nothing sensitive is logged or echoed in `cu_complete_action`. `screenshot`
   stays a deliberate bounded-mode error (its own future slice). Adversarial-reviewed (wrong-site, read-back,
-  selector-injection, token-cascade, log-leak, TOCTOU, panic, forged-token) — keystone defenses hold.
+  selector-injection, token-cascade, log-leak, TOCTOU, panic, forged-token) — keystone defenses hold. Vault-bearing
+  `type` actions now preflight the target before resolving a secret and re-check at fill time: vault fills require a
+  selector and same top-frame origin; password and signup refs additionally require a visible, enabled
+  `input[type=password]`.
   **On-device test still pending** (needs the extension re-paired; load unpacked, grant a site, drive a vault `type`).
   **Residual risks recorded for follow-up:**
-  - **Wrong-field fill within a granted+bound origin** — the selector is agent-supplied, so an operator-approved-but-
-    malicious `type` could put a credential into the wrong field on the *correct* site. Same-origin contained (that
-    origin already owns the credential) + gated by the operator approving the action's selector. Candidate hardening:
-    a `type="password"`-field guard for password references. Not yet enforced.
+  - **Wrong-field fill within a granted+bound origin** — selector quality is still agent-supplied for non-password
+    vault refs, so an operator-approved-but-malicious `type` could put a username-like value into the wrong field on
+    the *correct* site. Same-origin contained (that origin already owns the credential) + gated by the operator
+    approving the action's selector. Password/signup refs are now constrained to visible password inputs.
   - **Future DOM-read / screenshot verbs MUST treat filled credential fields as sensitive** — today there is no
     DOM-content read and screenshot is disabled, so a filled secret can't be read back; that invariant has to be kept.
-  - **Top-frame only** (cross-origin iframe login forms won't fill) and **`selector`-less `type` falls back to
-    `document.activeElement`** (covered by the wrong-field residual above).
+  - **Top-frame only** (cross-origin iframe login forms won't fill) and **selector-less vault fills are refused**;
+    selector-less plain text still falls back to `document.activeElement`.
 - **P-BM3 (then — self-signup):** a `{{vault:origin/signup}}` generate-and-store branch in the App's
   `ResolveVaultAsync` (generate via `VaultPasswordGenerator`, `Upsert` bound to the live origin, return) — an
   agent-initiated WRITE, so gated by operator approval + the presence tap + a rate guard; its own small review.

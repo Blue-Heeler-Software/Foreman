@@ -86,6 +86,21 @@ async function renderFillAccess() {
 
 function setHint(text, cls) { const h = $('hint'); h.textContent = text; h.className = cls || ''; }
 
+function renderAuthProblem(problem) {
+    const detail = problem?.detail
+        ? `<details><summary>Technical details</summary><pre>${esc(problem.detail)}</pre></details>`
+        : '';
+    const status = problem?.status ? `<span class="meta">HTTP ${esc(problem.status)}</span>` : '';
+    return `
+        <div class="err repair-card">
+            <strong>${esc(problem?.title || 'Pairing needs repair')}</strong>
+            ${status}
+            <p>${esc(problem?.message || 'Foreman rejected this extension pairing. Pair the browser extension again from Foreman.')}</p>
+            <button id="repairPair">Open pairing options</button>
+            ${detail}
+        </div>`;
+}
+
 // ── Render ───────────────────────────────────────────────────────────────────
 
 function render(m) {
@@ -95,7 +110,7 @@ function render(m) {
         badge.textContent = '🔌 Not paired';
         badge.className = 'warn';
         $('hint').innerHTML = 'Open the extension <a id="opt">options</a> to pair with Foreman.';
-        $('hint').className = '';
+        $('hint').className = 'pairing-hint';
         $('status').innerHTML = '';
         $('inboxSection').hidden = true;
         $('nanoSection').hidden = true;
@@ -113,6 +128,7 @@ function render(m) {
         else if (sev === 'amber') { badge.textContent = '🔒 On-device · Foreman: alert'; badge.className = 'warn'; }
         else { badge.textContent = '🔒 On-device · verified'; badge.className = 'ok'; }
     }
+    else if (m.authProblem) { badge.textContent = '⚠ Re-pair browser extension'; badge.className = 'warn'; }
     else if (m.connected) { badge.textContent = '⚠ Paired — MCP status pending'; badge.className = 'warn'; }
     else { badge.textContent = '⚠ Paired — Foreman offline'; badge.className = 'warn'; }
 
@@ -131,24 +147,37 @@ function render(m) {
                 <div><span class="label">Uptime</span><strong>${formatUptime(s.uptimeSeconds)}</strong></div>
                 <div><span class="label">Foreman</span><strong>v${esc(s.version ?? '?')}</strong></div>
             </div>`;
+    } else if (m.authProblem) {
+        latestStatus = null;
+        $('status').innerHTML = renderAuthProblem(m.authProblem);
+        const btn = $('repairPair');
+        if (btn) btn.onclick = () => chrome.runtime.openOptionsPage();
     } else if (m.mcpError) {
+        latestStatus = null;
         $('status').innerHTML = `<div class="err">MCP: ${esc(m.mcpError)}</div>`;
     } else {
+        latestStatus = null;
         $('status').innerHTML = m.connected
             ? '<div class="muted">Connected to Foreman. Waiting for MCP status…</div>'
             : '<div class="muted">Foreman is not reachable. Is the tray app running?</div>';
     }
 
-    renderInbox(Array.isArray(m.asks) ? m.asks : []);
+    if (m.authProblem) {
+        latestAsks = [];
+        renderedAskKey = null;
+        $('inboxSection').hidden = true;
+    } else {
+        renderInbox(Array.isArray(m.asks) ? m.asks : []);
+    }
 
     // Per-site browser-fill access manager (shown once paired).
     $('fillAccessSection').hidden = false;
     renderFillAccess();
 
     // On-device section is shown once paired; the button is meaningful only with a status to summarise.
-    $('nanoSection').hidden = false;
+    $('nanoSection').hidden = !!m.authProblem;
     $('nanoExplain').disabled = !(latestStatus && nanoState === 'available');
-    if (nanoState === 'unknown') refreshNanoState();
+    if (!m.authProblem && nanoState === 'unknown') refreshNanoState();
 }
 
 // ── Ask-Harness inbox ──────────────────────────────────────────────────────────

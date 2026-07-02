@@ -1,7 +1,9 @@
 using Foreman.Core.Behavior;
+using Foreman.Core.Events;
 using Foreman.Core.Mcp;
 using Foreman.Core.Models;
 using Foreman.Core.Profiles;
+using Foreman.Core.Settings;
 using Foreman.McpServer;
 using Microsoft.AspNetCore.Http;
 using System.Text.Json;
@@ -130,6 +132,34 @@ public sealed class McpAuthTokenTests : IDisposable
         var notice = McpServerHost.BuildStaleTokenNotice("codex", _token.RecentlyRegenerated());
         Assert.Contains("rotated", notice, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("forged token", notice);
+    }
+
+    [Fact]
+    public void StaleTokenNotice_RepeatedPollsFromSameHarness_PublishesOnce()
+    {
+        var bus = new EventBus();
+        var notices = new List<MonitoringNoticeEvent>();
+        bus.Subscribe(e =>
+        {
+            if (e is MonitoringNoticeEvent { Source: "Foreman.McpAuth" } m)
+                notices.Add(m);
+        });
+
+        var otherDir = Path.Combine(Path.GetTempPath(), "foreman-token-stale-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(otherDir);
+        try
+        {
+            var host = new McpServerHost(new ForemanSettings(), bus);
+            var staleForUs = new McpAuthToken(otherDir).MintHarnessToken("browser-extension");
+
+            host.MaybeReportStaleToken(staleForUs);
+            host.MaybeReportStaleToken(staleForUs);
+            host.MaybeReportStaleToken(staleForUs);
+
+            var notice = Assert.Single(notices);
+            Assert.Contains("browser-extension", notice.Message);
+        }
+        finally { try { Directory.Delete(otherDir, true); } catch { } }
     }
 }
 

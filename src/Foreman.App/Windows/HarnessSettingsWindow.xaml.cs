@@ -19,14 +19,16 @@ public partial class HarnessSettingsWindow : Window
     private readonly List<CheckBox> _modalityChecks = [];
     private readonly Func<string?>? _getCuDriver;
     private readonly Action<string?>? _setCuDriver;
+    private readonly Func<string?>? _getCuAttentionTab;
 
     public HarnessSettingsWindow(string harnessId, string displayName, ForemanSettings settings,
-        Func<string?>? getCuDriver = null, Action<string?>? setCuDriver = null)
+        Func<string?>? getCuDriver = null, Action<string?>? setCuDriver = null, Func<string?>? getCuAttentionTab = null)
     {
         _harnessId = harnessId;
         _settings = settings;
         _getCuDriver = getCuDriver;
         _setCuDriver = setCuDriver;
+        _getCuAttentionTab = getCuAttentionTab;
         InitializeComponent();
         TitleText.Text = $"{displayName} — Foreman settings";
         Populate();
@@ -63,23 +65,26 @@ public partial class HarnessSettingsWindow : Window
             ModalityPanel.Children.Add(cb);
         }
 
-        // Computer-use DRIVER (global, operator-only). Distinct from the Allow/Ask/Block capability above: only the
-        // ONE designated driver harness may actually drive a CU/BU session. Hidden when the host didn't wire the hook
-        // (e.g. headless). This is what authorizes an agent past the "No computer-use driver has been selected" gate.
+        // Foreman's shared browser-use DRIVER set (global, operator-only). Distinct from the Allow/Ask/Block capability
+        // above: the policy says what THIS harness may request; the driver set says which harnesses Foreman currently
+        // accepts cu_* submissions from. Hidden when the host didn't wire the hook (e.g. headless).
         if (_setCuDriver is null)
         {
-            CuDriverCheck.Visibility = Visibility.Collapsed;
-            CuDriverNote.Visibility = Visibility.Collapsed;
+            CuDriverPanel.Visibility = Visibility.Collapsed;
         }
         else
         {
+            ForemanDriverCombo.SelectedIndex = 0;   // safe default: saving policy/trust edits does not reroute BU.
             var driver = _getCuDriver?.Invoke();
-            CuDriverCheck.IsChecked = IsCurrentDriver(driver);
-            CuDriverNote.Text = string.IsNullOrWhiteSpace(driver)
-                ? "No harness is authorized to drive computer/browser use yet. Check this to authorize this one (it becomes the sole driver). An agent can never appoint itself."
-                : IsCurrentDriver(driver)
-                    ? "This harness currently drives computer/browser use. Uncheck to revoke."
-                    : $"Current driver: {driver}. Checking this makes THIS harness the sole driver instead.";
+            var included = IsCurrentDriver(driver);
+            CuDriverNote.Text =
+                $"Current Foreman driver set: {FormatDriverSet(driver)}. " +
+                $"This harness is {(included ? "included" : "not included")}. Choose a mode only if you want to change Foreman's shared routing.";
+
+            var tab = _getCuAttentionTab?.Invoke();
+            CuAttentionNote.Text = string.IsNullOrWhiteSpace(tab)
+                ? "No shared attention tab is pinned. When the browser extension pins one, Foreman keeps it separately from driver routing."
+                : $"Shared attention tab: {tab}. Changing the driver set keeps this background tab state, so another harness can hand off and you can return to the same pinned tab.";
         }
     }
 
@@ -91,6 +96,61 @@ public partial class HarnessSettingsWindow : Window
         return driver.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                      .Any(d => string.Equals(d, _harnessId, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static HashSet<string> ParseDriverSet(string? driver)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(driver)) return set;
+        if (driver.Trim() == "*") { set.Add("any"); return set; }
+        foreach (var d in driver.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            set.Add(string.Equals(d, "*", StringComparison.Ordinal) ? "any" : d.Trim().ToLowerInvariant());
+        return set;
+    }
+
+    private static string? ComposeDriverSet(HashSet<string> set)
+    {
+        if (set.Contains("any")) return "any";
+        var ids = set.Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return ids.Length == 0 ? null : string.Join(",", ids);
+    }
+
+    private static string FormatDriverSet(string? driver)
+    {
+        if (string.IsNullOrWhiteSpace(driver)) return "operator only";
+        if (driver.Trim() == "*") return "any harness";
+        return driver.Replace(",", ", ");
+    }
+
+    private string? EditedDriverSet(string? current)
+    {
+        var tag = (ForemanDriverCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "unchanged";
+        var set = ParseDriverSet(current);
+        switch (tag)
+        {
+            case "include":
+                if (!set.Contains("any")) set.Add(_harnessId);
+                return ComposeDriverSet(set);
+            case "remove":
+                set.Remove(_harnessId);
+                return ComposeDriverSet(set);
+            case "only":
+                return _harnessId;
+            case "any":
+                return "any";
+            case "operator":
+                return null;
+            default:
+                return current;
+        }
+    }
+
+    private bool DriverEditSelected() =>
+        !string.Equals((ForemanDriverCombo.SelectedItem as ComboBoxItem)?.Tag as string, "unchanged",
+            StringComparison.OrdinalIgnoreCase);
 
     private double CurrentTrust() =>
         _settings.HarnessTrust.TryGetValue(_harnessId, out var lvl) ? Math.Clamp(lvl, 1, 5) : 3;
@@ -180,15 +240,11 @@ public partial class HarnessSettingsWindow : Window
                 $"{_harnessId}: high-risk tool restrictions relaxed"))
             return;
 
-        // CU driver toggle (global, operator-only, persisted via the CuBroker's own persister - separate from the
-        // per-harness dicts below). Mirrors cu_set_driver's operator-only gate; the operator is acting in the UI.
-        if (_setCuDriver is not null)
-        {
-            var wasDriver = IsCurrentDriver(_getCuDriver?.Invoke());
-            var nowDriver = CuDriverCheck.IsChecked == true;
-            if (nowDriver && !wasDriver) _setCuDriver(_harnessId);   // authorize THIS harness as the sole driver
-            else if (!nowDriver && wasDriver) _setCuDriver(null);     // revoke driving authority entirely
-        }
+        // Foreman's shared browser-use driver set (global, operator-only, persisted via the CuBroker's own persister)
+        // is separate from the per-harness policy dicts below. Edits preserve the existing set unless the operator
+        // explicitly chooses "only", "any", or "operator only"; changing it does not clear the shared attention tab.
+        if (_setCuDriver is not null && DriverEditSelected())
+            _setCuDriver(EditedDriverSet(_getCuDriver?.Invoke()));
 
         _settings.HarnessTrust[_harnessId] = newTrust;
         _settings.HarnessModalities[_harnessId] = newModalities;

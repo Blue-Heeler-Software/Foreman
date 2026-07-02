@@ -1270,7 +1270,7 @@ public static class ForemanMcpTools
     // reports via cu_complete_action. The panic halt (computer_use_status) blocks submit + empties the poll.
 
     [McpServerTool, Description(
-        "Mediated computer-use broker status: whether CU is halted (panic), the chosen driver, and the actions " +
+        "Mediated computer-use broker status: whether CU is halted (panic), the selected driver set, and the actions " +
         "currently HELD for operator approval. Read-only.")]
     public static object CuStatus()
     {
@@ -1351,7 +1351,7 @@ public static class ForemanMcpTools
         if (!state.Cu.CanDrive(who, caller.IsOperator))
             return new { accepted = false, reason = state.Cu.Driver is null
                 ? "No computer-use driver selected. Ask the operator to choose your harness as the CU driver."
-                : $"Computer use is currently accepting actions only from '{state.Cu.Driver}'." };
+                : $"Computer use is currently accepting actions only from Foreman's selected driver set ({FormatCuDriver(state.Cu.Driver)})." };
 
         Dictionary<string, string> args;
         try { args = ParseCuArgs(argsJson); }
@@ -1582,11 +1582,12 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
-        "Operator only: choose which harness may DRIVE computer use (submit cu_* actions). Empty/blank = operator " +
-        "only (default); a harness id (e.g. 'codex', 'claude-code') = just that harness; 'any' = every connected " +
-        "harness. The chosen driver still has every action audited, held when risky, and panic-haltable.")]
+        "Operator only: choose which harnesses may DRIVE Foreman-mediated browser use (submit cu_* actions). Empty/blank " +
+        "= operator only (default); a harness id (e.g. 'codex') = just that harness; comma-separated ids (e.g. " +
+        "'claude-code,codex') = that shared set; 'any' = every connected harness. The selected driver set is global " +
+        "Foreman routing, separate from per-harness CU/BU policy, and keeps the shared attention tab intact.")]
     public static object CuSetDriver(
-        [Description("Harness id to authorize as the CU driver; empty = operator-only; 'any' = all harnesses")] string? harnessId = null,
+        [Description("Harness id(s) to authorize as the CU driver set; comma-separated allowed; empty = operator-only; 'any' = all harnesses")] string? harnessId = null,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
@@ -1597,6 +1598,13 @@ public static class ForemanMcpTools
         EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
             $"Operator set the computer-use driver to {(state.Cu.Driver is { } d ? $"'{d}'" : "operator-only")}."));
         return new { ok = true, driver = state.Cu.Driver };
+    }
+
+    private static string FormatCuDriver(string? driver)
+    {
+        if (string.IsNullOrWhiteSpace(driver)) return "operator only";
+        if (driver.Trim() == "*") return "any harness";
+        return driver.Replace(",", ", ");
     }
 
     // Parse cu_submit's argsJson into a flat string map (verb args like url/text/selector/key).

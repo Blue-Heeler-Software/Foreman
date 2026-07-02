@@ -79,6 +79,9 @@ public partial class DashboardWindow : Window, IEventSink
     public Func<WakeRequestSnapshot>? GetWakeRequests { get; set; }
     public Func<string?, int>? GetPendingAskCount { get; set; }
     public Func<bool>? GetGameModeActive { get; set; }
+    public Func<string?>? GetCuDriver { get; set; }
+    public Action<string?>? SetCuDriver { get; set; }
+    public Func<string?>? GetCuAttentionTab { get; set; }
 
     /// <summary>An agent's self-reported context/token budget (via the report_usage MCP tool); null if never reported.</summary>
     public Func<string, HarnessContextUsage?>? GetContextUsage { get; set; }
@@ -575,7 +578,8 @@ public partial class DashboardWindow : Window, IEventSink
         if (settings is null) return;
 
         var display = KnownHarnesses.GetById(harnessId)?.DisplayName ?? harnessId;
-        var w = new HarnessSettingsWindow(harnessId, display, settings) { Owner = this };
+        var w = new HarnessSettingsWindow(harnessId, display, settings, GetCuDriver, SetCuDriver, GetCuAttentionTab)
+        { Owner = this };
         if (w.ShowDialog() == true)
             Refresh();
     }
