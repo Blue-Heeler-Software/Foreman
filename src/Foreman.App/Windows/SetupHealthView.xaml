@@ -1,0 +1,55 @@
+<UserControl x:Class="Foreman.App.Windows.SetupHealthView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource BackgroundBrush}"
+             Foreground="{StaticResource TextPrimaryBrush}"
+             FontFamily="Segoe UI, Arial">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <Button DockPanel.Dock="Right" Content="Refresh" Click="RefreshClick" VerticalAlignment="Top"
+                    Background="#FF1E2028" Foreground="{StaticResource TextPrimaryBrush}"
+                    BorderBrush="#FF303540" Padding="12,6" Cursor="Hand" />
+            <StackPanel>
+                <TextBlock Text="Setup health" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock x:Name="SummaryText" Foreground="{StaticResource TextMutedBrush}" FontSize="12"
+                           TextWrapping="Wrap" Margin="0,4,12,0" />
+            </StackPanel>
+        </DockPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="Rows">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="#FF262A34" BorderThickness="0,0,0,1" Padding="0,9,0,9">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="26" />
+                                    <ColumnDefinition Width="190" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="●" FontSize="13" Foreground="{Binding Dot}"
+                                           VerticalAlignment="Top" Margin="0,1,0,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Top"
+                                           TextWrapping="Wrap" Margin="0,0,10,0" />
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="{Binding Detail}" Foreground="{StaticResource TextPrimaryBrush}"
+                                               FontSize="12" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Remedy}" Foreground="{StaticResource TextMutedBrush}"
+                                               FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0"
+                                               Visibility="{Binding RemedyVisibility}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

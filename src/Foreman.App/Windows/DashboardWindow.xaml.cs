@@ -46,6 +46,7 @@ public partial class DashboardWindow : Window, IEventSink
     private HarnessesWindow? _harnessView;
     private LogWindow? _logView;   // for tile deep-links that pre-set the severity filter
     private VaultView? _vaultView; // refreshed when its tab is shown (reflects lock/unlock done elsewhere)
+    private SetupHealthView? _setupView; // refreshed when its tab is shown (reflects live service state)
 
     /// <summary>Wired by TrayController — Settings and Connect-agent stay as separate dialogs.</summary>
     public Action? OpenSettingsRequested { get; set; }
@@ -841,24 +842,27 @@ public partial class DashboardWindow : Window, IEventSink
 
     // ── Tabs / hosted views ───────────────────────────────────────────────────
 
-    public enum DashboardTab { Overview = 0, Processes = 1, Harnesses = 2, Behavior = 3, Log = 4, Vault = 5 }
+    public enum DashboardTab { Overview = 0, Processes = 1, Harnesses = 2, Behavior = 3, Log = 4, Vault = 5, Setup = 6 }
 
     public void ShowTab(DashboardTab tab) => Tabs.SelectedIndex = (int)tab;
 
     /// <summary>Injects the monitoring views (built by the tray) into their tabs; disposed on close.</summary>
-    public void HostViews(UIElement? processes, UIElement? harnesses, UIElement? behavior, UIElement? log, UIElement? vault = null)
+    public void HostViews(UIElement? processes, UIElement? harnesses, UIElement? behavior, UIElement? log,
+                          UIElement? vault = null, UIElement? setup = null)
     {
         ProcessSlot.Content  = processes;
         HarnessSlot.Content  = harnesses;
         BehaviorSlot.Content = behavior;
         LogSlot.Content      = log;
         VaultSlot.Content    = vault;
+        SetupSlot.Content    = setup;
         _harnessView = harnesses as HarnessesWindow;   // for the unsaved-changes prompt on navigate-away
         _logView     = log as LogWindow;               // for tile deep-links with a pre-set severity filter
         _vaultView   = vault as VaultView;             // refreshed on tab-show so it reflects external lock/unlock
+        _setupView   = setup as SetupHealthView;       // refreshed on tab-show so it reflects live service state
         if (_harnessView is not null)
             _harnessView.OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke();
-        foreach (var v in new object?[] { processes, harnesses, behavior, log, vault })
+        foreach (var v in new object?[] { processes, harnesses, behavior, log, vault, setup })
             if (v is IDisposable d) _hostedViews.Add(d);
     }
 
@@ -867,9 +871,12 @@ public partial class DashboardWindow : Window, IEventSink
     {
         // TabControl SelectionChanged bubbles from child ListViews too — only react to the tabs themselves.
         if (!ReferenceEquals(e.OriginalSource, Tabs)) return;
-        // Refresh the Vault view whenever its tab is shown, so it reflects a lock/unlock done elsewhere.
-        if (e.AddedItems.Count > 0 && e.AddedItems[0] is TabItem vt && Tabs.Items.IndexOf(vt) == (int)DashboardTab.Vault)
-            _vaultView?.RefreshState();
+        // Refresh the Vault/Setup views whenever their tab is shown, so they reflect changes done elsewhere.
+        if (e.AddedItems.Count > 0 && e.AddedItems[0] is TabItem vt)
+        {
+            if (Tabs.Items.IndexOf(vt) == (int)DashboardTab.Vault) _vaultView?.RefreshState();
+            if (Tabs.Items.IndexOf(vt) == (int)DashboardTab.Setup) _setupView?.RefreshState();
+        }
         if (_harnessView is null || e.RemovedItems.Count == 0) return;
         if (e.RemovedItems[0] is not TabItem leftTab) return;
         if (Tabs.Items.IndexOf(leftTab) != (int)DashboardTab.Harnesses) return;

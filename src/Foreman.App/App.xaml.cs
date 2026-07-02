@@ -36,6 +36,7 @@ public partial class App : Application
     private readonly Dictionary<string, Foreman.Vault.DepositQueue.PendingDeposit> _drainedDeposits = new();
     private MonitorService? _monitor;
     private McpServerHost? _mcpHost;
+    private volatile bool _mcpStartFailed;   // set by StartMcpSurfacingFailureAsync; read by the Setup tab
     private ElevatedSidecarController? _sidecar;
     private McpToolScanMonitor? _toolScan;
     private AlertResolver? _alertResolver;
@@ -754,6 +755,34 @@ public partial class App : Application
         _tray.GetWakeRequests = () => _sidecar.GetWakeRequests();
         _tray.GetContextUsage = id => _mcpHost.State.GetContextUsage(id);
         _tray.GetNetCaptureActive = () => _sidecar?.IsConnected ?? false;
+        // Dashboard "Setup" tab: gather the live posture snapshot on demand; all judgement is in Core
+        // SetupHealth.Evaluate (pure, tested) — this lambda only collects facts from the composition root.
+        _tray.GetSetupHealth = () =>
+        {
+            var clients = _mcpHost.Sessions.DescribeSessions();
+            var dc = settings.DecoyCredentials;
+            return new Foreman.Core.Health.SetupHealthSnapshot
+            {
+                DataDirRedirectedTo = DataDirRedirectionProbe.DetectRedirect(System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman")),
+                McpListening         = !_mcpStartFailed,
+                McpPort              = settings.McpPort,
+                ConnectedMcpClients  = clients.Count,
+                ConnectedClientNames = clients.Select(c => c.Name).ToList(),
+                ExtensionPaired      = settings.PairedExtensionOrigins.Count > 0,
+                PresenceEnrolled     = Security.PresenceGuard.IsEnabled,
+                VaultEnrolled        = _vaultService?.IsEnrolled ?? false,
+                VaultUnlocked        = _vaultService?.IsUnlocked ?? false,
+                PendingDeposits      = _vaultService?.PendingDepositCount ?? 0,
+                DepositKeyTampered   = _vaultService?.LastDepositStatus == Foreman.Vault.VaultService.DepositKeyStatus.Tampered,
+                DecoysEnabled        = dc.Enabled,
+                DecoysPlanted        = dc.PlantedPaths.Count,
+                ReadAuditingEnabled  = dc.EnableReadAuditing,
+                SidecarConnected     = _sidecar?.IsConnected ?? false,
+                GuardianInstalled    = GuardianDiscovery.IsGuardianInstalled(),
+                OsEventLogAvailable  = _osLog.IsAvailable,
+            };
+        };
         // SettingsWindow persists the flags; these just re-apply the sidecar state (enabling an elevated
         // feature raises the UAC prompt).
         _tray.ApplyRunElevated  = _ => ApplySidecarState();
@@ -1195,7 +1224,7 @@ public partial class App : Application
         return (system, user);
     }
 
-    private static async Task StartMcpSurfacingFailureAsync(McpServerHost host, int port, CancellationToken ct)
+    private async Task StartMcpSurfacingFailureAsync(McpServerHost host, int port, CancellationToken ct)
     {
         try
         {
@@ -1204,6 +1233,7 @@ public partial class App : Application
         catch (OperationCanceledException) { /* normal shutdown */ }
         catch (Exception ex)
         {
+            _mcpStartFailed = true;   // surfaced on the dashboard Setup tab alongside the High notice below
             EventBus.Instance.Publish(new MonitoringNoticeEvent(
                 DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Mcp",
                 $"MCP server failed to start on port {port}: {ex.Message} " +

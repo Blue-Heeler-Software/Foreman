@@ -75,6 +75,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — the credential vault, backing the operator-only "Vault…" window.</summary>
     public Foreman.Vault.VaultService?                        Vault                 { get; set; }
 
+    /// <summary>Injected from App — gathers the live posture snapshot behind the dashboard "Setup" tab.</summary>
+    public Func<Foreman.Core.Health.SetupHealthSnapshot>?     GetSetupHealth        { get; set; }
+
     /// <summary>Injected from App — per-PID network bytes/sec from the elevated sidecar (null when off).</summary>
     public Func<int, double?>?                                GetNetRate            { get; set; }
 
@@ -570,7 +573,8 @@ public sealed class TrayController : IEventSink, IDisposable
                     GetProcessesByHarness ?? (_ => []),
                     KillHarness           ?? (_ => { })),
                 log: new LogWindow(),
-                vault: Vault is null ? null : new Foreman.App.Windows.VaultView(Vault));
+                vault: Vault is null ? null : new Foreman.App.Windows.VaultView(Vault),
+                setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
             _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap

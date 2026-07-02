@@ -669,5 +669,6 @@
       <TabItem Header="Behavior"><ContentControl x:Name="BehaviorSlot" /></TabItem>
       <TabItem Header="Event Log"><ContentControl x:Name="LogSlot" /></TabItem>
       <TabItem Header="Vault"><ContentControl x:Name="VaultSlot" /></TabItem>
+      <TabItem Header="Setup"><ContentControl x:Name="SetupSlot" /></TabItem>
     </TabControl>
 </Window>
