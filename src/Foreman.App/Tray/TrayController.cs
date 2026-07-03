@@ -73,7 +73,25 @@ public sealed class TrayController : IEventSink, IDisposable
     public Func<(bool Ok, string Message)>?                   PrepSessionsForUpdate { get; set; }
 
     /// <summary>Injected from App — the credential vault, backing the operator-only "Vault…" window.</summary>
-    public Foreman.Vault.VaultService?                        Vault                 { get; set; }
+    public Foreman.Vault.VaultService? Vault
+    {
+        get => _vault;
+        set
+        {
+            _vault = value;
+            // The "Review pending sign-ups" tray item only appears while the vault is UNLOCKED with pending
+            // deposits — but the context menu is otherwise rebuilt only when the alert count / escalation / mutes
+            // change, so unlocking (which fires none of those) would leave the menu stale and the item hidden until
+            // the next unrelated status change. Rebuild the menu on unlock so the item shows up right away.
+            // (Set exactly once at startup; the vault is process-lived, so no unsubscribe bookkeeping is needed.)
+            if (value is not null)
+                value.Unlocked += () => Application.Current?.Dispatcher.BeginInvoke(() =>
+                {
+                    try { TrySetContextMenu(); } catch { /* transient tray failure — best-effort */ }
+                });
+        }
+    }
+    private Foreman.Vault.VaultService? _vault;
 
     /// <summary>Injected from App — gathers the live posture snapshot behind the dashboard "Setup" tab.</summary>
     public Func<Foreman.Core.Health.SetupHealthSnapshot>?     GetSetupHealth        { get; set; }
