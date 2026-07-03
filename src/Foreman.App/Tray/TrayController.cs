@@ -72,26 +72,10 @@ public sealed class TrayController : IEventSink, IDisposable
     /// reaps IDLE/abandoned ones so an update or restart lands clean.</summary>
     public Func<(bool Ok, string Message)>?                   PrepSessionsForUpdate { get; set; }
 
-    /// <summary>Injected from App — the credential vault, backing the operator-only "Vault…" window.</summary>
-    public Foreman.Vault.VaultService? Vault
-    {
-        get => _vault;
-        set
-        {
-            _vault = value;
-            // The "Review pending sign-ups" tray item only appears while the vault is UNLOCKED with pending
-            // deposits — but the context menu is otherwise rebuilt only when the alert count / escalation / mutes
-            // change, so unlocking (which fires none of those) would leave the menu stale and the item hidden until
-            // the next unrelated status change. Rebuild the menu on unlock so the item shows up right away.
-            // (Set exactly once at startup; the vault is process-lived, so no unsubscribe bookkeeping is needed.)
-            if (value is not null)
-                value.Unlocked += () => Application.Current?.Dispatcher.BeginInvoke(() =>
-                {
-                    try { TrySetContextMenu(); } catch { /* transient tray failure — best-effort */ }
-                });
-        }
-    }
-    private Foreman.Vault.VaultService? _vault;
+    /// <summary>Injected from App — the credential vault, backing the operator-only "Vault…" window and the
+    /// dashboard Vault tab (which now also host the locked-time deposit review, so nothing vault-related needs a
+    /// tray-menu rebuild on unlock).</summary>
+    public Foreman.Vault.VaultService? Vault { get; set; }
 
     /// <summary>Injected from App — gathers the live posture snapshot behind the dashboard "Setup" tab.</summary>
     public Func<Foreman.Core.Health.SetupHealthSnapshot>?     GetSetupHealth        { get; set; }
@@ -591,7 +575,7 @@ public sealed class TrayController : IEventSink, IDisposable
                     GetProcessesByHarness ?? (_ => []),
                     KillHarness           ?? (_ => { })),
                 log: new LogWindow(),
-                vault: Vault is null ? null : new Foreman.App.Windows.VaultView(Vault),
+                vault: BuildVaultView(),
                 setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
@@ -683,13 +667,8 @@ public sealed class TrayController : IEventSink, IDisposable
                 () => OpenCuApprovalsWindow());
             menu.Items.Add(new Separator());
         }
-        // Locked-time agent sign-ups awaiting review. Only shown when the vault is UNLOCKED + something is pending,
-        // since reviewing (draining) needs the key; the queue count is readable while locked but can't be decrypted then.
-        if (Vault?.IsUnlocked == true && GetDepositReview is not null && (PendingDepositCount?.Invoke() ?? 0) > 0)
-        {
-            AddMenuItem(menu, $"✅ Review pending sign-ups ({PendingDepositCount!()})…", () => OpenDepositReviewWindow());
-            menu.Items.Add(new Separator());
-        }
+        // (Locked-time agent sign-ups awaiting review now live IN the vault surface — a banner in the Vault window /
+        //  dashboard Vault tab — rather than stacking another item here; the unlock notice points the operator there.)
         AddMenuItem(menu, "Dashboard", () => OpenDashboardWindow());
         AddMenuItem(menu, "Open Log", () => OpenLogWindow());
         AddMenuItem(menu, "Process Monitor…", () => OpenProcessMonitorWindow());
@@ -842,6 +821,7 @@ public sealed class TrayController : IEventSink, IDisposable
         if (_vaultWindow is null)
         {
             var w = new Foreman.App.Windows.VaultWindow(Vault);
+            ConfigureVaultView(w.View);
             w.Closed += (_, _) => _vaultWindow = null;
             _vaultWindow = w;
             w.Show();
@@ -849,14 +829,33 @@ public sealed class TrayController : IEventSink, IDisposable
         WindowActivation.Surface(_vaultWindow);
     }
 
+    // Build a VaultView with its deposit-review hooks wired (dashboard-tab host); null when no vault exists.
+    private Foreman.App.Windows.VaultView? BuildVaultView()
+    {
+        if (Vault is null) return null;
+        var view = new Foreman.App.Windows.VaultView(Vault);
+        ConfigureVaultView(view);
+        return view;
+    }
+
+    // Wire a hosted VaultView's deposit-review hooks so pending locked-time sign-ups are reviewable FROM the vault
+    // surface (where the operator manages credentials), not only the tray. Called for every VaultView we create.
+    private void ConfigureVaultView(Foreman.App.Windows.VaultView view)
+    {
+        view.PendingDepositCount = () => PendingDepositCount?.Invoke() ?? 0;
+        view.OpenDepositReview = () => OpenDepositReviewWindow(view);
+    }
+
     // Operator review of locked-time agent sign-ups (the P-BM4b deposit queue): drain on open, accept/reject each, clear.
-    private void OpenDepositReviewWindow()
+    // When opened from a vault surface, that view is refreshed on close so a committed sign-up shows in the list and the
+    // banner count drops without a manual reopen.
+    private void OpenDepositReviewWindow(Foreman.App.Windows.VaultView? refreshOnClose = null)
     {
         if (GetDepositReview is null || AcceptDeposit is null || RejectDeposit is null || ClearDepositQueue is null) return;
         if (_depositReviewWindow is null)
         {
             var w = new Foreman.App.Windows.DepositReviewWindow(GetDepositReview(), AcceptDeposit, RejectDeposit, ClearDepositQueue);
-            w.Closed += (_, _) => _depositReviewWindow = null;
+            w.Closed += (_, _) => { _depositReviewWindow = null; refreshOnClose?.RefreshState(); };
             _depositReviewWindow = w;
             w.Show();
         }

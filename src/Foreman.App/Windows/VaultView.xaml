@@ -83,6 +83,22 @@
 
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,14,0,0">
                 <StackPanel>
+                    <!-- Locked-time agent sign-ups awaiting operator review (P-BM4 deposit queue). Surfaced HERE,
+                         where the operator manages credentials, not only in the tray. -->
+                    <Border x:Name="DepositReviewBanner" Visibility="Collapsed" Background="#FF2A2415"
+                            BorderBrush="#FFE5A53A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,14">
+                        <Grid>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="DepositReviewText" Foreground="#FFE5A53A" FontWeight="SemiBold" FontSize="13" />
+                                <TextBlock Text="An agent generated these while the vault was locked. Review each before it's saved."
+                                           Foreground="{StaticResource TextMutedBrush}" FontSize="11" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <Button Content="Review…" Click="ReviewDepositsClick" HorizontalAlignment="Right"
+                                    VerticalAlignment="Center" Padding="14,6"
+                                    Foreground="#FFE5A53A" BorderBrush="#FFE5A53A" />
+                        </Grid>
+                    </Border>
+
                     <ItemsControl x:Name="ItemsList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

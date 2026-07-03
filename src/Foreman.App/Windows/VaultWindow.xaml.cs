@@ -10,9 +10,13 @@ namespace Foreman.App.Windows;
 /// </summary>
 public partial class VaultWindow : Window
 {
+    /// <summary>The hosted view, exposed so the composition root can wire its deposit-review hooks.</summary>
+    public VaultView View { get; }
+
     public VaultWindow(VaultService vault)
     {
         InitializeComponent();
-        Content = new VaultView(vault);
+        View = new VaultView(vault);
+        Content = View;
     }
 }

@@ -23,6 +23,12 @@ public partial class VaultView : UserControl
     private readonly VaultService _vault;
     private string? _editingOriginalName;   // non-null while the add form is editing an existing item (its original name)
 
+    /// <summary>Injected by the composition root: number of locked-time sign-ups awaiting review (readable while
+    /// unlocked), and the action that opens the review window. Wired so the deposit queue is reachable from the
+    /// vault surface the operator actually manages credentials in — not only the tray.</summary>
+    public Func<int>? PendingDepositCount { get; set; }
+    public Action? OpenDepositReview { get; set; }
+
     public VaultView(VaultService vault)
     {
         _vault = vault;
@@ -52,8 +58,23 @@ public partial class VaultView : UserControl
         EnrollPanel.Visibility  = !enrolled ? Visibility.Visible : Visibility.Collapsed;
         UnlockPanel.Visibility  = enrolled && !unlocked ? Visibility.Visible : Visibility.Collapsed;
         ManagerPanel.Visibility = unlocked ? Visibility.Visible : Visibility.Collapsed;
-        if (unlocked) PopulateItems();
+        if (unlocked) { PopulateItems(); RefreshDepositBanner(); }
     }
+
+    // Show the "pending sign-ups to review" banner when the vault is unlocked and the queue is non-empty.
+    private void RefreshDepositBanner()
+    {
+        var pending = PendingDepositCount?.Invoke() ?? 0;
+        DepositReviewBanner.Visibility = pending > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (pending > 0)
+            DepositReviewText.Text = pending == 1
+                ? "1 agent sign-up is waiting for your review"
+                : $"{pending} agent sign-ups are waiting for your review";
+    }
+
+    // Opens the review window; the composition root refreshes this view when that window closes (a commit adds a
+    // credential + drops the pending count), so the banner and list reflect the result without a manual reopen.
+    private void ReviewDepositsClick(object sender, RoutedEventArgs e) => OpenDepositReview?.Invoke();
 
     private void EnrollClick(object sender, RoutedEventArgs e)
     {

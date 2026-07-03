@@ -422,7 +422,7 @@ public partial class App : Application
         // approval-cache TTL keeps a single login from prompting per field) + domain-binding + ACL inside the resolver.
         _mcpHost.State.ResolveVaultAsync = async (text, liveOrigin, byHarness) =>
         {
-            if (_vaultService is null) return (false, null, "credential vault unavailable");
+            if (_vaultService is null) return (false, null, "credential vault unavailable", false);
             // forcePresence: every credential touch by an agent ALWAYS demands a live operator tap (Windows Hello /
             // FIDO2), regardless of the lock setting - the one boundary a same-user adversary (who could mint a
             // 'browser-extension' token) cannot forge. Fails closed when no authenticator is enrolled.
@@ -443,19 +443,22 @@ public partial class App : Application
                     : $"CREATE a new saved password for '{signupOrigin}' (agent self-signup)";
                 if (!await Security.PresenceGuard.AuthorizeAsync(
                         Foreman.Core.Security.WeakeningAction.SelfSignupVaultCredential, prompt, forcePresence: true))
-                    return (false, null, "presence not verified (enroll Windows Hello to let agents create credentials)");
-                return queued
+                    return (false, null, "presence not verified (enroll Windows Hello to let agents create credentials)", false);
+                // Carry `queued` back so the MCP audit line distinguishes a DEPOSIT-for-review (locked) from a committed
+                // CREATE — both return the generated password (the signup fills live either way), only the audit differs.
+                var (sok, svalue, sreason) = queued
                     ? _vaultService.SelfSignupDeposit(signupOrigin, liveOrigin, byHarness)
                     : _vaultService.SelfSignup(signupOrigin, liveOrigin, byHarness);
+                return (sok, svalue, sreason, queued && sok);
             }
             // Read-resolve: RELEASE an existing credential. freshTap is left default so the approval-cache TTL keeps a
             // single login from prompting per field (operator can set TTL=0 to tap every time).
             if (!await Security.PresenceGuard.AuthorizeAsync(
                     Foreman.Core.Security.WeakeningAction.ResolveVaultCredential,
                     $"release a credential into '{liveOrigin}'", forcePresence: true))
-                return (false, null, "presence not verified (enroll Windows Hello to let agents use vault credentials)");
+                return (false, null, "presence not verified (enroll Windows Hello to let agents use vault credentials)", false);
             var r = _vaultService.Resolver.Resolve(text, liveOrigin, byHarness, isOperator: string.IsNullOrEmpty(byHarness));
-            return (r.Ok, r.Resolved, r.Reason);
+            return (r.Ok, r.Resolved, r.Reason, false);   // a read-resolve RELEASES an existing credential — never queued
         };
 
         // Locked-vault deposit queue (P-BM4b): the operator reviews + commits the agent sign-ups that were QUEUED while
@@ -493,11 +496,11 @@ public partial class App : Application
                 if (_vaultService.LastDepositStatus == Foreman.Vault.VaultService.DepositKeyStatus.Tampered)
                     EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.High,
                         "Foreman.Vault", "The vault deposit-key sidecar does not match the sealed key (possible swap) - " +
-                        "locked-time sign-ups are NOT trusted. Review them via the tray."));
+                        "locked-time sign-ups are NOT trusted. Review them in the Vault window."));
                 else if (_vaultService.PendingDepositCount > 0)
                     EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Low,
                         "Foreman.Vault", $"{_vaultService.PendingDepositCount} agent sign-up(s) were queued while the " +
-                        "vault was locked - review them in the tray (\"Review pending sign-ups\")."));
+                        "vault was locked - review them in the Vault window (tray -> Vault, or Dashboard -> Vault)."));
             };
         _panicHotkey = new Foreman.App.ComputerUse.PanicHotkey(
             () => panicController.Halt($"hotkey {Foreman.App.ComputerUse.PanicHotkey.ChordText}"));
