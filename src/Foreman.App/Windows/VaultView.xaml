@@ -83,8 +83,8 @@
 
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,14,0,0">
                 <StackPanel>
-                    <!-- Locked-time agent sign-ups awaiting operator review (P-BM4 deposit queue). Surfaced HERE,
-                         where the operator manages credentials, not only in the tray. -->
+                    <!-- Locked-time agent sign-ups awaiting operator review (P-BM4 deposit queue). Surfaced + reviewed
+                         INLINE here, where the operator manages credentials — no separate window. -->
                     <Border x:Name="DepositReviewBanner" Visibility="Collapsed" Background="#FF2A2415"
                             BorderBrush="#FFE5A53A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,14">
                         <Grid>
@@ -97,6 +97,51 @@
                                     VerticalAlignment="Center" Padding="14,6"
                                     Foreground="#FFE5A53A" BorderBrush="#FFE5A53A" />
                         </Grid>
+                    </Border>
+
+                    <!-- Inline review panel: replaces the old pop-up DepositReviewWindow. Shown when the operator clicks
+                         Review; each item is Accept/Reject; Done collapses back to the list. -->
+                    <Border x:Name="DepositReviewPanel" Visibility="Collapsed" Background="#FF14161E"
+                            BorderBrush="#FF303540" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,0,0,14">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Sign-ups created while the vault was locked" FontWeight="SemiBold"
+                                           FontSize="14" VerticalAlignment="Center" />
+                                <Button Content="Done" Click="CloseReviewClick" HorizontalAlignment="Right" Padding="12,5" />
+                            </Grid>
+                            <TextBlock Foreground="{StaticResource TextMutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Text="Accept to store one in the vault (operator-only, won't overwrite an existing login), or Reject to discard. The site, harness, and time are the agent's CLAIMS, not verified facts." />
+                            <Border x:Name="ReviewWarningBox" Visibility="Collapsed" CornerRadius="6" Padding="10" Margin="0,10,0,0"
+                                    Background="#33E53935" BorderBrush="#E53935" BorderThickness="1">
+                                <TextBlock x:Name="ReviewWarningText" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold" />
+                            </Border>
+                            <ItemsControl x:Name="DepositList" Margin="0,10,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="6" Padding="12" Margin="0,0,0,8"
+                                                Background="#FF1A1D26" BorderBrush="#FF303540" BorderThickness="1">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding Sub}" Foreground="{StaticResource TextMutedBrush}" FontSize="11" Margin="0,4,0,0" />
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                                                    <Button Content="Reject" Click="RejectDepositClick" Tag="{Binding Id}" Padding="12,4" Margin="0,0,8,0" />
+                                                    <Button Content="Accept" Click="AcceptDepositClick" Tag="{Binding Id}" Padding="12,4"
+                                                            Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" FontWeight="SemiBold" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="ReviewEmptyText" Text="No pending sign-ups." Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="12" HorizontalAlignment="Center" Margin="0,10,0,0" Visibility="Collapsed" />
+                            <Grid Margin="0,8,0,0">
+                                <TextBlock x:Name="ReviewStatusText" VerticalAlignment="Center" FontSize="12"
+                                           Foreground="{StaticResource TextMutedBrush}" />
+                                <Button x:Name="ClearQueueButton" Content="Finish &amp; clear queue" Click="ClearQueueClick"
+                                        HorizontalAlignment="Right" Padding="12,5" />
+                            </Grid>
+                        </StackPanel>
                     </Border>
 
                     <ItemsControl x:Name="ItemsList">

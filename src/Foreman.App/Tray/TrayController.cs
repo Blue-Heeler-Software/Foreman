@@ -27,9 +27,7 @@ public sealed class TrayController : IEventSink, IDisposable
     private SettingsWindow? _settingsWindow;
     private ConnectAgentWindow? _connectWindow;
     private MuteManagerWindow? _muteWindow;
-    private Foreman.App.Windows.VaultWindow? _vaultWindow;
     private Foreman.App.Windows.CuApprovalsWindow? _cuApprovalsWindow;
-    private Foreman.App.Windows.DepositReviewWindow? _depositReviewWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -686,7 +684,7 @@ public sealed class TrayController : IEventSink, IDisposable
         AddMenuItem(menu, mcpLabel, null, enabled: false);
         AddMenuItem(menu, "Connect agent…", () => OpenConnectAgentWindow());
         if (Vault is not null)
-            AddMenuItem(menu, "Vault…", () => OpenVaultWindow());
+            AddMenuItem(menu, "Vault…", () => ShowDashboardTab(DashboardWindow.DashboardTab.Vault));
         if (_settings.Mutes.Count > 0)
             AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => OpenMuteManagerWindow());
         AddMenuItem(menu, "Settings…", () => OpenSettingsWindow());
@@ -814,21 +812,6 @@ public sealed class TrayController : IEventSink, IDisposable
             MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
-    // Operator-only credential vault window (enroll / unlock / manage). Never reachable over MCP.
-    private void OpenVaultWindow()
-    {
-        if (Vault is null) return;
-        if (_vaultWindow is null)
-        {
-            var w = new Foreman.App.Windows.VaultWindow(Vault);
-            ConfigureVaultView(w.View);
-            w.Closed += (_, _) => _vaultWindow = null;
-            _vaultWindow = w;
-            w.Show();
-        }
-        WindowActivation.Surface(_vaultWindow);
-    }
-
     // Build a VaultView with its deposit-review hooks wired (dashboard-tab host); null when no vault exists.
     private Foreman.App.Windows.VaultView? BuildVaultView()
     {
@@ -838,28 +821,15 @@ public sealed class TrayController : IEventSink, IDisposable
         return view;
     }
 
-    // Wire a hosted VaultView's deposit-review hooks so pending locked-time sign-ups are reviewable FROM the vault
-    // surface (where the operator manages credentials), not only the tray. Called for every VaultView we create.
+    // Wire a hosted VaultView's deposit-review hooks so pending locked-time sign-ups are reviewed INLINE on the vault
+    // surface (where the operator manages credentials), not in a separate window. Called for every VaultView we create.
     private void ConfigureVaultView(Foreman.App.Windows.VaultView view)
     {
         view.PendingDepositCount = () => PendingDepositCount?.Invoke() ?? 0;
-        view.OpenDepositReview = () => OpenDepositReviewWindow(view);
-    }
-
-    // Operator review of locked-time agent sign-ups (the P-BM4b deposit queue): drain on open, accept/reject each, clear.
-    // When opened from a vault surface, that view is refreshed on close so a committed sign-up shows in the list and the
-    // banner count drops without a manual reopen.
-    private void OpenDepositReviewWindow(Foreman.App.Windows.VaultView? refreshOnClose = null)
-    {
-        if (GetDepositReview is null || AcceptDeposit is null || RejectDeposit is null || ClearDepositQueue is null) return;
-        if (_depositReviewWindow is null)
-        {
-            var w = new Foreman.App.Windows.DepositReviewWindow(GetDepositReview(), AcceptDeposit, RejectDeposit, ClearDepositQueue);
-            w.Closed += (_, _) => { _depositReviewWindow = null; refreshOnClose?.RefreshState(); };
-            _depositReviewWindow = w;
-            w.Show();
-        }
-        WindowActivation.Surface(_depositReviewWindow);
+        view.GetDepositReview    = () => GetDepositReview?.Invoke() ?? new Foreman.App.Windows.DepositReviewSnapshot([], 0, false);
+        view.AcceptDeposit       = id => AcceptDeposit?.Invoke(id) ?? (false, "Vault unavailable.");
+        view.RejectDeposit       = id => RejectDeposit?.Invoke(id);
+        view.ClearDepositQueue   = () => ClearDepositQueue?.Invoke();
     }
 
     // Operator approve/reject for held CU actions — the in-app counterpart to the operator-only cu_approve MCP tool.
@@ -907,7 +877,6 @@ public sealed class TrayController : IEventSink, IDisposable
         _settingsWindow?.Close();
         _connectWindow?.Close();
         _muteWindow?.Close();
-        _vaultWindow?.Close();
         _tray?.Dispose();
     }
 }

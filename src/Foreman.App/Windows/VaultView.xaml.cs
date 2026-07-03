@@ -13,9 +13,9 @@ namespace Foreman.App.Windows;
 
 /// <summary>
 /// Operator-only vault UI: enroll (first run) -> unlock (master password + a Windows Hello tap) -> manage (list +
-/// add / edit / delete credentials). A <see cref="UserControl"/> so it hosts both in the dashboard's Vault tab and
-/// inside <see cref="VaultWindow"/> (tray -> Vault…). All mutations are operator-only by construction (this surface
-/// is never reachable over MCP). Secret VALUES never appear here - only names/origins/which-fields/ACL. The
+/// add / edit / delete credentials + review locked-time sign-up deposits inline). A <see cref="UserControl"/> hosted
+/// in the dashboard's Vault tab (tray "Vault…" opens it). All mutations are operator-only by construction (this
+/// surface is never reachable over MCP). Secret VALUES never appear here - only names/origins/which-fields/ACL. The
 /// agent-facing resolve path is the injection hook (P1.4); this is the human's management surface.
 /// </summary>
 public partial class VaultView : UserControl
@@ -23,11 +23,15 @@ public partial class VaultView : UserControl
     private readonly VaultService _vault;
     private string? _editingOriginalName;   // non-null while the add form is editing an existing item (its original name)
 
-    /// <summary>Injected by the composition root: number of locked-time sign-ups awaiting review (readable while
-    /// unlocked), and the action that opens the review window. Wired so the deposit queue is reachable from the
-    /// vault surface the operator actually manages credentials in — not only the tray.</summary>
+    /// <summary>Injected by the composition root so locked-time sign-ups are reviewed INLINE on this surface (no
+    /// separate window): the pending count, a drained snapshot (no secrets), and per-item accept / reject / clear.</summary>
     public Func<int>? PendingDepositCount { get; set; }
-    public Action? OpenDepositReview { get; set; }
+    public Func<DepositReviewSnapshot>? GetDepositReview { get; set; }
+    public Func<string, (bool Ok, string Reason)>? AcceptDeposit { get; set; }
+    public Action<string>? RejectDeposit { get; set; }
+    public Action? ClearDepositQueue { get; set; }
+
+    private readonly List<DepositReviewItem> _reviewItems = [];
 
     public VaultView(VaultService vault)
     {
@@ -61,20 +65,88 @@ public partial class VaultView : UserControl
         if (unlocked) { PopulateItems(); RefreshDepositBanner(); }
     }
 
-    // Show the "pending sign-ups to review" banner when the vault is unlocked and the queue is non-empty.
+    // Show the "pending sign-ups to review" banner when the vault is unlocked and the queue is non-empty (and the
+    // inline review panel isn't already open).
     private void RefreshDepositBanner()
     {
         var pending = PendingDepositCount?.Invoke() ?? 0;
-        DepositReviewBanner.Visibility = pending > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var reviewing = DepositReviewPanel.Visibility == Visibility.Visible;
+        DepositReviewBanner.Visibility = pending > 0 && !reviewing ? Visibility.Visible : Visibility.Collapsed;
         if (pending > 0)
             DepositReviewText.Text = pending == 1
                 ? "1 agent sign-up is waiting for your review"
                 : $"{pending} agent sign-ups are waiting for your review";
     }
 
-    // Opens the review window; the composition root refreshes this view when that window closes (a commit adds a
-    // credential + drops the pending count), so the banner and list reflect the result without a manual reopen.
-    private void ReviewDepositsClick(object sender, RoutedEventArgs e) => OpenDepositReview?.Invoke();
+    // Open the INLINE review panel (drains the queue). Replaces the old pop-up DepositReviewWindow.
+    private void ReviewDepositsClick(object sender, RoutedEventArgs e)
+    {
+        if (GetDepositReview is null) return;
+        var snap = GetDepositReview();
+        _reviewItems.Clear();
+        _reviewItems.AddRange(snap.Items);
+
+        ReviewWarningBox.Visibility = Visibility.Collapsed;
+        ClearQueueButton.Content = "Finish & clear queue";
+        if (snap.KeyTampered)
+        {
+            ReviewWarningText.Text = "The deposit key sidecar does not match the sealed key - it may have been swapped "
+                + "since these were queued. The queue is NOT trusted and was not decrypted. Treat any of these as suspect.";
+            ReviewWarningBox.Visibility = Visibility.Visible;
+            ClearQueueButton.Content = "Discard the suspect queue";
+        }
+        else if (snap.Failed > 0)
+        {
+            ReviewWarningText.Text = $"{snap.Failed} queued line(s) could not be decrypted (possible tampering or "
+                + "corruption). The readable sign-ups below are still shown; the bad lines are left for forensics.";
+            ReviewWarningBox.Visibility = Visibility.Visible;
+            ClearQueueButton.Content = $"Finish & clear (also discards {snap.Failed} unreadable line(s))";
+        }
+
+        ReviewStatusText.Text = string.Empty;
+        DepositReviewPanel.Visibility = Visibility.Visible;
+        DepositReviewBanner.Visibility = Visibility.Collapsed;
+        RebindReview();
+    }
+
+    private void RebindReview()
+    {
+        DepositList.ItemsSource = null;
+        DepositList.ItemsSource = _reviewItems;
+        ReviewEmptyText.Visibility = _reviewItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void AcceptDepositClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string id || AcceptDeposit is null) return;
+        var (ok, reason) = AcceptDeposit(id);
+        if (ok) { _reviewItems.RemoveAll(i => i.Id == id); RebindReview(); ReviewStatusText.Text = "Stored in the vault."; PopulateItems(); }
+        else ReviewStatusText.Text = "Not stored: " + reason;
+    }
+
+    private void RejectDepositClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string id) return;
+        RejectDeposit?.Invoke(id);
+        _reviewItems.RemoveAll(i => i.Id == id);
+        RebindReview();
+        ReviewStatusText.Text = "Discarded.";
+    }
+
+    private void ClearQueueClick(object sender, RoutedEventArgs e)
+    {
+        ClearDepositQueue?.Invoke();
+        CloseReview();
+    }
+
+    private void CloseReviewClick(object sender, RoutedEventArgs e) => CloseReview();
+
+    private void CloseReview()
+    {
+        DepositReviewPanel.Visibility = Visibility.Collapsed;
+        _reviewItems.Clear();
+        RefreshDepositBanner();   // reflect commits/rejects: the banner count updates or hides when the queue is empty
+    }
 
     private void EnrollClick(object sender, RoutedEventArgs e)
     {
