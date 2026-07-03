@@ -27,7 +27,6 @@ public sealed class TrayController : IEventSink, IDisposable
     private SettingsWindow? _settingsWindow;
     private ConnectAgentWindow? _connectWindow;
     private MuteManagerWindow? _muteWindow;
-    private Foreman.App.Windows.CuApprovalsWindow? _cuApprovalsWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -574,6 +573,7 @@ public sealed class TrayController : IEventSink, IDisposable
                     KillHarness           ?? (_ => { })),
                 log: new LogWindow(),
                 vault: BuildVaultView(),
+                approvals: BuildCuApprovalsView(),
                 setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
@@ -662,7 +662,7 @@ public sealed class TrayController : IEventSink, IDisposable
         {
             var heldCu = GetHeldCuActions().Count;
             AddMenuItem(menu, heldCu > 0 ? $"✅ Review held CU actions ({heldCu})…" : "Review held CU actions…",
-                () => OpenCuApprovalsWindow());
+                () => ShowDashboardTab(DashboardWindow.DashboardTab.Approvals));
             menu.Items.Add(new Separator());
         }
         // (Locked-time agent sign-ups awaiting review now live IN the vault surface — a banner in the Vault window /
@@ -821,6 +821,12 @@ public sealed class TrayController : IEventSink, IDisposable
         return view;
     }
 
+    // Build the held-CU-actions approval view for the dashboard "Approvals" tab; null until the CU broker is wired.
+    private Foreman.App.Windows.CuApprovalsView? BuildCuApprovalsView() =>
+        GetHeldCuActions is null || ApproveCuAction is null || RejectCuAction is null
+            ? null
+            : new Foreman.App.Windows.CuApprovalsView(GetHeldCuActions, ApproveCuAction, RejectCuAction);
+
     // Wire a hosted VaultView's deposit-review hooks so pending locked-time sign-ups are reviewed INLINE on the vault
     // surface (where the operator manages credentials), not in a separate window. Called for every VaultView we create.
     private void ConfigureVaultView(Foreman.App.Windows.VaultView view)
@@ -830,20 +836,6 @@ public sealed class TrayController : IEventSink, IDisposable
         view.AcceptDeposit       = id => AcceptDeposit?.Invoke(id) ?? (false, "Vault unavailable.");
         view.RejectDeposit       = id => RejectDeposit?.Invoke(id);
         view.ClearDepositQueue   = () => ClearDepositQueue?.Invoke();
-    }
-
-    // Operator approve/reject for held CU actions — the in-app counterpart to the operator-only cu_approve MCP tool.
-    private void OpenCuApprovalsWindow()
-    {
-        if (GetHeldCuActions is null || ApproveCuAction is null || RejectCuAction is null) return;
-        if (_cuApprovalsWindow is null)
-        {
-            var w = new Foreman.App.Windows.CuApprovalsWindow(GetHeldCuActions, ApproveCuAction, RejectCuAction);
-            w.Closed += (_, _) => _cuApprovalsWindow = null;
-            _cuApprovalsWindow = w;
-            w.Show();
-        }
-        WindowActivation.Surface(_cuApprovalsWindow);
     }
 
     private void OpenMuteManagerWindow()

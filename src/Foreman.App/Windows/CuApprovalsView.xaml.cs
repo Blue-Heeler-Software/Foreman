@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 
 namespace Foreman.App.Windows;
@@ -11,19 +12,20 @@ public sealed record HeldCuView(string ActionId, string Verb, string Modality, s
 }
 
 /// <summary>
-/// Operator approve/reject surface for CU actions the auditor HELD. Until now a held action (an agent self-signup, or a
-/// default-held desktop action) could only be cleared via the operator-only cu_approve MCP tool - there was no in-app
-/// control, so the human-in-the-loop the design rests on had nowhere to act. This is that control. Approve/Reject route
-/// through the same broker path (and the same desktop presence tap) as the MCP tools.
+/// Operator approve/reject surface for CU actions the auditor HELD (an agent self-signup, or a default-held desktop
+/// action). Hosted as the Dashboard "Approvals" tab. Approve/Reject route through the same broker path (and the same
+/// desktop presence tap) as the operator-only cu_approve / cu_reject MCP tools. Origin/harness/args are the agent's
+/// CLAIMS, surfaced read-only; the operator decides. A UserControl (was a standalone window) so it lives in the one
+/// Dashboard rather than as another floating window.
 /// </summary>
-public partial class CuApprovalsWindow : Window
+public partial class CuApprovalsView : UserControl
 {
     private readonly Func<IReadOnlyList<HeldCuView>> _getHeld;
     private readonly Func<string, Task<(bool Ok, string Reason)>> _approve;
     private readonly Func<string, string?, (bool Ok, string Reason)> _reject;
     private readonly DispatcherTimer _timer;
 
-    public CuApprovalsWindow(
+    public CuApprovalsView(
         Func<IReadOnlyList<HeldCuView>> getHeld,
         Func<string, Task<(bool Ok, string Reason)>> approve,
         Func<string, string?, (bool Ok, string Reason)> reject)
@@ -32,13 +34,16 @@ public partial class CuApprovalsWindow : Window
         _approve = approve;
         _reject = reject;
         InitializeComponent();
+        // Live refresh while the tab is on screen; stopped when it leaves the visual tree so it costs nothing when
+        // another tab is showing.
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _timer.Tick += (_, _) => Refresh();
-        Loaded += (_, _) => { Refresh(); _timer.Start(); };
-        Closed += (_, _) => _timer.Stop();
+        _timer.Tick += (_, _) => RefreshState();
+        Loaded   += (_, _) => { RefreshState(); _timer.Start(); };
+        Unloaded += (_, _) => _timer.Stop();
     }
 
-    private void Refresh()
+    /// <summary>Re-read the held-action list. Called on load, on the 2s tick, on tab-show, and by Refresh.</summary>
+    public void RefreshState()
     {
         IReadOnlyList<HeldCuView> held;
         try { held = _getHeld(); } catch { held = []; }
@@ -56,7 +61,7 @@ public partial class CuApprovalsWindow : Window
             StatusText.Text = ok ? "Approved." : $"Not approved: {reason}";
         }
         catch (Exception ex) { StatusText.Text = "Approve failed: " + ex.Message; }
-        Refresh();
+        RefreshState();
     }
 
     private void RejectClick(object sender, RoutedEventArgs e)
@@ -64,9 +69,8 @@ public partial class CuApprovalsWindow : Window
         if (sender is not FrameworkElement { Tag: string id }) return;
         var (ok, reason) = _reject(id, null);
         StatusText.Text = ok ? "Rejected." : $"Couldn't reject: {reason}";
-        Refresh();
+        RefreshState();
     }
 
-    private void RefreshClick(object sender, RoutedEventArgs e) => Refresh();
-    private void CloseClick(object sender, RoutedEventArgs e) => Close();
+    private void RefreshClick(object sender, RoutedEventArgs e) => RefreshState();
 }
