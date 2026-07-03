@@ -672,5 +672,6 @@
       <TabItem Header="Approvals"><ContentControl x:Name="ApprovalsSlot" /></TabItem>
       <TabItem Header="Setup"><ContentControl x:Name="SetupSlot" /></TabItem>
       <TabItem Header="Mutes"><ContentControl x:Name="MutesSlot" /></TabItem>
+      <TabItem Header="Connect"><ContentControl x:Name="ConnectSlot" /></TabItem>
     </TabControl>
 </Window>

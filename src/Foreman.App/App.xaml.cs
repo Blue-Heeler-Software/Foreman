@@ -1020,8 +1020,7 @@ public partial class App : Application
         var port = settings.McpPort;
         var mcpToken = _mcpHost.McpToken;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
-            () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _mcpHost.Sessions.DescribeSessions(),
-                id => _mcpHost.MintHarnessToken(id)));
+            () => FirstRunDetector.RunIfNeeded(port, mcpToken, () => _tray!.OpenConnectAgent()));
     }
 
     // Bind an external rollback anchor to Foreman's pinned head-seal key before it goes into the OS event log, so a

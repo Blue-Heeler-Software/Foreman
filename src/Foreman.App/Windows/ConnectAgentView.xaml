@@ -1,13 +1,10 @@
-<Window x:Class="Foreman.App.Windows.ConnectAgentWindow"
+<UserControl x:Class="Foreman.App.Windows.ConnectAgentView"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Connect an agent — Foreman Agent Safety"
-        Width="720" Height="760"
-        WindowStartupLocation="CenterScreen"
         Background="{StaticResource BackgroundBrush}"
         TextOptions.TextFormattingMode="Display">
 
-    <Window.Resources>
+    <UserControl.Resources>
         <Style TargetType="Button">
             <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
@@ -42,7 +39,7 @@
             <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
             <Setter Property="FontFamily" Value="Segoe UI, Arial" />
         </Style>
-    </Window.Resources>
+    </UserControl.Resources>
 
     <Grid Margin="18">
         <Grid.RowDefinitions>
@@ -292,8 +289,6 @@
         <Grid Grid.Row="2" Margin="0,12,0,0">
             <TextBlock x:Name="StatusText" VerticalAlignment="Center" HorizontalAlignment="Left"
                        FontSize="12" Foreground="{StaticResource TextMutedBrush}" FontFamily="Segoe UI, Arial" />
-            <Button Content="Close" Click="CloseClick" HorizontalAlignment="Right" Padding="18,6"
-                    Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
         </Grid>
     </Grid>
-</Window>
+</UserControl>

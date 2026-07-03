@@ -1,12 +1,10 @@
-using Foreman.App.Windows;
-using Foreman.McpServer;
 using System.IO;
 using System.Windows;
 
 namespace Foreman.App;
 
 /// <summary>
-/// On first launch, points users at the agent connection guide.
+/// On first launch, points users at the agent connection guide (the dashboard "Connect" tab).
 /// </summary>
 public static class FirstRunDetector
 {
@@ -14,11 +12,7 @@ public static class FirstRunDetector
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Foreman", "first-run-complete.flag");
 
-    public static void RunIfNeeded(
-        int mcpPort,
-        string mcpToken,
-        Func<IReadOnlyList<McpClientInfo>>? getClients = null,
-        Func<string, string>? mintToken = null)
+    public static void RunIfNeeded(int mcpPort, string mcpToken, Action openConnectGuide)
     {
         if (File.Exists(_flagPath)) return;
 
@@ -40,8 +34,7 @@ public static class FirstRunDetector
 
         if (choice == MessageBoxResult.Yes)
         {
-            var connect = new ConnectAgentWindow(mcpPort, mcpToken, getClients, mintToken);
-            WindowActivation.Surface(connect);
+            openConnectGuide();
             return;
         }
 

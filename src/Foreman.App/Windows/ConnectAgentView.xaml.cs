@@ -3,15 +3,17 @@ using Foreman.Core.Integration;
 using Foreman.Core.Models;
 using Foreman.McpServer;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace Foreman.App.Windows;
 
 /// <summary>
 /// Beginner-friendly "connect your agent" guide. Shows who's connected now (with sampling capability),
 /// one-click connect for Claude Code and Codex, and copy-paste self-config
-/// (URL + Authorization header, token filled in) for any other MCP client.
+/// (URL + Authorization header, token filled in) for any other MCP client. Hosted as the Dashboard "Connect"
+/// tab (was a standalone window).
 /// </summary>
-public partial class ConnectAgentWindow : Window
+public partial class ConnectAgentView : UserControl
 {
     private readonly int _port;
     private readonly string _token;          // raw install token (operator/unscoped) — used for the generic path
@@ -26,7 +28,7 @@ public partial class ConnectAgentWindow : Window
     public Func<string?>? GetCuDriver { get; set; }
     public Action<string?>? SetCuDriver { get; set; }
 
-    public ConnectAgentWindow(int port, string token, Func<IReadOnlyList<McpClientInfo>>? getClients,
+    public ConnectAgentView(int port, string token, Func<IReadOnlyList<McpClientInfo>>? getClients,
                               Func<string, string>? mintToken = null, Func<string>? beginPairing = null,
                               Func<IReadOnlyCollection<string>>? getRunningHarnessIds = null,
                               Func<bool>? isLiveWeaveConnected = null)
@@ -419,5 +421,10 @@ public partial class ConnectAgentWindow : Window
         RefreshConnected();
     }
 
-    private void CloseClick(object sender, RoutedEventArgs e) => Close();
+    /// <summary>Re-read the connected-agent list + CU driver state; called on tab-show.</summary>
+    public void RefreshState()
+    {
+        RefreshConnected();
+        RefreshCuDriver();
+    }
 }

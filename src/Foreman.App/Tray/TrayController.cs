@@ -25,7 +25,6 @@ public sealed class TrayController : IEventSink, IDisposable
     private TrayStatus _status = TrayStatus.Green;
     private int _activeAlerts;
     private SettingsWindow? _settingsWindow;
-    private ConnectAgentWindow? _connectWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -520,7 +519,7 @@ public sealed class TrayController : IEventSink, IDisposable
         {
             var w = new DashboardWindow(GetBehaviorProfiles ?? (() => []));
             w.OpenSettingsRequested = () => OpenSettingsWindow();
-            w.OpenConnectAgentRequested = () => OpenConnectAgentWindow();
+            w.OpenConnectAgentRequested = () => w.ShowTab(DashboardWindow.DashboardTab.Connect);
             // Mute/unmute yellow (medium) warning toasts so they don't spam — notifications only; alerts still
             // log, count, and show in the dashboard. Persisted so it survives restarts.
             w.SetWarningsMuted = muted => { _settings.NotifyOnWarning = !muted; SettingsStore.Save(_settings); };
@@ -574,7 +573,8 @@ public sealed class TrayController : IEventSink, IDisposable
                 vault: BuildVaultView(),
                 approvals: BuildCuApprovalsView(),
                 setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth),
-                mutes: new Foreman.App.Windows.MutesView(_settings, () => SettingsStore.Save(_settings)));
+                mutes: new Foreman.App.Windows.MutesView(_settings, () => SettingsStore.Save(_settings)),
+                connect: BuildConnectAgentView());
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
             _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap
@@ -588,6 +588,9 @@ public sealed class TrayController : IEventSink, IDisposable
         OpenDashboardWindow();
         _dashboardWindow?.ShowTab(tab);
     }
+
+    /// <summary>Open the dashboard on the "Connect" tab — the connect-agent guide (used by the first-run prompt).</summary>
+    public void OpenConnectAgent() => ShowDashboardTab(DashboardWindow.DashboardTab.Connect);
 
     // The former standalone windows are now dashboard tabs; these keep all existing callers working.
     private void OpenLogWindow()             => ShowDashboardTab(DashboardWindow.DashboardTab.Log);
@@ -682,7 +685,7 @@ public sealed class TrayController : IEventSink, IDisposable
             ? $"MCP Server: port {_settings.McpPort}  ·  {clients} client{(clients == 1 ? "" : "s")}"
             : $"MCP Server: port {_settings.McpPort}  ·  no clients";
         AddMenuItem(menu, mcpLabel, null, enabled: false);
-        AddMenuItem(menu, "Connect agent…", () => OpenConnectAgentWindow());
+        AddMenuItem(menu, "Connect agent…", () => ShowDashboardTab(DashboardWindow.DashboardTab.Connect));
         if (Vault is not null)
             AddMenuItem(menu, "Vault…", () => ShowDashboardTab(DashboardWindow.DashboardTab.Vault));
         if (_settings.Mutes.Count > 0)
@@ -753,34 +756,24 @@ public sealed class TrayController : IEventSink, IDisposable
             ok2 ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
-    // Opens the beginner-friendly "Connect an agent" guide (Claude Code one-click + copy-paste config).
-    private void OpenConnectAgentWindow()
+    // Build the beginner-friendly "Connect an agent" guide for the dashboard "Connect" tab (Claude Code one-click +
+    // copy-paste config). Null until the MCP token exists (server still starting) — the tab is empty until then.
+    private Foreman.App.Windows.ConnectAgentView? BuildConnectAgentView()
     {
         var token = GetMcpToken?.Invoke();
-        if (string.IsNullOrWhiteSpace(token))
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var view = new Foreman.App.Windows.ConnectAgentView(_settings.McpPort, token, GetConnectedClients, MintHarnessToken, BeginPairing,
+            () => (GetProcessSnapshot?.Invoke() ?? [])
+                .Where(p => !string.IsNullOrEmpty(p.HarnessType))
+                .Select(p => p.HarnessType!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            IsLiveWeaveConnected)
         {
-            MessageBox.Show(
-                "Foreman Agent Safety's MCP token isn't ready yet — give the server a moment to start, then try again.",
-                "Foreman Agent Safety — Connect agent", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        if (_connectWindow is null)
-        {
-            var w = new ConnectAgentWindow(_settings.McpPort, token, GetConnectedClients, MintHarnessToken, BeginPairing,
-                () => (GetProcessSnapshot?.Invoke() ?? [])
-                    .Where(p => !string.IsNullOrEmpty(p.HarnessType))
-                    .Select(p => p.HarnessType!)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray(),
-                IsLiveWeaveConnected);
-            w.GetCuDriver = GetCuDriver;
-            w.SetCuDriver = SetCuDriver;
-            w.Closed += (_, _) => _connectWindow = null;
-            _connectWindow = w;
-            w.Show();
-        }
-        WindowActivation.Surface(_connectWindow);
+            GetCuDriver = GetCuDriver,
+            SetCuDriver = SetCuDriver,
+        };
+        return view;
     }
 
     // "Prep sessions for update": cooperate with the living (ask active sessions to checkpoint), reap the abandoned
@@ -855,7 +848,6 @@ public sealed class TrayController : IEventSink, IDisposable
         _gameMode?.Dispose();
         _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views
         _settingsWindow?.Close();
-        _connectWindow?.Close();
         _tray?.Dispose();
     }
 }
