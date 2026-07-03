@@ -6,17 +6,19 @@ using System.Windows.Controls;
 
 namespace Foreman.App.Windows;
 
-public partial class SettingsWindow : Window
+/// <summary>Settings surface, hosted as the Dashboard "Settings" tab (was a standalone window). Changes apply on
+/// Save (some, like port + guardian, need a restart); Revert discards unsaved edits in place.</summary>
+public partial class SettingsView : UserControl
 {
     private readonly ForemanSettings _settings;
     private readonly Action<bool>? _onRunElevatedChanged;
     private readonly Action<bool>? _onScanMcpToolsChanged;
     private readonly Action? _onDecoyAuditChanged;
 
-    public SettingsWindow(ForemanSettings settings,
-                          Action<bool>? onRunElevatedChanged = null,
-                          Action<bool>? onScanMcpToolsChanged = null,
-                          Action? onDecoyAuditChanged = null)
+    public SettingsView(ForemanSettings settings,
+                        Action<bool>? onRunElevatedChanged = null,
+                        Action<bool>? onScanMcpToolsChanged = null,
+                        Action? onDecoyAuditChanged = null)
     {
         _settings = settings;
         _onRunElevatedChanged = onRunElevatedChanged;
@@ -344,7 +346,8 @@ public partial class SettingsWindow : Window
         if (scanMcpToolsChanged)
             _onScanMcpToolsChanged?.Invoke(_settings.ScanMcpTools);
 
-        Close();
+        // Hosted as a tab (no window to close) — confirm in place instead.
+        SavedStatus.Text = "Saved.";
     }
 
     /// <summary>
@@ -429,5 +432,22 @@ public partial class SettingsWindow : Window
     private static bool AuditSetEqual(IReadOnlyList<string> a, IReadOnlyList<string> b)
         => a.Count == b.Count && new HashSet<string>(a, StringComparer.OrdinalIgnoreCase).SetEquals(b);
 
-    private void CancelClick(object sender, RoutedEventArgs e) => Close();
+    // Revert discards unsaved edits by re-reading the saved settings back into the controls (in place; there is no
+    // window to close). The presence lock + guardian buttons already act immediately, so they need no revert.
+    private void RevertClick(object sender, RoutedEventArgs e)
+    {
+        Populate();
+        RefreshPresenceLock();
+        RefreshGuardian();
+        SavedStatus.Text = "Reverted unsaved changes.";
+    }
+
+    /// <summary>Re-read settings into the controls when the tab is shown, so it reflects changes made elsewhere.</summary>
+    public void RefreshState()
+    {
+        Populate();
+        RefreshPresenceLock();
+        RefreshGuardian();
+        SavedStatus.Text = string.Empty;
+    }
 }

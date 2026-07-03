@@ -50,6 +50,7 @@ public partial class DashboardWindow : Window, IEventSink
     private SetupHealthView? _setupView; // refreshed when its tab is shown (reflects live service state)
     private MutesView? _mutesView; // refreshed when its tab is shown (reflects mutes added/expired elsewhere)
     private ConnectAgentView? _connectView; // refreshed when its tab is shown (keeps the connected-agent list live)
+    private SettingsView? _settingsView; // refreshed when its tab is shown (reflects settings changed elsewhere)
 
     /// <summary>Wired by TrayController — Settings and Connect-agent stay as separate dialogs.</summary>
     public Action? OpenSettingsRequested { get; set; }
@@ -845,14 +846,14 @@ public partial class DashboardWindow : Window, IEventSink
 
     // ── Tabs / hosted views ───────────────────────────────────────────────────
 
-    public enum DashboardTab { Overview = 0, Processes = 1, Harnesses = 2, Behavior = 3, Log = 4, Vault = 5, Approvals = 6, Setup = 7, Mutes = 8, Connect = 9 }
+    public enum DashboardTab { Overview = 0, Processes = 1, Harnesses = 2, Behavior = 3, Log = 4, Vault = 5, Approvals = 6, Setup = 7, Mutes = 8, Connect = 9, Settings = 10 }
 
     public void ShowTab(DashboardTab tab) => Tabs.SelectedIndex = (int)tab;
 
     /// <summary>Injects the monitoring views (built by the tray) into their tabs; disposed on close.</summary>
     public void HostViews(UIElement? processes, UIElement? harnesses, UIElement? behavior, UIElement? log,
                           UIElement? vault = null, UIElement? approvals = null, UIElement? setup = null,
-                          UIElement? mutes = null, UIElement? connect = null)
+                          UIElement? mutes = null, UIElement? connect = null, UIElement? settings = null)
     {
         ProcessSlot.Content   = processes;
         HarnessSlot.Content   = harnesses;
@@ -863,6 +864,7 @@ public partial class DashboardWindow : Window, IEventSink
         SetupSlot.Content     = setup;
         MutesSlot.Content     = mutes;
         ConnectSlot.Content   = connect;
+        SettingsSlot.Content  = settings;
         _harnessView   = harnesses as HarnessesWindow;   // for the unsaved-changes prompt on navigate-away
         _logView       = log as LogWindow;               // for tile deep-links with a pre-set severity filter
         _vaultView     = vault as VaultView;             // refreshed on tab-show so it reflects external lock/unlock
@@ -870,9 +872,10 @@ public partial class DashboardWindow : Window, IEventSink
         _setupView     = setup as SetupHealthView;       // refreshed on tab-show so it reflects live service state
         _mutesView     = mutes as MutesView;             // refreshed on tab-show so it reflects mutes added/expired elsewhere
         _connectView   = connect as ConnectAgentView;    // refreshed on tab-show so the connected-agent list stays live
+        _settingsView  = settings as SettingsView;        // refreshed on tab-show so it reflects settings changed elsewhere
         if (_harnessView is not null)
             _harnessView.OpenConnectAgent = () => OpenConnectAgentRequested?.Invoke();
-        foreach (var v in new object?[] { processes, harnesses, behavior, log, vault, approvals, setup, mutes, connect })
+        foreach (var v in new object?[] { processes, harnesses, behavior, log, vault, approvals, setup, mutes, connect, settings })
             if (v is IDisposable d) _hostedViews.Add(d);
     }
 

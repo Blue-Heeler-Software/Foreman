@@ -673,5 +673,6 @@
       <TabItem Header="Setup"><ContentControl x:Name="SetupSlot" /></TabItem>
       <TabItem Header="Mutes"><ContentControl x:Name="MutesSlot" /></TabItem>
       <TabItem Header="Connect"><ContentControl x:Name="ConnectSlot" /></TabItem>
+      <TabItem Header="Settings"><ContentControl x:Name="SettingsSlot" /></TabItem>
     </TabControl>
 </Window>

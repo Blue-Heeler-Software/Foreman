@@ -24,7 +24,6 @@ public sealed class TrayController : IEventSink, IDisposable
     private DashboardWindow? _dashboardWindow;   // hosts Process/Harness/Behavior/Log as tabs
     private TrayStatus _status = TrayStatus.Green;
     private int _activeAlerts;
-    private SettingsWindow? _settingsWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -518,7 +517,7 @@ public sealed class TrayController : IEventSink, IDisposable
         if (_dashboardWindow is null)
         {
             var w = new DashboardWindow(GetBehaviorProfiles ?? (() => []));
-            w.OpenSettingsRequested = () => OpenSettingsWindow();
+            w.OpenSettingsRequested = () => w.ShowTab(DashboardWindow.DashboardTab.Settings);
             w.OpenConnectAgentRequested = () => w.ShowTab(DashboardWindow.DashboardTab.Connect);
             // Mute/unmute yellow (medium) warning toasts so they don't spam — notifications only; alerts still
             // log, count, and show in the dashboard. Persisted so it survives restarts.
@@ -574,7 +573,8 @@ public sealed class TrayController : IEventSink, IDisposable
                 approvals: BuildCuApprovalsView(),
                 setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth),
                 mutes: new Foreman.App.Windows.MutesView(_settings, () => SettingsStore.Save(_settings)),
-                connect: BuildConnectAgentView());
+                connect: BuildConnectAgentView(),
+                settings: new Foreman.App.Windows.SettingsView(_settings, ApplyRunElevated, ApplyScanMcpTools, ApplyDecoyAuditing));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
             _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap
@@ -617,18 +617,6 @@ public sealed class TrayController : IEventSink, IDisposable
             "Nothing to do — this is a drill. Click the tray notification or double-click " +
             "the log row to verify AlertDetailWindow opens, then acknowledge it.",
             0));
-    }
-
-    private void OpenSettingsWindow()
-    {
-        if (_settingsWindow is null)
-        {
-            var w = new SettingsWindow(_settings, ApplyRunElevated, ApplyScanMcpTools, ApplyDecoyAuditing);
-            w.Closed += (_, _) => _settingsWindow = null;
-            _settingsWindow = w;
-            w.Show();
-        }
-        WindowActivation.Surface(_settingsWindow);
     }
 
     /// <summary>Rebuild the tray context menu now (e.g. when the computer-use panic state flips and the colour
@@ -690,7 +678,7 @@ public sealed class TrayController : IEventSink, IDisposable
             AddMenuItem(menu, "Vault…", () => ShowDashboardTab(DashboardWindow.DashboardTab.Vault));
         if (_settings.Mutes.Count > 0)
             AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => ShowDashboardTab(DashboardWindow.DashboardTab.Mutes));
-        AddMenuItem(menu, "Settings…", () => OpenSettingsWindow());
+        AddMenuItem(menu, "Settings…", () => ShowDashboardTab(DashboardWindow.DashboardTab.Settings));
         menu.Items.Add(new Separator());
         var plLabel = Foreman.App.Security.PresenceGuard.IsEnabled
             ? $"Presence lock: ON ({Foreman.App.Security.PresenceGuard.AuthenticatorLabel})"
@@ -846,8 +834,7 @@ public sealed class TrayController : IEventSink, IDisposable
     {
         _cadenceFlushTimer?.Stop();
         _gameMode?.Dispose();
-        _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views
-        _settingsWindow?.Close();
+        _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views (incl. Settings/Connect)
         _tray?.Dispose();
     }
 }
