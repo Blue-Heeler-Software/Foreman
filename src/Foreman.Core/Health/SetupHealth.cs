@@ -119,9 +119,14 @@ public static class SetupHealth
             items.Add(new("Decoy credentials", SetupHealthStatus.Ok, $"{s.DecoysPlanted} decoy(s) planted and tracked."));
 
         // 7b. Read-auditing rides the elevated sidecar; enabled-but-disconnected means no SACL tripwire is live.
+        // NOTE the honest limit: a connected sidecar proves the auditor is RUNNING, not that Security 4663 events
+        // actually flow — Group Policy / Advanced Audit Policy can override `auditpol` so the SACL is set but no
+        // event fires. In-process Foreman can't see that; only a live read test can. So don't claim "working".
         if (s.DecoysEnabled && s.ReadAuditingEnabled)
             items.Add(s.SidecarConnected
-                ? new("Decoy read-auditing", SetupHealthStatus.Ok, "Elevated sidecar connected — direct reads of bait decoys are audited.")
+                ? new("Decoy read-auditing", SetupHealthStatus.Ok,
+                    "Elevated sidecar connected — direct reads of bait decoys should alert. If a known decoy read does NOT alert, " +
+                    "the OS audit policy may be overridden (Group Policy); run the decoy self-test to confirm 4663 events actually flow.")
                 : new("Decoy read-auditing", SetupHealthStatus.Attention,
                     "Enabled, but the elevated sidecar is not connected — no read tripwire is actually live.",
                     "Re-apply in Settings and accept the UAC prompt (and check nothing tracked is planted: see the decoys row)."));
