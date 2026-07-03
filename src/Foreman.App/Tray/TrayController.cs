@@ -26,7 +26,6 @@ public sealed class TrayController : IEventSink, IDisposable
     private int _activeAlerts;
     private SettingsWindow? _settingsWindow;
     private ConnectAgentWindow? _connectWindow;
-    private MuteManagerWindow? _muteWindow;
     private ForemanEvent? _lastBalloonEvent;
     private EscalationLevel _highestEscalation = EscalationLevel.Watch;
     // guard: only show one Emergency window per harness per session
@@ -574,7 +573,8 @@ public sealed class TrayController : IEventSink, IDisposable
                 log: new LogWindow(),
                 vault: BuildVaultView(),
                 approvals: BuildCuApprovalsView(),
-                setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth));
+                setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth),
+                mutes: new Foreman.App.Windows.MutesView(_settings, () => SettingsStore.Save(_settings)));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
             _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap
@@ -686,7 +686,7 @@ public sealed class TrayController : IEventSink, IDisposable
         if (Vault is not null)
             AddMenuItem(menu, "Vault…", () => ShowDashboardTab(DashboardWindow.DashboardTab.Vault));
         if (_settings.Mutes.Count > 0)
-            AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => OpenMuteManagerWindow());
+            AddMenuItem(menu, $"Muted alerts… ({_settings.Mutes.Count})", () => ShowDashboardTab(DashboardWindow.DashboardTab.Mutes));
         AddMenuItem(menu, "Settings…", () => OpenSettingsWindow());
         menu.Items.Add(new Separator());
         var plLabel = Foreman.App.Security.PresenceGuard.IsEnabled
@@ -838,18 +838,6 @@ public sealed class TrayController : IEventSink, IDisposable
         view.ClearDepositQueue   = () => ClearDepositQueue?.Invoke();
     }
 
-    private void OpenMuteManagerWindow()
-    {
-        if (_muteWindow is null)
-        {
-            var w = new MuteManagerWindow(_settings, () => SettingsStore.Save(_settings));
-            w.Closed += (_, _) => _muteWindow = null;
-            _muteWindow = w;
-            w.Show();
-        }
-        WindowActivation.Surface(_muteWindow);
-    }
-
     private static void AddMenuItem(ContextMenu menu, string header, Action? onClick, bool enabled = true)
     {
         var item = new MenuItem { Header = header, IsEnabled = enabled };
@@ -868,7 +856,6 @@ public sealed class TrayController : IEventSink, IDisposable
         _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views
         _settingsWindow?.Close();
         _connectWindow?.Close();
-        _muteWindow?.Close();
         _tray?.Dispose();
     }
 }

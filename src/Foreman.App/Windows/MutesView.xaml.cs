@@ -1,28 +1,30 @@
 using Foreman.Core.Models;
 using Foreman.Core.Settings;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace Foreman.App.Windows;
 
 /// <summary>
-/// Lists the operator's active alert mutes and lets them be removed. Mutes only quiet tray popups
-/// (never stop detection), and the manager is what makes a non-expiring "until I clear it" mute safe —
-/// there's now somewhere to clear it.
+/// Lists the operator's active alert mutes and lets them be removed. Mutes only quiet tray popups (never stop
+/// detection). Hosted as the Dashboard "Mutes" tab (was a standalone window). Refreshed on tab-show so it reflects
+/// mutes added/expired elsewhere.
 /// </summary>
-public partial class MuteManagerWindow : Window
+public partial class MutesView : UserControl
 {
     private readonly ForemanSettings _settings;
     private readonly Action _persist;
 
-    public MuteManagerWindow(ForemanSettings settings, Action persist)
+    public MutesView(ForemanSettings settings, Action persist)
     {
         _settings = settings;
         _persist = persist;
         InitializeComponent();
-        Refresh();
+        Loaded += (_, _) => RefreshState();
     }
 
-    private void Refresh()
+    /// <summary>Re-read the mute list. Called on load and on tab-show.</summary>
+    public void RefreshState()
     {
         var now = DateTimeOffset.UtcNow;
         var rows = _settings.Mutes
@@ -42,7 +44,7 @@ public partial class MuteManagerWindow : Window
         {
             _settings.Mutes.Remove(entry);
             _persist();
-            Refresh();
+            RefreshState();
         }
     }
 
@@ -51,17 +53,15 @@ public partial class MuteManagerWindow : Window
         var now = DateTimeOffset.UtcNow;
         _settings.Mutes.RemoveAll(m => m.Until is { } u && u <= now);
         _persist();
-        Refresh();
+        RefreshState();
     }
 
     private void ClearAllClick(object sender, RoutedEventArgs e)
     {
         _settings.Mutes.Clear();
         _persist();
-        Refresh();
+        RefreshState();
     }
-
-    private void CloseClick(object sender, RoutedEventArgs e) => Close();
 }
 
 /// <summary>Row VM for the mute list.</summary>
@@ -77,9 +77,9 @@ public sealed class MuteRowVm
         What = string.IsNullOrWhiteSpace(entry.Label) ? $"{entry.Scope}: {entry.Value}" : entry.Label;
         Status = entry.Until switch
         {
-            null                       => "Muted until cleared",
-            { } u when u <= now        => "Expired (will clear on its own)",
-            { } u                      => $"Muted until {u.ToLocalTime():g}",
+            null                => "Muted until cleared",
+            { } u when u <= now => "Expired (will clear on its own)",
+            { } u               => $"Muted until {u.ToLocalTime():g}",
         };
     }
 }
