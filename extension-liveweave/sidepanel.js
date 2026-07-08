@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 
 port.onMessage.addListener((m) => {
     if (m?.kind === 'status') render(m);
-    else if (m?.kind === 'pair-result' && !m.ok) setHint(m.error || 'Pairing failed.', 'bad');
+    // (no pair-result branch: pairing lives in the options page, which gets its result via sendMessage directly)
 });
 $('refresh').addEventListener('click', () => port.postMessage({ kind: 'refresh' }));
 $('openCanvas').addEventListener('click', () => port.postMessage({ kind: 'open-canvas' }));
@@ -11,7 +11,7 @@ $('openCanvas').addEventListener('click', () => port.postMessage({ kind: 'open-c
 document.querySelectorAll('[data-cmd]').forEach((b) =>
     b.addEventListener('click', () => port.postMessage({ kind: 'command', action: b.dataset.cmd })));
 
-function setHint(text, _cls) { $('hint').textContent = text; }
+function setHint(text) { $('hint').textContent = text; }
 
 function render(m) {
     const badge = $('badge');

@@ -39,7 +39,7 @@ export async function openMcpSession(baseUrl, token, clientInfo = { name: 'forem
         throw httpError(initRes.status, `initialize failed (${initRes.status}): ${err.slice(0, 160)}`);
     }
 
-    const initMsg = await readJsonRpc(initRes);
+    const initMsg = await readJsonRpc(initRes, 1);   // initialize request id is 1
     let sessionId = initRes.headers.get('Mcp-Session-Id')
         ?? initMsg?.result?.sessionId
         ?? initMsg?.result?.serverInfo?.sessionId;
@@ -60,32 +60,30 @@ export async function openMcpSession(baseUrl, token, clientInfo = { name: 'forem
     return { baseUrl, headers: sessionHeaders, sessionId, serverInfo: initMsg?.result?.serverInfo };
 }
 
+let nextRpcId = 1;   // monotonic request ids so a response can be correlated to its request
+
 export async function callMcpTool(session, name, args = {}) {
+    const id = nextRpcId++;
     const res = await fetch(`${session.baseUrl}/mcp`, {
         method: 'POST',
         headers: session.headers,
-        body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: Date.now(),
-            method: 'tools/call',
-            params: { name, arguments: args },
-        }),
+        body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),
     });
     if (!res.ok) {
         const err = await res.text().catch(() => '');
         throw httpError(res.status, `tools/call ${name} failed (${res.status}): ${err.slice(0, 160)}`);
     }
-    const msg = await readJsonRpc(res);
+    const msg = await readJsonRpc(res, id);
     if (msg?.error) throw new Error(msg.error.message || 'tools/call error');
     return unwrapToolResult(msg?.result);
 }
 
-async function readJsonRpc(res) {
+async function readJsonRpc(res, wantId) {
     const text = await res.text();
-    return parseJsonRpcPayload(text);
+    return parseJsonRpcPayload(text, wantId);
 }
 
-export function parseJsonRpcPayload(text) {
+export function parseJsonRpcPayload(text, wantId) {
     if (!text?.trim()) return null;
 
     const ct = text.trim();
@@ -93,15 +91,22 @@ export function parseJsonRpcPayload(text) {
         try { return JSON.parse(ct); } catch { /* fall through to SSE */ }
     }
 
-    // Streamable HTTP wraps JSON-RPC in SSE: "event: message\ndata: {...}"
+    // Streamable HTTP wraps JSON-RPC in SSE. Per spec, one event's data is ALL its `data:` lines joined with \n,
+    // and events are separated by a blank line — so parse per event, not per line. Then prefer the message whose
+    // id matches this request (falling back to the last, which preserves behaviour against a single-message server).
     const messages = [];
-    for (const line of text.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('data:')) {
-            const payload = trimmed.slice(5).trim();
-            if (payload.length === 0) continue;
-            try { messages.push(JSON.parse(payload)); } catch { /* ignore partial lines */ }
-        }
+    for (const block of text.split(/\r?\n\r?\n/)) {
+        const data = block.split(/\r?\n/)
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).replace(/^ /, ''))
+            .join('\n')
+            .trim();
+        if (!data) continue;
+        try { messages.push(JSON.parse(data)); } catch { /* ignore a torn/partial event */ }
+    }
+    if (wantId !== undefined) {
+        const match = messages.find((m) => m && m.id === wantId && (m.result !== undefined || m.error !== undefined));
+        if (match) return match;
     }
     return messages.at(-1) ?? null;
 }
