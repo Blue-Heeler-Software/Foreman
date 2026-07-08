@@ -1,13 +1,16 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>LiveWeave Canvas</title>
   <style>
     body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #0d0f12; color: #e6e8ec; }
-    header { height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid #2a2f37; background: #15181d; box-sizing: border-box; }
-    h1 { font-size: 13px; margin: 0; font-weight: 600; }
-    #meta { font-size: 11px; color: #9aa3ad; }
+    header { height: 42px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid #2a2f37; background: #15181d; box-sizing: border-box; }
+    h1 { font-size: 13px; margin: 0; font-weight: 600; white-space: nowrap; }
+    #meta { font-size: 11px; color: #9aa3ad; margin-left: auto; }
+    .actions { display: flex; gap: 6px; }
+    .actions button { background: #1e2028; color: #e6e8ec; border: 1px solid #2a2f37; border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .actions button:hover { background: #262a34; }
     iframe { width: 100%; height: calc(100vh - 42px); border: 0; background: white; display: block; }
   </style>
 </head>
@@ -15,6 +18,10 @@
   <header>
     <h1 id="title">LiveWeave Canvas</h1>
     <div id="meta">local extension page</div>
+    <div class="actions">
+      <button id="copyBtn" title="Copy the page's HTML + CSS to the clipboard">Copy</button>
+      <button id="downloadBtn" title="Download the page as a single .html file">Download</button>
+    </div>
   </header>
   <!-- Display surface, not a form host: allow-forms is dropped so agent content can't POST operator input
        off-machine (the CSP's form-action 'none' is the belt to this suspenders). -->

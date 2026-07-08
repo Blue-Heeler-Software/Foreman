@@ -15,10 +15,10 @@ function render(m) {
     if (!m.paired) {
         badge.textContent = '🔌 Not paired';
         badge.className = 'warn';
-        $('hint').innerHTML = 'Open the extension <a id="opt">options</a> to pair with Foreman as the LiveWeave driver.';
+        $('hint').innerHTML = 'Open the extension <a id="opt" href="#">options</a> to pair with Foreman as the LiveWeave driver.';
         $('body').innerHTML = '';
         const opt = document.getElementById('opt');
-        if (opt) opt.onclick = () => chrome.runtime.openOptionsPage();
+        if (opt) opt.onclick = (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); };   // href makes it keyboard-focusable
         return;
     }
 

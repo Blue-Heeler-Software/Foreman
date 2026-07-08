@@ -13,11 +13,19 @@ arbitrary tabs and never touches the network: it talks only to `http://127.0.0.1
   crosses the wire), then stores the scoped bearer token and gets its origin allow-listed. It pairs as the
   `liveweave` harness.
 - **LiveWeave canvas**: polls Foreman's `liveweave_*` broker (`liveweave_poll_commands` /
-  `liveweave_complete_command`) and applies builder actions (`apply_page`, `apply_section`, `apply_inner`,
-  `set_style`, `set_background`, `new_canvas`, `generate`, `template`, `undo`, `scan`, `outline`,
-  `start_builder`, `stop_builder`) into a local extension page. A selected driver harness is required before
-  non-operator agents can enqueue commands; an empty driver means operator-token only, and `any` is the explicit
-  all-harness mode. Commands that change the canvas bring the canvas tab forward so the operator can see the result.
+  `liveweave_complete_command`) and applies builder actions into a local extension page:
+  - **Author**: `apply_page` (whole page), `apply_section` (append/prepend a section), `apply_inner` (a delimited,
+    idempotent block per selector — repeats replace, not duplicate), `set_style` / `set_background` (upsert one
+    rule per selector, so re-styling doesn't grow the sheet), `new_canvas`, `generate` / `template` (a single
+    static scaffold — NOT an on-device model), `undo`.
+  - **Inspect**: `scan` (full source + a structural summary), `outline` (just the concise structure — heading
+    tree, ids, duplicate-id warnings, landmark counts).
+  - Missing required params return a structured `{ok:false, code, field}`; every successful edit returns
+    `htmlLength`/`cssLength` so the driving agent can confirm the change landed.
+- **Export**: the canvas header has **Copy** and **Download** to take the built page out as one self-contained
+  `.html` file (CSS inlined).
+- A selected driver harness is required before non-operator agents can enqueue commands; an empty driver means
+  operator-token only, and `any` is the explicit all-harness mode. Editing commands bring the canvas tab forward.
 
 ## Load it
 
@@ -33,8 +41,14 @@ arbitrary tabs and never touches the network: it talks only to `http://127.0.0.1
   without CORS, and can reach nothing else.
 - The pairing code is the auth root; it's never sent — only `HMAC(code, nonce)` is. Foreman validates the request
   **Host** is loopback (DNS-rebinding defence) and the **Origin** is this paired extension.
-- The canvas is an `<iframe sandbox="allow-scripts allow-forms">` of stored HTML/CSS — Foreman-brokered content,
-  never live third-party pages.
+- The canvas is a `sandbox="allow-scripts"` iframe of stored HTML/CSS carrying a strict Content-Security-Policy as
+  its first `<head>` element: `default-src 'none'` — only `data:` images/fonts and inline styles/scripts, **no
+  network of any kind**. So agent-authored content genuinely cannot beacon or POST off-machine — "nothing leaves
+  your machine" is *enforced*, not merely asserted. (Residual: an agent script could self-navigate the frame to
+  leak its own embedded data; the sandbox still blocks top-navigation, same-origin, forms, and storage. It renders
+  Foreman-brokered content, never live third-party pages.)
+- Least privilege: no `tabs` permission (the canvas tab is tracked by id); the loopback endpoint defaults to
+  `127.0.0.1:54321` and is configurable.
 
 ## Files
 

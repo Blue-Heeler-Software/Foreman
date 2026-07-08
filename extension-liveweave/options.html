@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Foreman LiveWeave — Pair</title>
@@ -26,14 +26,25 @@
      the <code>liveweave</code> harness.</p>
   <div class="driver">
     <label for="driver">LiveWeave driver harness</label>
-    <input id="driver" placeholder="codex, claude-code, or any" autocomplete="off" spellcheck="false" />
+    <input id="driver" list="drivers" placeholder="Operator only (leave blank)" autocomplete="off" spellcheck="false" />
+    <datalist id="drivers">
+      <option value="claude-code"></option>
+      <option value="codex"></option>
+      <option value="cursor"></option>
+      <option value="opencode"></option>
+      <option value="github-copilot"></option>
+      <option value="gemini-cli"></option>
+      <option value="lm-studio"></option>
+      <option value="any"></option>
+    </datalist>
     <p>Empty means operator-token only. Use <code>any</code> only when every connected harness should be able to drive the canvas.</p>
   </div>
+  <label for="code">Pairing code</label>
   <div class="row">
     <input id="code" placeholder="ABCDE-FGHJK" maxlength="11" autocomplete="off" spellcheck="false" />
     <button id="pair">Pair</button>
   </div>
-  <div id="msg"></div>
+  <div id="msg" role="status" aria-live="polite"></div>
   <button id="close" class="secondary">Close</button>
   <p style="margin-top:18px">Foreman must be running locally (default <code>http://127.0.0.1:54321</code>). Everything stays on this device.</p>
   <script src="options.js"></script>
