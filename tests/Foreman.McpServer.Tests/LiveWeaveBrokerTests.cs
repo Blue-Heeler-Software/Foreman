@@ -45,4 +45,50 @@ public sealed class LiveWeaveBrokerTests
         var broker = new LiveWeaveBroker();
         Assert.Empty(broker.Poll(3));
     }
+
+    [Fact]
+    public void StaleCommand_NeverDelivered_ExpiresToFailed_SoTheAgentPollStopsHanging()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var broker = new LiveWeaveBroker(() => now);
+        broker.SetDriver("codex");
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
+
+        // Extension never polls (closed / unpaired / Foreman was offline). Advance past the stale window.
+        now = now.AddMinutes(3);
+
+        var cmd = broker.GetCommand(id);   // the agent's liveweave_command_result path
+        Assert.NotNull(cmd);
+        Assert.Equal(LiveWeaveCommandStatus.Failed, cmd!.Status);
+        Assert.Contains("timed out", cmd.Error);
+    }
+
+    [Fact]
+    public void StaleCommand_DeliveredButNeverCompleted_ExpiresToFailed()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var broker = new LiveWeaveBroker(() => now);
+        broker.SetDriver("codex");
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
+
+        Assert.Single(broker.Poll(5));     // extension took it (Delivered) but crashes before completing
+
+        now = now.AddMinutes(3);
+        var cmd = broker.GetCommand(id);
+        Assert.Equal(LiveWeaveCommandStatus.Failed, cmd!.Status);
+    }
+
+    [Fact]
+    public void FreshCommand_WithinWindow_IsNotExpired()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var broker = new LiveWeaveBroker(() => now);
+        broker.SetDriver("codex");
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
+
+        now = now.AddSeconds(30);          // still well inside the 2-min window
+        var cmd = broker.GetCommand(id);
+        Assert.Equal(LiveWeaveCommandStatus.Pending, cmd!.Status);
+        Assert.Single(broker.Poll(5));     // and it still delivers normally
+    }
 }

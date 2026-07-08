@@ -16,9 +16,18 @@ let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '', harness
 let connected = false;
 let lastMcpError = null;
 let sidePanelPort = null;
+let canvasPort = null;       // open while the canvas tab is up — keeps the SW alive for fast, responsive polling
 let pollTimer = null;
+let polling = false;         // re-entrancy guard: never let two polls execute commands concurrently (storage races)
 let mcpSession = null;
-const POLL_MS = 5000;
+
+// MV3 reliability: a service worker is torn down after ~30s idle, which kills setInterval — so agent commands
+// would silently stall until something woke the worker. Two mechanisms cover this: a chrome.alarms heartbeat that
+// WAKES the worker to poll even when it's suspended (durable, ~30s floor), plus a fast interval that runs while an
+// extension page (side panel or canvas) holds a port open and keeps the worker alive (responsive during building).
+const FAST_POLL_MS = 3000;
+const POLL_ALARM = 'liveweave-poll';
+const POLL_ALARM_PERIOD_MIN = 0.5;   // Chrome clamps alarm periods to a 30s floor; this is the idle heartbeat.
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
 const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
@@ -235,6 +244,25 @@ async function executeLiveWeaveCommand(cmd) {
     }
 }
 
+// Honest on-device model availability (was hardcoded 'unavailable'). Chrome's Prompt API is a document-context
+// API, so it is usually absent in the service worker — in which case we correctly report 'unavailable'. If a
+// future channel exposes it here (or an offscreen document is added), this reports the real state. Clamped by
+// Foreman's SanitizeNanoStatus to {available, downloadable, downloading, unavailable}.
+async function nanoStatus() {
+    try {
+        if (typeof self.LanguageModel?.availability === 'function') {
+            const a = await self.LanguageModel.availability();
+            return ['available', 'downloadable', 'downloading', 'unavailable'].includes(a) ? a : 'unavailable';
+        }
+        const caps = await self.ai?.languageModel?.capabilities?.();
+        if (caps?.available === 'readily') return 'available';
+        if (caps?.available === 'after-download') return 'downloadable';
+        return 'unavailable';
+    } catch {
+        return 'unavailable';
+    }
+}
+
 async function liveweaveTabInfo() {
     const { canvas } = await readCanvas();
     return {
@@ -247,27 +275,33 @@ async function liveweaveTabInfo() {
 
 async function pollLiveWeave() {
     if (!cfg.token || !connected) return;
-    const tabInfoJson = JSON.stringify(await liveweaveTabInfo());
-    const batch = await mcpCall('liveweave_poll_commands', {
-        limit: 5,
-        tabInfoJson,
-        nanoStatus: 'unavailable',
-        driverHarness: cfg.liveweaveDriver || '',
-    });
-    const commands = Array.isArray(batch?.commands) ? batch.commands : [];
-    for (const cmd of commands) {
-        let result;
-        try {
-            result = await executeLiveWeaveCommand(cmd);
-        } catch (e) {
-            result = { ok: false, error: String(e?.message || e) };
-        }
-        await mcpCall('liveweave_complete_command', {
-            commandId: cmd.commandId,
-            ok: !!result.ok,
-            resultJson: result.ok ? JSON.stringify(result) : null,
-            error: result.ok ? null : (result.error || 'LiveWeave command failed.'),
+    if (polling) return;   // a poll is already draining the queue — don't run commands concurrently (storage races)
+    polling = true;
+    try {
+        const tabInfoJson = JSON.stringify(await liveweaveTabInfo());
+        const batch = await mcpCall('liveweave_poll_commands', {
+            limit: 5,
+            tabInfoJson,
+            nanoStatus: await nanoStatus(),
+            driverHarness: cfg.liveweaveDriver || '',
         });
+        const commands = Array.isArray(batch?.commands) ? batch.commands : [];
+        for (const cmd of commands) {
+            let result;
+            try {
+                result = await executeLiveWeaveCommand(cmd);
+            } catch (e) {
+                result = { ok: false, error: String(e?.message || e) };
+            }
+            await mcpCall('liveweave_complete_command', {
+                commandId: cmd.commandId,
+                ok: !!result.ok,
+                resultJson: result.ok ? JSON.stringify(result) : null,
+                error: result.ok ? null : (result.error || 'LiveWeave command failed.'),
+            });
+        }
+    } finally {
+        polling = false;
     }
 }
 
@@ -278,15 +312,37 @@ async function refresh() {
     broadcast();
 }
 
+// Fast interval for responsive building. It only runs while the worker is alive; a connected side-panel or canvas
+// port keeps it alive, and the chrome.alarms heartbeat below revives polling after the worker is suspended.
 function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(refresh, POLL_MS);
+    pollTimer = setInterval(refresh, FAST_POLL_MS);
+    ensurePollAlarm();
     refresh();
 }
 
-// ── Side panel plumbing ──────────────────────────────────────────────────────
+// Durable heartbeat: an alarm wakes a suspended worker so queued commands still get applied when nobody is looking
+// at the canvas. create() is idempotent (same name replaces). Registered from the top-level alarm listener too.
+function ensurePollAlarm() {
+    try { chrome.alarms.create(POLL_ALARM, { periodInMinutes: POLL_ALARM_PERIOD_MIN }); } catch { /* no alarms API */ }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm?.name === POLL_ALARM) refresh();
+});
+
+// ── Side panel + canvas plumbing ─────────────────────────────────────────────
 
 chrome.runtime.onConnect.addListener((port) => {
+    // The canvas page holds a port open while it's up; that keeps the worker alive so the fast interval runs and
+    // building stays responsive. We don't need to do anything per-message — just poll on connect and on disconnect
+    // fall back to the alarm heartbeat.
+    if (port.name === 'foreman-liveweave-canvas') {
+        canvasPort = port;
+        refresh();
+        port.onDisconnect.addListener(() => { if (canvasPort === port) canvasPort = null; });
+        return;
+    }
     if (port.name !== 'foreman-liveweave-sidepanel') return;
     sidePanelPort = port;
     broadcast();                 // show last-known state immediately…

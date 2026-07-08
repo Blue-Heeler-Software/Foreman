@@ -3,7 +3,7 @@
   "name": "Foreman LiveWeave",
   "version": "0.1.0",
   "description": "Foreman-brokered local webpage builder. Renders agent edits into a local, extension-owned canvas over loopback. It does not drive arbitrary tabs; nothing leaves your machine.",
-  "permissions": ["sidePanel", "storage", "tabs"],
+  "permissions": ["sidePanel", "storage", "tabs", "alarms"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidepanel.html" },

@@ -39,8 +39,16 @@ public sealed class LiveWeaveBroker
     private readonly object _presenceLock = new();
     private LiveWeavePresence _presence = new();
     private const int MaxCommands = 100;
-    private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(10);
+    // A command that is never picked up (extension not open/paired/reachable) or never completed (extension crashed
+    // mid-command) is failed after this window, so the agent's liveweave_command_result poll gets a terminal status
+    // instead of hanging forever. LiveWeave commands are near-instant, and a connected extension polls at least every
+    // ~30s, so 2 min comfortably distinguishes "busy" from "gone".
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(2);
     private volatile string? _driver;   // null = operator only; "*" = any harness; otherwise chosen harness id
+    private readonly Func<DateTimeOffset> _now;
+
+    /// <summary>Default clock is wall time; tests inject one to exercise stale-expiry without waiting.</summary>
+    public LiveWeaveBroker(Func<DateTimeOffset>? clock = null) => _now = clock ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>"operator" marker recorded for commands enqueued by the unscoped install token — always allowed.</summary>
     private const string OperatorMarker = "operator";
@@ -74,14 +82,39 @@ public sealed class LiveWeaveBroker
         return harnessId is not null && string.Equals(harnessId, d, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Fail any Pending/Delivered command older than <see cref="StaleAfter"/>: the extension is not open/paired
+    /// (Pending never delivered) or crashed mid-command (Delivered never completed), so the agent's result-poll
+    /// would otherwise hang. Lazily invoked on every touchpoint (no background timer), CAS-safe so a real
+    /// completion racing the sweep wins.
+    /// </summary>
+    private void ExpireStale()
+    {
+        var now = _now();
+        var cutoff = now - StaleAfter;
+        foreach (var (id, cmd) in _commands)
+        {
+            if (cmd.Status is not (LiveWeaveCommandStatus.Pending or LiveWeaveCommandStatus.Delivered)) continue;
+            if (cmd.CreatedAt > cutoff) continue;
+            _commands.TryUpdate(id, cmd with
+            {
+                Status = LiveWeaveCommandStatus.Failed,
+                Error = $"LiveWeave command timed out after {(int)StaleAfter.TotalMinutes} min — the LiveWeave " +
+                        "extension did not process it. Is it open in Chrome and paired with Foreman?",
+                CompletedAt = now,
+            }, cmd);
+        }
+    }
+
     public string Enqueue(string action, IReadOnlyDictionary<string, object?>? parameters = null, string? byHarness = null)
     {
+        ExpireStale();
         var id = Guid.NewGuid().ToString("N")[..12];
         var cmd = new LiveWeaveCommand(
             id,
             action.Trim().ToLowerInvariant(),
             parameters ?? new Dictionary<string, object?>(),
-            DateTimeOffset.UtcNow,
+            _now(),
             LiveWeaveCommandStatus.Pending,
             ByHarness: string.IsNullOrWhiteSpace(byHarness) ? null : byHarness.Trim().ToLowerInvariant());
 
@@ -93,6 +126,7 @@ public sealed class LiveWeaveBroker
 
     public IReadOnlyList<LiveWeaveCommand> Poll(int limit)
     {
+        ExpireStale();
         var n = Math.Clamp(limit, 1, 10);
         var batch = new List<LiveWeaveCommand>(n);
         while (batch.Count < n && _pending.TryDequeue(out var id))
@@ -141,8 +175,11 @@ public sealed class LiveWeaveBroker
         return (true, ok ? "Completed." : "Failed.");
     }
 
-    public LiveWeaveCommand? GetCommand(string commandId) =>
-        _commands.TryGetValue(commandId, out var c) ? c : null;
+    public LiveWeaveCommand? GetCommand(string commandId)
+    {
+        ExpireStale();   // so the agent's result-poll sees a timed-out command as Failed, not perpetually Pending
+        return _commands.TryGetValue(commandId, out var c) ? c : null;
+    }
 
     public void UpdatePresence(object? tabInfo, string? nanoStatus)
     {
@@ -170,6 +207,7 @@ public sealed class LiveWeaveBroker
 
     public object DescribeStatus()
     {
+        ExpireStale();   // so pendingCommands/inFlightCommands reflect timed-out commands, not zombies
         lock (_presenceLock)
         {
             var age = DateTimeOffset.UtcNow - _presence.LastSeen;

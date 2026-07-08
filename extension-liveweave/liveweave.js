@@ -24,4 +24,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
 });
 
+// Hold a port open to the service worker while this canvas is up: a connected port keeps the MV3 worker alive, so
+// its fast poll loop runs and Foreman-brokered edits apply promptly while you're actively building. When the canvas
+// closes the port drops and the worker falls back to its alarm heartbeat. Reconnect if the worker recycles the port.
+function keepWorkerAwake() {
+    try {
+        const port = chrome.runtime.connect({ name: 'foreman-liveweave-canvas' });
+        port.onDisconnect.addListener(() => {
+            void chrome.runtime.lastError;                 // swallow "worker was suspended" disconnects
+            setTimeout(keepWorkerAwake, 1000);             // re-establish so building stays responsive
+        });
+    } catch { /* extension context gone — nothing to keep awake */ }
+}
+keepWorkerAwake();
+
 render(await loadCanvas());
