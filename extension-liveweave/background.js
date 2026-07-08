@@ -182,9 +182,37 @@ function generatedCanvas(params, current) {
     };
 }
 
+// ── Offscreen DOM (true CSS-selector targeting; the service worker has no DOM) ─
+
+let offscreenReady = null;
+async function ensureOffscreen() {
+    if (!chrome.offscreen) return false;   // Chrome < 109 — caller falls back to string handling
+    try {
+        if (await chrome.offscreen.hasDocument?.()) return true;
+        if (!offscreenReady) {
+            offscreenReady = chrome.offscreen.createDocument({
+                url: 'offscreen.html',
+                reasons: ['DOM_PARSER'],
+                justification: 'Target and inspect the LiveWeave canvas by CSS selector (the service worker has no DOM).',
+            }).catch(() => {}).finally(() => { offscreenReady = null; });
+        }
+        await offscreenReady;
+        return (await chrome.offscreen.hasDocument?.()) ?? true;
+    } catch { return false; }
+}
+
+// Run a DOM op in the offscreen document; returns its {ok,...} result, or null when offscreen is unavailable so the
+// caller can fall back. Command execution is serialized by the poll mutex, so these calls never overlap.
+async function domOp(op, payload) {
+    if (!(await ensureOffscreen())) return null;
+    try { return await chrome.runtime.sendMessage({ target: 'liveweave-offscreen', op, ...payload }); }
+    catch { return null; }
+}
+
 // ── Command helpers: validation, structure, safe CSS slots ───────────────────
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const stripOk = ({ ok, ...rest }) => rest;   // drop the transport flag from an inspect result
 
 // Missing/blank required param → a STRUCTURED error the driving agent can branch on, instead of the old silent
 // ok:true no-op (apply_page with no html kept the old html; set_style with no styles wrote `sel{}` — both looked
@@ -275,12 +303,19 @@ async function executeLiveWeaveCommand(cmd) {
         case 'apply_section': {
             const bad = requireParams(params, ['html']);
             if (bad) return bad;
-            const html = textParam(params, 'html');
+            const section = textParam(params, 'html');
             const css = textParam(params, 'css');
             const placement = textParam(params, 'placement', 'append').toLowerCase();
-            const nextHtml = placement === 'prepend' ? `${html}\n${canvas.html}` : `${canvas.html}\n${html}`;
+            const targetRaw = textParam(params, 'target');
+            const target = targetRaw ? safeSelector(targetRaw) : null;
+            if (targetRaw && !target) return { ok: false, code: 'bad_selector', error: 'target must be a plain CSS selector.' };
+            // Insert into a target container via the offscreen DOM (or at document top level); a real "target not
+            // found" is surfaced. Falls back to a document-level sibling concat when offscreen is unavailable.
+            const dom = await domOp('apply_section', { html: canvas.html, section, placement, target });
+            if (dom?.code === 'not_found') return dom;
+            const nextHtml = dom?.ok ? dom.html : (placement === 'prepend' ? `${section}\n${canvas.html}` : `${canvas.html}\n${section}`);
             const c = await saveCanvas({ ...canvas, html: nextHtml, css: css ? `${canvas.css || ''}\n${css}` : canvas.css });
-            return { ok: true, placement, note: 'Section inserted as a document-level sibling.', ...effect(c) };
+            return { ok: true, placement, target: target || undefined, targeted: !!dom?.ok, ...effect(c) };
         }
 
         case 'apply_inner': {
@@ -290,15 +325,22 @@ async function executeLiveWeaveCommand(cmd) {
             if (!sel) return { ok: false, code: 'bad_selector', error: 'path must be a plain CSS selector (no { } < > or -->).' };
             const html = textParam(params, 'html');
             const css = safeDeclarations(textParam(params, 'css')) ?? '';
-            // The worker has no DOM to set a selector's innerHTML directly, so maintain a delimited, IDEMPOTENT block
-            // per selector: repeating apply_inner for the same path REPLACES its block instead of duplicating forever.
+            // TRUE selector targeting via the offscreen DOM: resolve `sel` and set its innerHTML. A genuine
+            // "selector not found" is surfaced to the agent. If offscreen is unavailable, fall back to a delimited,
+            // idempotent block per selector (repeats replace, never duplicate).
+            const dom = await domOp('apply_inner', { html: canvas.html, path: sel, inner: html });
+            if (dom?.code === 'not_found') return dom;
+            if (dom?.ok) {
+                const c = await saveCanvas({ ...canvas, html: dom.html, css: css ? `${canvas.css || ''}\n${css}` : canvas.css });
+                return { ok: true, target: sel, targeted: true, ...effect(c) };
+            }
             const open = `<!-- liveweave:begin ${sel} -->`, close = `<!-- liveweave:end ${sel} -->`;
             const block = `\n${open}\n${html}\n${close}`;
             const re = new RegExp(`\\n?${escapeRe(open)}[\\s\\S]*?${escapeRe(close)}`);
             const replaced = re.test(canvas.html);
             const nextHtml = replaced ? canvas.html.replace(re, block) : `${canvas.html}${block}`;
             const c = await saveCanvas({ ...canvas, html: nextHtml, css: css ? `${canvas.css || ''}\n${css}` : canvas.css });
-            return { ok: true, target: sel, replaced, note: 'Delimited block (no DOM in the worker for true selector targeting).', ...effect(c) };
+            return { ok: true, target: sel, targeted: false, replaced, note: 'Delimited-block fallback (offscreen DOM unavailable).', ...effect(c) };
         }
 
         case 'set_style': {
@@ -326,12 +368,18 @@ async function executeLiveWeaveCommand(cmd) {
             return { ok: true, ...effect(c) };
         }
 
-        case 'scan':   // full source + structure — for an agent that lost context
+        case 'scan': {   // full source + structure — for an agent that lost context
+            const dom = await domOp('inspect', { html: canvas.html });
+            const structure = dom?.ok ? stripOk(dom) : outlineOf(canvas.html);   // real DOM structure, or regex fallback
             return { ok: true, title: canvas.title, html: canvas.html, css: canvas.css,
-                     htmlLength: canvas.html.length, cssLength: canvas.css.length, structure: outlineOf(canvas.html) };
+                     htmlLength: canvas.html.length, cssLength: canvas.css.length, structure };
+        }
 
-        case 'outline':   // concise structure only — cheap for targeting decisions
-            return { ok: true, title: canvas.title, htmlLength: canvas.html.length, cssLength: canvas.css.length, ...outlineOf(canvas.html) };
+        case 'outline': {   // concise structure only — cheap for targeting decisions
+            const dom = await domOp('inspect', { html: canvas.html });
+            const s = dom?.ok ? stripOk(dom) : outlineOf(canvas.html);
+            return { ok: true, title: canvas.title, htmlLength: canvas.html.length, cssLength: canvas.css.length, ...s };
+        }
 
         default:
             return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, undo, scan, outline.` };
