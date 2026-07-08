@@ -16,7 +16,9 @@
     <h1 id="title">LiveWeave Canvas</h1>
     <div id="meta">local extension page</div>
   </header>
-  <iframe id="preview" sandbox="allow-scripts allow-forms"></iframe>
+  <!-- Display surface, not a form host: allow-forms is dropped so agent content can't POST operator input
+       off-machine (the CSP's form-action 'none' is the belt to this suspenders). -->
+  <iframe id="preview" title="LiveWeave preview" sandbox="allow-scripts"></iframe>
   <script type="module" src="liveweave.js"></script>
 </body>
 </html>

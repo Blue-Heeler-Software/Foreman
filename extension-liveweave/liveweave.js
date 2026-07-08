@@ -12,10 +12,22 @@ async function loadCanvas() {
     return { ...DEFAULT_CANVAS, ...(s.liveweaveCanvas || {}) };
 }
 
+// The canvas renders AGENT-authored HTML/CSS. Without a policy it would inherit the permissive default and an
+// agent could beacon data out on render via <img>/<link>/CSS url()/fetch to any host — falsifying LiveWeave's
+// "nothing leaves your machine" guarantee. This CSP (first child of <head>, so it governs everything after it)
+// blocks ALL network: only data: images/fonts and inline styles/scripts are allowed. Inline scripts still run
+// (interactive previews), but cannot phone home. Residual: a script could still self-navigate the frame to an
+// external URL (CSP has no reliable navigate directive); the sandbox blocks top-nav, storage, and same-origin,
+// so that leaks only agent-embedded data, never operator secrets or tokens.
+const CANVAS_CSP =
+    "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
+    "base-uri 'none'; form-action 'none'";
+
 function render(canvas) {
     $('title').textContent = canvas.title || DEFAULT_CANVAS.title;
     $('meta').textContent = canvas.updatedAt ? `updated ${new Date(canvas.updatedAt).toLocaleTimeString()}` : 'local extension page';
-    $('preview').srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${canvas.css || ''}</style></head><body>${canvas.html || ''}</body></html>`;
+    $('preview').srcdoc = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${CANVAS_CSP}">` +
+        `<meta charset="utf-8"><style>${canvas.css || ''}</style></head><body>${canvas.html || ''}</body></html>`;
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {

@@ -126,15 +126,28 @@ async function saveCanvas(canvas, pushHistory = true) {
     return next;
 }
 
+// Track our OWN canvas tab by id (persisted — the service worker is ephemeral) instead of querying tabs by URL.
+// chrome.tabs.get/update/create all work without the broad "tabs" permission (which grants read across every tab
+// and contradicted this extension's "does not drive arbitrary tabs" scope); querying by URL needed it.
 async function openLiveWeaveCanvas({ active = false } = {}) {
     const url = chrome.runtime.getURL('liveweave.html');
-    const tabs = await chrome.tabs.query({ url });
-    if (tabs[0]?.id != null) {
-        if (active) await chrome.tabs.update(tabs[0].id, { active: true });
-        return;
+    const { liveweaveTabId } = await chrome.storage.local.get({ liveweaveTabId: null });
+    if (liveweaveTabId != null) {
+        try {
+            await chrome.tabs.get(liveweaveTabId);          // rejects if the tab was closed
+            if (active) await chrome.tabs.update(liveweaveTabId, { active: true });
+            return;
+        } catch { /* tab gone — recreate below */ }
     }
-    await chrome.tabs.create({ url, active });
+    const tab = await chrome.tabs.create({ url, active });
+    if (tab?.id != null) await chrome.storage.local.set({ liveweaveTabId: tab.id });
 }
+
+// Forget the tracked tab when it's closed, so the next open cleanly recreates instead of racing a stale id.
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+    const { liveweaveTabId } = await chrome.storage.local.get({ liveweaveTabId: null });
+    if (liveweaveTabId === tabId) await chrome.storage.local.remove('liveweaveTabId');
+});
 
 function textParam(params, name, fallback = '') {
     const v = params?.[name];
@@ -395,7 +408,12 @@ async function bootstrap() {
     try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
     startPolling();
 }
-onSettingsChanged(async () => {
+// Only react to REAL settings changes. The canvas + history + tracked tab id also live in storage.local and are
+// rewritten on every brokered edit; without this filter each edit reloaded settings and dropped the cached MCP
+// session, forcing an extra initialize handshake per command.
+const SETTINGS_KEYS = ['host', 'port', 'token', 'pairedOrigin', 'harnessId', 'liveweaveDriver'];
+onSettingsChanged(async (changes) => {
+    if (changes && !SETTINGS_KEYS.some((k) => k in changes)) return;
     try {
         cfg = { ...cfg, ...(await loadSettings()) };
         mcpSession = null;
