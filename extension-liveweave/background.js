@@ -19,6 +19,7 @@ let sidePanelPort = null;
 let canvasPort = null;       // open while the canvas tab is up — keeps the SW alive for fast, responsive polling
 let pollTimer = null;
 let polling = false;         // re-entrancy guard: never let two polls execute commands concurrently (storage races)
+let needsPair = false;       // set when the token is rejected (401/403) — stop polling a dead token, prompt re-pair
 let mcpSession = null;
 
 // MV3 reliability: a service worker is torn down after ~30s idle, which kills setInterval — so agent commands
@@ -27,7 +28,8 @@ let mcpSession = null;
 // extension page (side panel or canvas) holds a port open and keeps the worker alive (responsive during building).
 const FAST_POLL_MS = 3000;
 const POLL_ALARM = 'liveweave-poll';
-const POLL_ALARM_PERIOD_MIN = 0.5;   // Chrome clamps alarm periods to a 30s floor; this is the idle heartbeat.
+const POLL_ALARM_PERIOD_MIN = 0.5;   // idle heartbeat. Chrome 120+ honours a 30s floor; older clamps sub-1-min to
+                                     // 60s. Sub-minute responsiveness comes from FAST_POLL while a page holds a port.
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
 const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
@@ -62,6 +64,7 @@ async function pair(code, liveweaveDriver = cfg.liveweaveDriver) {
         cfg = { ...cfg, token: body.token || '', pairedOrigin: body.origin || selfOrigin(), harnessId: 'liveweave', liveweaveDriver: liveweaveDriver || '' };
         await saveSettings({ token: cfg.token, pairedOrigin: cfg.pairedOrigin, harnessId: 'liveweave', liveweaveDriver: cfg.liveweaveDriver });
         mcpSession = null;
+        needsPair = false;   // fresh token — resume polling
         await refresh();
         return { ok: true };
     } catch (e) {
@@ -95,6 +98,7 @@ async function mcpCall(name, args = {}) {
     } catch (e) {
         mcpSession = null;
         lastMcpError = String(e?.message || e);
+        if (e?.authFailed) needsPair = true;   // revoked/rotated token — stop hammering it, prompt re-pair
         return null;
     }
 }
@@ -122,7 +126,10 @@ async function saveCanvas(canvas, pushHistory = true) {
     const patch = { liveweaveCanvas: next };
     if (pushHistory) patch.liveweaveHistory = [...prior.history.slice(-9), prior.canvas];
     await chrome.storage.local.set(patch);
-    await openLiveWeaveCanvas({ active: true });
+    // Ensure the canvas exists so the edit is visible, but DON'T steal focus on every brokered micro-edit (a burst
+    // of agent commands used to yank the tab forward up to 5x per poll). The canvas re-renders live from storage;
+    // explicit user actions (start_builder, side-panel "Open canvas") are the ones that raise it.
+    await openLiveWeaveCanvas({ active: false });
     return next;
 }
 
@@ -362,6 +369,7 @@ async function liveweaveTabInfo() {
 
 async function pollLiveWeave() {
     if (!cfg.token || !connected) return;
+    if (needsPair) return; // token rejected — don't hammer a dead token; the operator must re-pair
     if (polling) return;   // a poll is already draining the queue — don't run commands concurrently (storage races)
     polling = true;
     try {
@@ -453,6 +461,7 @@ function broadcast() {
         kind: 'status',
         connected,
         paired: !!cfg.token,
+        needsPair,
         base: base(),
         liveweaveDriver: cfg.liveweaveDriver || '',
         mcpError: lastMcpError,

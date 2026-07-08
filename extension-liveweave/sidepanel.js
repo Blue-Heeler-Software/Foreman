@@ -22,6 +22,16 @@ function render(m) {
         return;
     }
 
+    if (m.needsPair) {
+        badge.textContent = '⚠ Token rejected — re-pair';
+        badge.className = 'bad';
+        $('hint').innerHTML = 'Foreman rejected the saved token. Open the extension <a id="opt" href="#">options</a> and pair again.';
+        $('body').innerHTML = '';
+        const opt = document.getElementById('opt');
+        if (opt) opt.onclick = (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); };
+        return;
+    }
+
     if (m.connected) { badge.textContent = '🔒 On-device · paired'; badge.className = 'ok'; }
     else { badge.textContent = '⚠ Paired — Foreman offline'; badge.className = 'warn'; }
 

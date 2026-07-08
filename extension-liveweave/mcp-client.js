@@ -5,6 +5,14 @@
 
 const PROTOCOL = '2024-11-05';
 
+// Tag 401/403 distinctly so the caller can tell a REVOKED/rotated token (needs re-pair) from a transient network
+// or 5xx error (keep the token, retry). Otherwise a dead token loops failing polls forever with no signal.
+function httpError(status, message) {
+    const e = new Error(message);
+    if (status === 401 || status === 403) e.authFailed = true;
+    return e;
+}
+
 export async function openMcpSession(baseUrl, token, clientInfo = { name: 'foreman-liveweave', version: '0.1.0' }) {
     const headers = {
         'Content-Type': 'application/json',
@@ -28,7 +36,7 @@ export async function openMcpSession(baseUrl, token, clientInfo = { name: 'forem
     });
     if (!initRes.ok) {
         const err = await initRes.text().catch(() => '');
-        throw new Error(`initialize failed (${initRes.status}): ${err.slice(0, 160)}`);
+        throw httpError(initRes.status, `initialize failed (${initRes.status}): ${err.slice(0, 160)}`);
     }
 
     const initMsg = await readJsonRpc(initRes);
@@ -65,7 +73,7 @@ export async function callMcpTool(session, name, args = {}) {
     });
     if (!res.ok) {
         const err = await res.text().catch(() => '');
-        throw new Error(`tools/call ${name} failed (${res.status}): ${err.slice(0, 160)}`);
+        throw httpError(res.status, `tools/call ${name} failed (${res.status}): ${err.slice(0, 160)}`);
     }
     const msg = await readJsonRpc(res);
     if (msg?.error) throw new Error(msg.error.message || 'tools/call error');
