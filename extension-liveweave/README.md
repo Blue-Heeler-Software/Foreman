@@ -14,9 +14,10 @@ arbitrary tabs and never touches the network: it talks only to `http://127.0.0.1
   `liveweave` harness.
 - **LiveWeave canvas**: polls Foreman's `liveweave_*` broker (`liveweave_poll_commands` /
   `liveweave_complete_command`) and applies builder actions (`apply_page`, `apply_section`, `apply_inner`,
-  `set_style`, `set_background`, `new_canvas`, `undo`, `scan`, `outline`) into a local extension page. A selected
-  driver harness is required before non-operator agents can enqueue commands; an empty driver means
-  operator-token only, and `any` is the explicit all-harness mode.
+  `set_style`, `set_background`, `new_canvas`, `generate`, `template`, `undo`, `scan`, `outline`,
+  `start_builder`, `stop_builder`) into a local extension page. A selected driver harness is required before
+  non-operator agents can enqueue commands; an empty driver means operator-token only, and `any` is the explicit
+  all-harness mode. Commands that change the canvas bring the canvas tab forward so the operator can see the result.
 
 ## Load it
 

@@ -667,4 +667,18 @@ public sealed class CallerScopeToolTests : IDisposable
         Assert.DoesNotContain(ghp, req.Prompt);
         Assert.DoesNotContain("\n" + ghp, doc.RootElement.GetProperty("severity").GetString());
     }
+
+    [Fact]
+    public void LiveweaveComplete_ResultPayload_ReturnedToDriver()
+    {
+        using var enq = J(ForemanMcpTools.LiveweaveCommand("scan", http: AsOperator));
+        var id = enq.RootElement.GetProperty("commandId").GetString();
+
+        ForemanMcpTools.LiveweaveCompleteCommand(id!, ok: true, resultJson: "{\"title\":\"Sugar Loop\",\"htmlLength\":123}", http: AsLiveweave);
+
+        using var res = J(ForemanMcpTools.LiveweaveCommandResult(id!));
+        Assert.Equal("completed", res.RootElement.GetProperty("status").GetString());
+        Assert.Equal("Sugar Loop", res.RootElement.GetProperty("result").GetProperty("title").GetString());
+        Assert.Equal(123, res.RootElement.GetProperty("result").GetProperty("htmlLength").GetInt32());
+    }
 }

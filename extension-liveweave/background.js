@@ -113,20 +113,44 @@ async function saveCanvas(canvas, pushHistory = true) {
     const patch = { liveweaveCanvas: next };
     if (pushHistory) patch.liveweaveHistory = [...prior.history.slice(-9), prior.canvas];
     await chrome.storage.local.set(patch);
-    await openLiveWeaveCanvas();
+    await openLiveWeaveCanvas({ active: true });
     return next;
 }
 
-async function openLiveWeaveCanvas() {
+async function openLiveWeaveCanvas({ active = false } = {}) {
     const url = chrome.runtime.getURL('liveweave.html');
     const tabs = await chrome.tabs.query({ url });
-    if (tabs[0]?.id != null) return;
-    await chrome.tabs.create({ url, active: false });
+    if (tabs[0]?.id != null) {
+        if (active) await chrome.tabs.update(tabs[0].id, { active: true });
+        return;
+    }
+    await chrome.tabs.create({ url, active });
 }
 
 function textParam(params, name, fallback = '') {
     const v = params?.[name];
     return v == null ? fallback : String(v);
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function generatedCanvas(params, current) {
+    const instruction = textParam(params, 'instruction', textParam(params, 'prompt', ''));
+    const title = textParam(params, 'title', instruction.match(/named\s+([^.,]+)/i)?.[1] || current.title || 'LiveWeave Page');
+    const theme = escapeHtml(title);
+    const detail = escapeHtml(instruction || `A polished landing page for ${title}.`);
+    return {
+        title,
+        html: `<main class="lw-page"><section class="lw-hero"><p class="lw-kicker">Generated locally</p><h1>${theme}</h1><p>${detail}</p><a href="#details">Explore</a></section><section id="details" class="lw-grid"><article><h2>Fresh offer</h2><p>Clear, conversion-focused copy with a focused call to action.</p></article><article><h2>Designed to scan</h2><p>Responsive sections, readable spacing, and simple visual hierarchy.</p></article><article><h2>Ready to refine</h2><p>Use apply_page or apply_section for exact agent-authored markup.</p></article></section></main>`,
+        css: `body{margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#fff8f3;color:#24151f}.lw-hero{min-height:70vh;display:grid;align-content:center;gap:18px;padding:clamp(32px,7vw,96px);background:linear-gradient(135deg,#fff8f3,#fde9ef 52%,#d8f7f2)}.lw-kicker{margin:0;color:#9b2354;font-size:12px;font-weight:850;letter-spacing:.12em;text-transform:uppercase}.lw-hero h1{max-width:10ch;margin:0;font-size:clamp(48px,8vw,104px);line-height:.9}.lw-hero p{max-width:760px;margin:0;color:#553847;font-size:clamp(18px,2vw,23px);line-height:1.5}.lw-hero a{display:inline-flex;width:max-content;align-items:center;min-height:48px;padding:0 22px;border-radius:8px;background:#ef3e6f;color:#fff;font-weight:850;text-decoration:none}.lw-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;padding:clamp(32px,6vw,80px)}.lw-grid article{padding:22px;border-radius:8px;background:#fff;box-shadow:0 18px 40px rgb(83 44 61 / 10%)}@media(max-width:800px){.lw-grid{grid-template-columns:1fr}}`,
+    };
 }
 
 async function executeLiveWeaveCommand(cmd) {
@@ -135,8 +159,21 @@ async function executeLiveWeaveCommand(cmd) {
     const { canvas, history } = await readCanvas();
 
     switch (action) {
+        case 'start_builder':
+            await openLiveWeaveCanvas({ active: true });
+            return { ok: true, title: canvas.title, opened: true };
+
+        case 'stop_builder':
+            return { ok: true, stopped: true };
+
         case 'new_canvas':
             return { ok: true, canvas: await saveCanvas({ ...DEFAULT_CANVAS, title: textParam(params, 'title', 'LiveWeave Canvas') }) };
+
+        case 'generate':
+            return { ok: true, canvas: await saveCanvas(generatedCanvas(params, canvas)) };
+
+        case 'template':
+            return { ok: true, canvas: await saveCanvas(generatedCanvas({ ...params, instruction: textParam(params, 'instruction', textParam(params, 'template', 'Template landing page')) }, canvas)) };
 
         case 'apply_page':
             return {
@@ -178,7 +215,7 @@ async function executeLiveWeaveCommand(cmd) {
             if (history.length === 0) return { ok: false, error: 'Nothing to undo.' };
             const previous = history[history.length - 1];
             await chrome.storage.local.set({ liveweaveCanvas: previous, liveweaveHistory: history.slice(0, -1) });
-            await openLiveWeaveCanvas();
+            await openLiveWeaveCanvas({ active: true });
             return { ok: true, canvas: previous };
         }
 
@@ -194,7 +231,7 @@ async function executeLiveWeaveCommand(cmd) {
             };
 
         default:
-            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: new_canvas, apply_page, apply_section, apply_inner, set_style, set_background, undo, scan, outline.` };
+            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, undo, scan, outline.` };
     }
 }
 

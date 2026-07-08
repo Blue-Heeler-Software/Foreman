@@ -22,6 +22,7 @@ public sealed class LiveWeaveBrokerTests
         var cmd = broker.GetCommand(id);
         Assert.NotNull(cmd);
         Assert.Equal(LiveWeaveCommandStatus.Completed, cmd!.Status);
+        Assert.NotNull(cmd.Result);
     }
 
     [Fact]
