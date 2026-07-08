@@ -175,82 +175,156 @@ function generatedCanvas(params, current) {
     };
 }
 
+// ── Command helpers: validation, structure, safe CSS slots ───────────────────
+
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Missing/blank required param → a STRUCTURED error the driving agent can branch on, instead of the old silent
+// ok:true no-op (apply_page with no html kept the old html; set_style with no styles wrote `sel{}` — both looked
+// like success). This is the core agent-feedback contract.
+function requireParams(params, names) {
+    for (const n of names) {
+        const v = params?.[n];
+        if (v == null || String(v).trim() === '')
+            return { ok: false, code: 'missing_param', field: n, error: `LiveWeave '${n}' is required for this action.` };
+    }
+    return null;
+}
+
+// Structured slots are DATA, not markup. Reject values that would break out of the CSS rule / HTML block they're
+// interpolated into (apply_page is the path for raw markup). Returns the cleaned value, or null to reject.
+const safeSelector = (path) => {
+    const p = String(path || '').trim();
+    return !p || /[{}<>]|-->/.test(p) ? null : p;   // real selectors never contain these
+};
+const safeDeclarations = (styles) => {
+    const s = String(styles ?? '');
+    return /[{}<]|-->/.test(s) ? null : s;           // a declaration body can't contain braces or tags
+};
+
+// Upsert a comment-MARKED single-line CSS rule so repeated set_style/set_background for the same target REPLACE
+// their own prior rule (no more stylesheet growing forever) without ever touching the user's apply_page CSS.
+function upsertMarked(css, marker, rule) {
+    const line = `\n/*${marker}*/${String(rule).replace(/\s*\n\s*/g, ' ')}`;
+    const re = new RegExp(`\\n?\\/\\*${escapeRe(marker)}\\*\\/[^\\n]*`);
+    return re.test(css || '') ? css.replace(re, line) : `${css || ''}${line}`;
+}
+
+// Best-effort structural outline of the stored HTML. The service worker has no DOM, so this is a regex pass — not a
+// full parser, but enough for an agent to learn what headings/landmarks/ids exist to target (vs re-reading the raw
+// source it already wrote). scan returns this plus the full source; outline returns just this.
+function outlineOf(html) {
+    const h = String(html || '');
+    const headings = [...h.matchAll(/<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>/gi)]
+        .map((m) => ({ level: Number(m[1][1]), text: m[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) }));
+    const ids = [...h.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
+    const duplicateIds = [...new Set(ids.filter((v, i) => ids.indexOf(v) !== i))];
+    const landmarks = [...h.matchAll(/<(header|nav|main|section|article|aside|footer|form)\b/gi)]
+        .reduce((acc, m) => { const t = m[1].toLowerCase(); acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+    const elementCount = (h.match(/<[a-z][a-z0-9-]*\b/gi) || []).length;
+    return { headings, ids, duplicateIds, landmarks, elementCount };
+}
+
 async function executeLiveWeaveCommand(cmd) {
     const action = String(cmd.action || '').toLowerCase();
     const params = cmd.parameters || {};
     const { canvas, history } = await readCanvas();
+    // Effect confirmation appended to every successful mutation so the agent can verify the edit actually landed.
+    const effect = (c) => ({ appliedTitle: c.title, htmlLength: (c.html || '').length, cssLength: (c.css || '').length });
 
     switch (action) {
         case 'start_builder':
             await openLiveWeaveCanvas({ active: true });
             return { ok: true, title: canvas.title, opened: true };
 
-        case 'stop_builder':
-            return { ok: true, stopped: true };
+        case 'stop_builder': {
+            // Truthful stop: close the canvas tab. (Never clearInterval(pollTimer) — polling is the ONLY command
+            // channel, so stopping it would strand the extension.) Brokered edits still apply + reopen the canvas.
+            const { liveweaveTabId } = await chrome.storage.local.get({ liveweaveTabId: null });
+            if (liveweaveTabId != null) { try { await chrome.tabs.remove(liveweaveTabId); } catch { /* already closed */ } }
+            return { ok: true, stopped: true, note: 'Canvas tab closed; a later edit reopens it.' };
+        }
 
         case 'new_canvas':
-            return { ok: true, canvas: await saveCanvas({ ...DEFAULT_CANVAS, title: textParam(params, 'title', 'LiveWeave Canvas') }) };
+            return { ok: true, ...effect(await saveCanvas({ ...DEFAULT_CANVAS, title: textParam(params, 'title', 'LiveWeave Canvas') })) };
 
         case 'generate':
-            return { ok: true, canvas: await saveCanvas(generatedCanvas(params, canvas)) };
+            return { ok: true, ...effect(await saveCanvas(generatedCanvas(params, canvas))) };
 
         case 'template':
-            return { ok: true, canvas: await saveCanvas(generatedCanvas({ ...params, instruction: textParam(params, 'instruction', textParam(params, 'template', 'Template landing page')) }, canvas)) };
+            return { ok: true, ...effect(await saveCanvas(generatedCanvas({ ...params, instruction: textParam(params, 'instruction', textParam(params, 'template', 'Template landing page')) }, canvas))) };
 
-        case 'apply_page':
-            return {
-                ok: true,
-                canvas: await saveCanvas({
-                    title: textParam(params, 'title', canvas.title),
-                    html: textParam(params, 'html', canvas.html),
-                    css: textParam(params, 'css', canvas.css),
-                }),
-            };
+        case 'apply_page': {
+            const bad = requireParams(params, ['html']);
+            if (bad) return bad;
+            const c = await saveCanvas({
+                title: textParam(params, 'title', canvas.title),
+                html: textParam(params, 'html', canvas.html),
+                css: textParam(params, 'css', canvas.css),
+            });
+            return { ok: true, ...effect(c) };
+        }
 
         case 'apply_section': {
+            const bad = requireParams(params, ['html']);
+            if (bad) return bad;
             const html = textParam(params, 'html');
             const css = textParam(params, 'css');
             const placement = textParam(params, 'placement', 'append').toLowerCase();
             const nextHtml = placement === 'prepend' ? `${html}\n${canvas.html}` : `${canvas.html}\n${html}`;
-            return { ok: true, canvas: await saveCanvas({ ...canvas, html: nextHtml, css: `${canvas.css || ''}\n${css}` }) };
+            const c = await saveCanvas({ ...canvas, html: nextHtml, css: css ? `${canvas.css || ''}\n${css}` : canvas.css });
+            return { ok: true, placement, note: 'Section inserted as a document-level sibling.', ...effect(c) };
         }
 
         case 'apply_inner': {
+            const bad = requireParams(params, ['path', 'html']);
+            if (bad) return bad;
+            const sel = safeSelector(textParam(params, 'path'));
+            if (!sel) return { ok: false, code: 'bad_selector', error: 'path must be a plain CSS selector (no { } < > or -->).' };
             const html = textParam(params, 'html');
-            const path = textParam(params, 'path', 'body');
-            const marker = `\n<!-- liveweave:${path} -->\n${html}`;
-            return { ok: true, canvas: await saveCanvas({ ...canvas, html: `${canvas.html}${marker}`, css: `${canvas.css || ''}\n${textParam(params, 'css')}` }) };
+            const css = safeDeclarations(textParam(params, 'css')) ?? '';
+            // The worker has no DOM to set a selector's innerHTML directly, so maintain a delimited, IDEMPOTENT block
+            // per selector: repeating apply_inner for the same path REPLACES its block instead of duplicating forever.
+            const open = `<!-- liveweave:begin ${sel} -->`, close = `<!-- liveweave:end ${sel} -->`;
+            const block = `\n${open}\n${html}\n${close}`;
+            const re = new RegExp(`\\n?${escapeRe(open)}[\\s\\S]*?${escapeRe(close)}`);
+            const replaced = re.test(canvas.html);
+            const nextHtml = replaced ? canvas.html.replace(re, block) : `${canvas.html}${block}`;
+            const c = await saveCanvas({ ...canvas, html: nextHtml, css: css ? `${canvas.css || ''}\n${css}` : canvas.css });
+            return { ok: true, target: sel, replaced, note: 'Delimited block (no DOM in the worker for true selector targeting).', ...effect(c) };
         }
 
         case 'set_style': {
-            const path = textParam(params, 'path', 'body');
-            const styles = textParam(params, 'styles');
-            return { ok: true, canvas: await saveCanvas({ ...canvas, css: `${canvas.css || ''}\n${path}{${styles}}` }) };
+            const bad = requireParams(params, ['path', 'styles']);
+            if (bad) return bad;
+            const sel = safeSelector(textParam(params, 'path'));
+            const body = safeDeclarations(textParam(params, 'styles'));
+            if (!sel || body == null) return { ok: false, code: 'bad_slot', error: 'path/styles must be plain CSS (no braces or tags).' };
+            const c = await saveCanvas({ ...canvas, css: upsertMarked(canvas.css || '', `lw:s:${sel}`, `${sel}{${body}}`) });
+            return { ok: true, selector: sel, ...effect(c) };
         }
 
         case 'set_background': {
-            const value = textParam(params, 'value', textParam(params, 'background', '#ffffff'));
-            return { ok: true, canvas: await saveCanvas({ ...canvas, css: `${canvas.css || ''}\nbody{background:${value};}` }) };
+            const value = String(textParam(params, 'value', textParam(params, 'background', '#ffffff')));
+            if (/[{}<]/.test(value)) return { ok: false, code: 'bad_slot', error: 'background value must be a plain CSS value.' };
+            const c = await saveCanvas({ ...canvas, css: upsertMarked(canvas.css || '', 'lw:bg', `body{background:${value};}`) });
+            return { ok: true, ...effect(c) };
         }
 
         case 'undo': {
             if (history.length === 0) return { ok: false, error: 'Nothing to undo.' };
             const previous = history[history.length - 1];
-            await chrome.storage.local.set({ liveweaveCanvas: previous, liveweaveHistory: history.slice(0, -1) });
-            await openLiveWeaveCanvas({ active: true });
-            return { ok: true, canvas: previous };
+            await chrome.storage.local.set({ liveweaveHistory: history.slice(0, -1) });
+            const c = await saveCanvas(previous, false);   // route through saveCanvas so updatedAt refreshes (was stale)
+            return { ok: true, ...effect(c) };
         }
 
-        case 'scan':
-        case 'outline':
-            return {
-                ok: true,
-                title: canvas.title,
-                html: canvas.html,
-                css: canvas.css,
-                htmlLength: canvas.html.length,
-                cssLength: canvas.css.length,
-            };
+        case 'scan':   // full source + structure — for an agent that lost context
+            return { ok: true, title: canvas.title, html: canvas.html, css: canvas.css,
+                     htmlLength: canvas.html.length, cssLength: canvas.css.length, structure: outlineOf(canvas.html) };
+
+        case 'outline':   // concise structure only — cheap for targeting decisions
+            return { ok: true, title: canvas.title, htmlLength: canvas.html.length, cssLength: canvas.css.length, ...outlineOf(canvas.html) };
 
         default:
             return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, undo, scan, outline.` };
