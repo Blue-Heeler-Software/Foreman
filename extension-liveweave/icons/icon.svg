@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <pattern id="w" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect x="2" y="0" width="5" height="16" fill="#a7f3c4"/>
+      <rect x="9" y="0" width="5" height="16" fill="#a7f3c4"/>
+      <rect x="0" y="2" width="16" height="5" fill="#166534"/>
+      <rect x="0" y="9" width="16" height="5" fill="#166534"/>
+      <rect x="2" y="0" width="5" height="8" fill="#a7f3c4"/>
+      <rect x="9" y="8" width="5" height="8" fill="#a7f3c4"/>
+    </pattern>
+    <clipPath id="L"><path d="M40,26 L40,102 L102,102 L102,80 L62,80 L62,26 Z"/></clipPath>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="#0d0f12"/>
+  <g clip-path="url(#L)">
+    <rect width="128" height="128" fill="#22c55e"/>
+    <rect width="128" height="128" fill="url(#w)"/>
+  </g>
+</svg>
