@@ -566,7 +566,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
+// Guard against the three registration paths (onStartup + onInstalled + top-level) all firing within one worker
+// lifetime and running redundant health-checks. Resets naturally when the worker is torn down and re-evaluated.
+let booted = false;
 async function bootstrap() {
+    if (booted) return;
+    booted = true;
     try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
     startPolling();
 }
