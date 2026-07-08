@@ -90,8 +90,10 @@ public sealed class ForemanState : IEventSink
     /// <summary>App-wired credential-vault resolver for the browser-extension EXECUTOR (cu_resolve_vault). Inputs:
     /// (text-with-{{vault:}}, live target origin, the action's submitting harness). Applies the per-release presence tap
     /// + domain-binding + ACL, and returns the resolved plaintext ONLY on success. Null in tests/headless (vault
-    /// unavailable). The returned value is handed to the peer-bound extension to fill, and is never logged.</summary>
-    public Func<string, string, string?, Task<(bool Ok, string? Value, string Reason)>>? ResolveVaultAsync { get; set; }
+    /// unavailable). The returned value is handed to the peer-bound extension to fill, and is never logged. Queued is
+    /// true only for a self-signup that was DEPOSITED for operator review (vault locked) rather than committed to the
+    /// store — the audit line must say "QUEUED", not "CREATED", so an operator doesn't read the credential as live.</summary>
+    public Func<string, string, string?, Task<(bool Ok, string? Value, string Reason, bool Queued)>>? ResolveVaultAsync { get; set; }
 
     void IEventSink.OnEvent(ForemanEvent evt)
     {

@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Foreman.Core.ComputerUse;
+using Foreman.Core.Events;
+using Foreman.Core.Models;
 
 namespace Foreman.McpServer.Tests;
 
@@ -197,7 +199,7 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_Executor_ResolvesBoundReference()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "s3cret", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "s3cret", "ok", false));
         var actionId = await ExecutingBrowserAction("login {{vault:github.com/password}}");
 
         using var res = Json(await ForemanMcpTools.CuResolveVault(
@@ -210,7 +212,7 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_EmbeddedSignupToken_Refused()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "should-not-reach", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "should-not-reach", "ok", false));
         var actionId = await ExecutingBrowserAction("x {{vault:example.com/signup}}");   // token smuggled inside other text
 
         using var res = Json(await ForemanMcpTools.CuResolveVault(
@@ -222,7 +224,7 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_WholeArgSignupToken_Accepted()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "generated-pw", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "generated-pw", "ok", false));
         var actionId = await ExecutingBrowserAction("{{vault:example.com/signup}}");
 
         using var res = Json(await ForemanMcpTools.CuResolveVault(
@@ -235,7 +237,7 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_SubmittingHarness_Refused()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "x", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "x", "ok", false));
         var actionId = await ExecutingBrowserAction("{{vault:github.com/password}}");
 
         // A driving/submitting harness (not the browser-extension executor) can never resolve.
@@ -248,7 +250,7 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_ReferenceNotInApprovedAction_Refused()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "x", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "x", "ok", false));
         var actionId = await ExecutingBrowserAction("{{vault:github.com/password}}");
 
         // A reference the agent never put in the approved action is refused — no resolving arbitrary credentials.
@@ -261,7 +263,7 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_WhilePanicHalted_Refused()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "s3cret", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "s3cret", "ok", false));
         state.Panic = new Foreman.Core.Security.CuPanicState();
         state.Panic.Halt();
         using var res = Json(await ForemanMcpTools.CuResolveVault(
@@ -273,10 +275,52 @@ public sealed class CuToolsTests
     public async Task CuResolveVault_ReferenceCaseInsensitive_Accepted()
     {
         var state = StateWith(CuVerdict.Allow("test"));
-        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason)>((true, "s3cret", "ok"));
+        state.ResolveVaultAsync = (_, _, _) => Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "s3cret", "ok", false));
         var actionId = await ExecutingBrowserAction("login {{vault:github.com/Password}}");   // capital P in the action
         using var res = Json(await ForemanMcpTools.CuResolveVault(
             actionId, "{{vault:github.com/password}}", "github.com", AsHarness("browser-extension")));
         Assert.True(res.RootElement.GetProperty("ok").GetBoolean());    // whole-token, case-insensitive match
+    }
+
+    private static async Task<ForemanEvent?> CaptureSignupAudit(bool queued)
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        // The resolver reports whether the signup was DEPOSITED for review (vault locked) or committed to the store.
+        state.ResolveVaultAsync = (_, _, _) =>
+            Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "generated-pw", "ok", queued));
+        var actionId = await ExecutingBrowserAction("{{vault:example.com/signup}}");
+
+        ForemanEvent? logged = null;
+        void Handler(ForemanEvent e) { if (e.Message.Contains("vault credential for 'example.com'")) logged = e; }
+        EventBus.Instance.Subscribe(Handler);
+        try
+        {
+            using var res = Json(await ForemanMcpTools.CuResolveVault(
+                actionId, "{{vault:example.com/signup}}", "example.com", AsHarness("browser-extension")));
+            Assert.True(res.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally { EventBus.Instance.Unsubscribe(Handler); }
+        return logged;
+    }
+
+    [Fact]   // a LOCKED-vault signup is QUEUED for operator review, not committed — the audit must not claim "CREATED"
+    public async Task CuResolveVault_QueuedSignup_AuditSaysQueuedNotCreated()
+    {
+        var logged = await CaptureSignupAudit(queued: true);
+
+        Assert.NotNull(logged);
+        Assert.Contains("QUEUED", logged!.Message);
+        Assert.Contains("operator review", logged.Message);
+        Assert.DoesNotContain("CREATED", logged.Message);   // nothing is live in the store yet — don't overstate it
+    }
+
+    [Fact]   // an UNLOCKED-vault signup IS committed to the store — the audit keeps saying "CREATED"
+    public async Task CuResolveVault_CommittedSignup_AuditSaysCreated()
+    {
+        var logged = await CaptureSignupAudit(queued: false);
+
+        Assert.NotNull(logged);
+        Assert.Contains("CREATED", logged!.Message);
+        Assert.DoesNotContain("QUEUED", logged.Message);
     }
 }

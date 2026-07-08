@@ -1507,7 +1507,7 @@ public static class ForemanMcpTools
         var resolve = state.ResolveVaultAsync;
         if (resolve is null) return new { ok = false, reason = "The credential vault is not available." };
 
-        var (rok, value, reason) = await resolve(want, liveOrigin.Trim(), item.Action.ByHarness).ConfigureAwait(false);
+        var (rok, value, reason, queued) = await resolve(want, liveOrigin.Trim(), item.Action.ByHarness).ConfigureAwait(false);
 
         // Re-check after the (presence-prompting, possibly slow) resolve: a panic halt or the action completing / being
         // rejected mid-tap VOIDS the release — never hand back a secret for an action that is no longer live.
@@ -1515,13 +1515,17 @@ public static class ForemanMcpTools
             state.Cu.Get(actionId.Trim())?.State != Foreman.Core.ComputerUse.CuActionState.Executing)
             return new { ok = false, reason = "Action was halted or is no longer executing — release voided." };
 
-        // Audit the EVENT + which field (the reference names it) — NEVER the value. A signup is a CREATE (the first
-        // agent-initiated vault WRITE), so it gets a distinct high-signal line so an operator reviewing the durable log
-        // sees a credential was CREATED, not merely released.
+        // Audit the EVENT + which field (the reference names it) — NEVER the value. A signup is a WRITE (the first
+        // agent-initiated vault write), so it gets a distinct high-signal line. When the vault is LOCKED the write is
+        // DEPOSITED for operator review (SelfSignupDeposit), not committed — so `queued` picks "QUEUED for operator
+        // review" over "CREATED", so an operator reading the durable log never mistakes a pending deposit for a live
+        // credential in the store.
         var isSignup = Foreman.Core.Vault.VaultReference.TrySignup(want, out _);
         EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Vault",
             rok ? (isSignup
-                    ? $"CREATED a new vault credential for '{liveOrigin.Trim()}' via agent self-signup for action [{item.ActionId}] (harness {item.Action.ByHarness ?? "operator"})."
+                    ? (queued
+                        ? $"QUEUED a new vault credential for '{liveOrigin.Trim()}' for operator review (agent self-signup, vault locked) for action [{item.ActionId}] (harness {item.Action.ByHarness ?? "operator"})."
+                        : $"CREATED a new vault credential for '{liveOrigin.Trim()}' via agent self-signup for action [{item.ActionId}] (harness {item.Action.ByHarness ?? "operator"}).")
                     : $"Released vault credential {want} into '{liveOrigin.Trim()}' for action [{item.ActionId}].")
                 : $"Refused vault reference {want} for action [{item.ActionId}] into '{liveOrigin.Trim()}': {reason}"));
         return rok ? new { ok = true, value } : new { ok = false, reason };
