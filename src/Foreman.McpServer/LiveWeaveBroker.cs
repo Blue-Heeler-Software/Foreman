@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace Foreman.McpServer;
 
@@ -39,6 +40,8 @@ public sealed class LiveWeaveBroker
     private readonly object _presenceLock = new();
     private LiveWeavePresence _presence = new();
     private const int MaxCommands = 100;
+    private const int MaxPendingPerHarness = 30;    // anti-flood: cap un-drained commands from a single harness
+    private const int MaxParamsChars = 256 * 1024;  // cap inbound command payload (parity with resultJson/tabInfo caps)
     // A command that is never picked up (extension not open/paired/reachable) or never completed (extension crashed
     // mid-command) is failed after this window, so the agent's liveweave_command_result poll gets a terminal status
     // instead of hanging forever. LiveWeave commands are near-instant, and a connected extension polls at least every
@@ -110,18 +113,46 @@ public sealed class LiveWeaveBroker
     {
         ExpireStale();
         var id = Guid.NewGuid().ToString("N")[..12];
+        var harness = string.IsNullOrWhiteSpace(byHarness) ? null : byHarness.Trim().ToLowerInvariant();
+        var reject = RejectReason(parameters, harness);   // oversized payload / per-harness flood → terminal Failed
+        var now = _now();
         var cmd = new LiveWeaveCommand(
             id,
             action.Trim().ToLowerInvariant(),
             parameters ?? new Dictionary<string, object?>(),
-            _now(),
-            LiveWeaveCommandStatus.Pending,
-            ByHarness: string.IsNullOrWhiteSpace(byHarness) ? null : byHarness.Trim().ToLowerInvariant());
+            now,
+            reject is null ? LiveWeaveCommandStatus.Pending : LiveWeaveCommandStatus.Failed,
+            Error: reject,
+            CompletedAt: reject is null ? null : now,
+            ByHarness: harness);
 
         _commands[id] = cmd;
-        _pending.Enqueue(id);
+        if (reject is null) _pending.Enqueue(id);   // a rejected command is terminal and never delivered
         Prune();
         return id;
+    }
+
+    // Reason to reject an enqueue (surfaced as the command's terminal error so the agent's result-poll sees it),
+    // or null to accept.
+    private string? RejectReason(IReadOnlyDictionary<string, object?>? parameters, string? harness)
+    {
+        if (parameters is { Count: > 0 })
+        {
+            int size;
+            try { size = JsonSerializer.Serialize(parameters).Length; }
+            catch { return "LiveWeave command parameters could not be serialized."; }
+            if (size > MaxParamsChars)
+                return $"LiveWeave command parameters too large ({size} chars; cap {MaxParamsChars}).";
+        }
+        if (harness is not null)
+        {
+            var pending = _commands.Values.Count(c =>
+                c.Status == LiveWeaveCommandStatus.Pending &&
+                string.Equals(c.ByHarness, harness, StringComparison.OrdinalIgnoreCase));
+            if (pending >= MaxPendingPerHarness)
+                return $"Too many queued LiveWeave commands for '{harness}' ({pending}); let them drain first.";
+        }
+        return null;
     }
 
     public IReadOnlyList<LiveWeaveCommand> Poll(int limit)
@@ -137,13 +168,14 @@ public sealed class LiveWeaveBroker
             // queued, so fail (don't deliver) anything no longer from the current driver instead of executing it.
             if (!CanDrive(cmd.ByHarness, isOperator: false))
             {
+                var d = _driver;   // snapshot: a concurrent SetDriver must not make the decision and its message disagree
                 _commands[id] = cmd with
                 {
                     Status = LiveWeaveCommandStatus.Failed,
-                    Error = string.IsNullOrEmpty(_driver)
+                    Error = string.IsNullOrEmpty(d)
                         ? $"Rejected: LiveWeave has no harness driver selected; '{cmd.ByHarness ?? "unknown"}' cannot drive it."
-                        : $"Rejected: LiveWeave is set to accept commands only from '{DriverLabel(_driver)}', not '{cmd.ByHarness ?? "unknown"}'.",
-                    CompletedAt = DateTimeOffset.UtcNow,
+                        : $"Rejected: LiveWeave is set to accept commands only from '{DriverLabel(d)}', not '{cmd.ByHarness ?? "unknown"}'.",
+                    CompletedAt = _now(),
                 };
                 continue;
             }
@@ -157,22 +189,30 @@ public sealed class LiveWeaveBroker
 
     public (bool Ok, string Reason) Complete(string commandId, bool ok, object? result, string? error)
     {
-        if (!_commands.TryGetValue(commandId, out var cmd))
-            return (false, "Unknown command id.");
-
-        if (cmd.Status is LiveWeaveCommandStatus.Completed or LiveWeaveCommandStatus.Failed)
-            return (false, "Command already completed.");
-
-        var done = cmd with
+        // Compare-and-swap so two concurrent completions of one id can't both pass the terminal-status guard and
+        // last-writer-win (silently dropping one result while both report success). Mirrors ExpireStale's CAS.
+        while (true)
         {
-            Status = ok ? LiveWeaveCommandStatus.Completed : LiveWeaveCommandStatus.Failed,
-            Result = result,
-            Error = string.IsNullOrWhiteSpace(error) ? null : error.Trim(),
-            CompletedAt = DateTimeOffset.UtcNow,
-        };
-        _commands[commandId] = done;
-        TouchPresence();
-        return (true, ok ? "Completed." : "Failed.");
+            if (!_commands.TryGetValue(commandId, out var cmd))
+                return (false, "Unknown command id.");
+
+            if (cmd.Status is LiveWeaveCommandStatus.Completed or LiveWeaveCommandStatus.Failed)
+                return (false, "Command already completed.");
+
+            var done = cmd with
+            {
+                Status = ok ? LiveWeaveCommandStatus.Completed : LiveWeaveCommandStatus.Failed,
+                Result = result,
+                Error = string.IsNullOrWhiteSpace(error) ? null : error.Trim(),
+                CompletedAt = _now(),
+            };
+            if (_commands.TryUpdate(commandId, done, cmd))
+            {
+                TouchPresence();
+                return (true, ok ? "Completed." : "Failed.");
+            }
+            // lost the race with a concurrent Complete/ExpireStale — re-read and re-check.
+        }
     }
 
     public LiveWeaveCommand? GetCommand(string commandId)
@@ -214,9 +254,10 @@ public sealed class LiveWeaveBroker
             var connected = age < TimeSpan.FromSeconds(30);
             var pending = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.Pending);
             var delivered = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.Delivered);
-            var driverMode = string.IsNullOrEmpty(_driver)
+            var d = _driver;   // snapshot once so driverMode and driverHarness can't disagree if SetDriver races
+            var driverMode = string.IsNullOrEmpty(d)
                 ? "operator_only"
-                : string.Equals(_driver, "*", StringComparison.Ordinal)
+                : string.Equals(d, "*", StringComparison.Ordinal)
                     ? "any_harness"
                     : "selected_harness";
 
@@ -228,7 +269,7 @@ public sealed class LiveWeaveBroker
                 tab = _presence.TabInfo,
                 pendingCommands = pending,
                 inFlightCommands = delivered,
-                driverHarness = DriverLabel(_driver),
+                driverHarness = DriverLabel(d),
                 driverMode,
                 hint = connected
                     ? (driverMode == "operator_only"

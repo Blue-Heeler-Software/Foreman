@@ -91,4 +91,46 @@ public sealed class LiveWeaveBrokerTests
         Assert.Equal(LiveWeaveCommandStatus.Pending, cmd!.Status);
         Assert.Single(broker.Poll(5));     // and it still delivers normally
     }
+
+    [Fact]
+    public void OversizedParameters_RejectedAsFailed_NotQueued()
+    {
+        var broker = new LiveWeaveBroker();
+        broker.SetDriver("codex");
+        var huge = new string('x', 300 * 1024);   // > the 256 KB cap
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = huge }, "codex");
+
+        var cmd = broker.GetCommand(id);
+        Assert.Equal(LiveWeaveCommandStatus.Failed, cmd!.Status);
+        Assert.Contains("too large", cmd.Error);
+        Assert.Empty(broker.Poll(5));      // never enters the delivery queue
+    }
+
+    [Fact]
+    public void PerHarnessFlood_RejectsBeyondTheCap()
+    {
+        var broker = new LiveWeaveBroker();
+        broker.SetDriver("codex");
+        for (var i = 0; i < 30; i++)       // fill the per-harness pending cap (all stay Pending — driver matches)
+            broker.Enqueue("set_background", new Dictionary<string, object?> { ["value"] = "#111" }, "codex");
+
+        var overflow = broker.Enqueue("set_background", new Dictionary<string, object?> { ["value"] = "#222" }, "codex");
+        var cmd = broker.GetCommand(overflow);
+        Assert.Equal(LiveWeaveCommandStatus.Failed, cmd!.Status);
+        Assert.Contains("Too many", cmd.Error);
+    }
+
+    [Fact]
+    public void DoubleComplete_SecondCallReports_AlreadyCompleted()
+    {
+        var broker = new LiveWeaveBroker();
+        broker.SetDriver("codex");
+        var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
+        broker.Poll(5);
+
+        Assert.True(broker.Complete(id, ok: true, result: new { ok = true }, error: null).Ok);
+        var second = broker.Complete(id, ok: true, result: new { ok = true }, error: null);
+        Assert.False(second.Ok);
+        Assert.Contains("already completed", second.Reason);
+    }
 }
