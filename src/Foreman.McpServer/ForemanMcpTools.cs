@@ -1164,13 +1164,18 @@ public static class ForemanMcpTools
             return new { accepted = false, reason = $"Invalid parametersJson: {ex.Message}" };
         }
 
+        var connected = state.LiveWeave.IsConnected;
         var commandId = state.LiveWeave.Enqueue(action, parameters, who);
         return new
         {
             accepted = true,
             commandId,
             action = action.Trim().ToLowerInvariant(),
-            hint = "Poll liveweave_command_result(commandId). LiveWeave extension must be open and paired.",
+            connected,   // whether the LiveWeave extension is live right now (checked in within ~30s)
+            hint = connected
+                ? "Queued and the LiveWeave extension is connected — poll liveweave_command_result(commandId)."
+                : "Queued, but the LiveWeave extension is NOT connected — it will time out in ~2 min unless the " +
+                  "extension is opened in Chrome and paired. Poll liveweave_command_result(commandId).",
         };
     }
 

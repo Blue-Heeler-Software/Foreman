@@ -681,4 +681,15 @@ public sealed class CallerScopeToolTests : IDisposable
         Assert.Equal("Sugar Loop", res.RootElement.GetProperty("result").GetProperty("title").GetString());
         Assert.Equal(123, res.RootElement.GetProperty("result").GetProperty("htmlLength").GetInt32());
     }
+
+    [Fact]
+    public void LiveweaveCommand_AcceptPayload_ReportsExtensionNotConnected()
+    {
+        // No extension has polled, so the broker reports it disconnected — the accept payload should say so up front
+        // (instead of a constant "must be open and paired" hint) so the driving agent knows it'll time out.
+        using var enq = J(ForemanMcpTools.LiveweaveCommand("scan", http: AsOperator));
+        Assert.True(enq.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.False(enq.RootElement.GetProperty("connected").GetBoolean());
+        Assert.Contains("NOT connected", enq.RootElement.GetProperty("hint").GetString());
+    }
 }
