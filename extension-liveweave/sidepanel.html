@@ -18,6 +18,11 @@
     .grid .label { display: block; font-size: 11px; color: #9aa3ad; }
     a { color: #7dd3fc; cursor: pointer; }
     .muted { color: #9aa3ad; font-size: 12px; }
+    #controls button { flex: 1; padding: 6px 8px; font-size: 12px; }
+    .log { margin-top: 14px; font-size: 11px; max-height: 168px; overflow-y: auto; }
+    .log .ln { display: flex; gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid #1a1d24; }
+    .log .ok { color: #4ade80; }
+    .log .bad { color: #f87171; }
   </style>
 </head>
 <body>
@@ -29,6 +34,12 @@
     <button id="openCanvas" class="primary">Open canvas</button>
     <button id="refresh">Refresh</button>
   </div>
+  <div class="row" id="controls" style="display:none">
+    <button data-cmd="new_canvas" title="Start a blank canvas">New</button>
+    <button data-cmd="undo">Undo</button>
+    <button data-cmd="redo">Redo</button>
+  </div>
+  <div id="log" class="log" aria-live="polite"></div>
   <script type="module" src="sidepanel.js"></script>
 </body>
 </html>

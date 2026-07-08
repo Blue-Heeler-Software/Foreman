@@ -45,6 +45,10 @@
     <button id="pair">Pair</button>
   </div>
   <div id="msg" role="status" aria-live="polite"></div>
+  <div id="pairedBlock" style="display:none; margin-top:16px; padding-top:14px; border-top:1px solid #2a2f37">
+    <p style="margin:0 0 8px">✅ Currently paired with Foreman as <code>liveweave</code>.</p>
+    <button id="unpair" class="secondary" style="margin-top:0">Unpair / forget token</button>
+  </div>
   <button id="close" class="secondary">Close</button>
   <p style="margin-top:18px">Foreman must be running locally (default <code>http://127.0.0.1:54321</code>). Everything stays on this device.</p>
   <script src="options.js"></script>

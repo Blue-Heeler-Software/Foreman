@@ -15,12 +15,18 @@ import { callMcpTool, openMcpSession } from './mcp-client.js';
 let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '', harnessId: 'liveweave', liveweaveDriver: '' };
 let connected = false;
 let lastMcpError = null;
-let sidePanelPort = null;
+const sidePanelPorts = new Set();   // every open side panel (a 2nd window used to orphan the 1st)
 let canvasPort = null;       // open while the canvas tab is up — keeps the SW alive for fast, responsive polling
 let pollTimer = null;
 let polling = false;         // re-entrancy guard: never let two polls execute commands concurrently (storage races)
 let needsPair = false;       // set when the token is rejected (401/403) — stop polling a dead token, prompt re-pair
 let mcpSession = null;
+const cmdLog = [];           // recent commands {action, ok, error, ts} for the side-panel log (in-memory; resets on SW restart)
+
+function logCommand(action, result) {
+    cmdLog.push({ action, ok: !!result?.ok, error: result?.ok ? null : (result?.error || null), ts: Date.now() });
+    if (cmdLog.length > 25) cmdLog.shift();
+}
 
 // MV3 reliability: a service worker is torn down after ~30s idle, which kills setInterval — so agent commands
 // would silently stall until something woke the worker. Two mechanisms cover this: a chrome.alarms heartbeat that
@@ -113,18 +119,20 @@ const DEFAULT_CANVAS = {
 };
 
 async function readCanvas() {
-    const s = await chrome.storage.local.get({ liveweaveCanvas: DEFAULT_CANVAS, liveweaveHistory: [] });
+    const s = await chrome.storage.local.get({ liveweaveCanvas: DEFAULT_CANVAS, liveweaveHistory: [], liveweaveRedo: [] });
     return {
         canvas: { ...DEFAULT_CANVAS, ...(s.liveweaveCanvas || {}) },
         history: Array.isArray(s.liveweaveHistory) ? s.liveweaveHistory : [],
+        redo: Array.isArray(s.liveweaveRedo) ? s.liveweaveRedo : [],
     };
 }
 
-async function saveCanvas(canvas, pushHistory = true) {
+async function saveCanvas(canvas, pushHistory = true, clearRedo = true) {
     const prior = await readCanvas();
     const next = { ...DEFAULT_CANVAS, ...canvas, updatedAt: new Date().toISOString() };
     const patch = { liveweaveCanvas: next };
     if (pushHistory) patch.liveweaveHistory = [...prior.history.slice(-9), prior.canvas];
+    if (clearRedo) patch.liveweaveRedo = [];   // a fresh edit invalidates the redo stack (standard undo/redo)
     await chrome.storage.local.set(patch);
     // Ensure the canvas exists so the edit is visible, but DON'T steal focus on every brokered micro-edit (a burst
     // of agent commands used to yank the tab forward up to 5x per poll). The canvas re-renders live from storage;
@@ -263,7 +271,7 @@ function outlineOf(html) {
 async function executeLiveWeaveCommand(cmd) {
     const action = String(cmd.action || '').toLowerCase();
     const params = cmd.parameters || {};
-    const { canvas, history } = await readCanvas();
+    const { canvas, history, redo } = await readCanvas();
     // Effect confirmation appended to every successful mutation so the agent can verify the edit actually landed.
     const effect = (c) => ({ appliedTitle: c.title, htmlLength: (c.html || '').length, cssLength: (c.css || '').length });
 
@@ -363,8 +371,18 @@ async function executeLiveWeaveCommand(cmd) {
         case 'undo': {
             if (history.length === 0) return { ok: false, error: 'Nothing to undo.' };
             const previous = history[history.length - 1];
-            await chrome.storage.local.set({ liveweaveHistory: history.slice(0, -1) });
-            const c = await saveCanvas(previous, false);   // route through saveCanvas so updatedAt refreshes (was stale)
+            // Push the CURRENT canvas onto the redo stack; restore the previous. Route through saveCanvas so
+            // updatedAt refreshes, but don't push history or wipe redo.
+            await chrome.storage.local.set({ liveweaveHistory: history.slice(0, -1), liveweaveRedo: [...redo.slice(-9), canvas] });
+            const c = await saveCanvas(previous, false, false);
+            return { ok: true, ...effect(c) };
+        }
+
+        case 'redo': {
+            if (redo.length === 0) return { ok: false, error: 'Nothing to redo.' };
+            const restore = redo[redo.length - 1];
+            await chrome.storage.local.set({ liveweaveRedo: redo.slice(0, -1), liveweaveHistory: [...history.slice(-9), canvas] });
+            const c = await saveCanvas(restore, false, false);
             return { ok: true, ...effect(c) };
         }
 
@@ -382,7 +400,7 @@ async function executeLiveWeaveCommand(cmd) {
         }
 
         default:
-            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, undo, scan, outline.` };
+            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, undo, redo, scan, outline.` };
     }
 }
 
@@ -436,6 +454,7 @@ async function pollLiveWeave() {
             } catch (e) {
                 result = { ok: false, error: String(e?.message || e) };
             }
+            logCommand(cmd.action, result);
             await mcpCall('liveweave_complete_command', {
                 commandId: cmd.commandId,
                 ok: !!result.ok,
@@ -487,25 +506,32 @@ chrome.runtime.onConnect.addListener((port) => {
         return;
     }
     if (port.name !== 'foreman-liveweave-sidepanel') return;
-    sidePanelPort = port;
-    broadcast();                 // show last-known state immediately…
-    refresh();                   // …then pull fresh state (the SW may have been suspended)
+    sidePanelPorts.add(port);    // track ALL open panels (a second browser window used to orphan the first)
+    postTo(port, statusMessage());   // show last-known state to THIS panel immediately…
+    refresh();                       // …then pull fresh state (the SW may have been suspended)
     port.onMessage.addListener(async (msg) => {
         if (msg?.kind === 'pair') {
             const r = await pair(msg.code, msg.liveweaveDriver);
-            safePost({ kind: 'pair-result', ...r });
+            postTo(port, { kind: 'pair-result', ...r });   // route the result to the panel that asked
         } else if (msg?.kind === 'refresh') {
             mcpSession = null;
             await refresh();
         } else if (msg?.kind === 'open-canvas') {
-            await openLiveWeaveCanvas();
+            await openLiveWeaveCanvas({ active: true });    // explicit user action — raise the canvas
+        } else if (msg?.kind === 'command') {
+            // Operator-driven builder command from the panel (New/Undo/Redo/Clear) — same executor as brokered ones.
+            let result;
+            try { result = await executeLiveWeaveCommand({ action: msg.action, parameters: msg.parameters || {} }); }
+            catch (e) { result = { ok: false, error: String(e?.message || e) }; }
+            logCommand(msg.action, result);
+            broadcast();
         }
     });
-    port.onDisconnect.addListener(() => { if (sidePanelPort === port) sidePanelPort = null; });
+    port.onDisconnect.addListener(() => sidePanelPorts.delete(port));
 });
 
-function broadcast() {
-    safePost({
+function statusMessage() {
+    return {
         kind: 'status',
         connected,
         paired: !!cfg.token,
@@ -513,13 +539,18 @@ function broadcast() {
         base: base(),
         liveweaveDriver: cfg.liveweaveDriver || '',
         mcpError: lastMcpError,
-    });
+        log: cmdLog,
+    };
 }
 
-function safePost(message) {
-    if (!sidePanelPort) return;
-    try { sidePanelPort.postMessage(message); }
-    catch { sidePanelPort = null; }
+function broadcast() {
+    const m = statusMessage();
+    for (const port of [...sidePanelPorts]) postTo(port, m);
+}
+
+function postTo(port, message) {
+    try { port.postMessage(message); }
+    catch { sidePanelPorts.delete(port); }
     finally { try { void chrome.runtime.lastError; } catch { /* ok */ } }
 }
 

@@ -7,11 +7,15 @@ port.onMessage.addListener((m) => {
 });
 $('refresh').addEventListener('click', () => port.postMessage({ kind: 'refresh' }));
 $('openCanvas').addEventListener('click', () => port.postMessage({ kind: 'open-canvas' }));
+// Operator builder controls (New/Undo/Redo) — drive the same executor as brokered commands.
+document.querySelectorAll('[data-cmd]').forEach((b) =>
+    b.addEventListener('click', () => port.postMessage({ kind: 'command', action: b.dataset.cmd })));
 
 function setHint(text, _cls) { $('hint').textContent = text; }
 
 function render(m) {
     const badge = $('badge');
+    $('controls').style.display = 'none';   // shown only in the connected state below
     if (!m.paired) {
         badge.textContent = '🔌 Not paired';
         badge.className = 'warn';
@@ -43,6 +47,19 @@ function render(m) {
             <div><span class="label">Driver harness</span><strong>${driver}</strong></div>
         </div>
         <p class="muted" style="margin-top:10px">Foreman-brokered edits render into the local canvas. ${m.mcpError ? 'MCP: ' + esc(m.mcpError) : ''}</p>`;
+    $('controls').style.display = m.connected ? 'flex' : 'none';   // can only drive while Foreman is reachable
+    renderLog(m.log || []);
+}
+
+function renderLog(log) {
+    const el = $('log');
+    if (!log.length) { el.innerHTML = ''; return; }
+    el.innerHTML = log.slice().reverse().map((e) => {
+        const time = new Date(e.ts).toLocaleTimeString();
+        const detail = e.ok ? '' : ` <span class="bad">${esc(e.error || 'failed')}</span>`;
+        return `<div class="ln"><span class="${e.ok ? 'ok' : 'bad'}">${e.ok ? '✓' : '✗'}</span><span>${esc(e.action)}</span>` +
+            `<span class="muted" style="margin-left:auto">${time}</span>${detail}</div>`;
+    }).join('');
 }
 
 function esc(v) {

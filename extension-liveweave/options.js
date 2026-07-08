@@ -3,9 +3,19 @@ const $ = (id) => document.getElementById(id);
 function setMsg(text, cls) { const m = $('msg'); m.textContent = text; m.className = cls || ''; }
 
 async function loadOptions() {
-    const s = await chrome.storage.local.get({ liveweaveDriver: '' });
+    const s = await chrome.storage.local.get({ liveweaveDriver: '', token: '' });
     $('driver').value = s.liveweaveDriver || '';
+    $('pairedBlock').style.display = s.token ? 'block' : 'none';   // show Unpair only when a token is stored
 }
+
+// Forget the stored token/origin/driver. The service worker watches these settings keys and drops its in-memory
+// token + MCP session on the change, so no explicit message is needed.
+$('unpair').addEventListener('click', async () => {
+    await chrome.storage.local.remove(['token', 'pairedOrigin', 'liveweaveDriver']);
+    $('driver').value = '';
+    $('pairedBlock').style.display = 'none';
+    setMsg('Unpaired — token forgotten. Pair again to reconnect.', 'ok');
+});
 
 $('pair').addEventListener('click', () => {
     const code = $('code').value;

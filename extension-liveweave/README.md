@@ -18,7 +18,7 @@ arbitrary tabs and never touches the network: it talks only to `http://127.0.0.1
     selector), `apply_inner` (sets a selector's inner HTML via an offscreen DOM — real targeting, idempotent;
     surfaces a `not_found` when the selector matches nothing), `set_style` / `set_background` (upsert one rule per
     selector, so re-styling doesn't grow the sheet), `new_canvas`, `generate` / `template` (a single static
-    scaffold — NOT an on-device model), `undo`.
+    scaffold — NOT an on-device model), `undo` / `redo`.
   - **Inspect**: `scan` (full source + a structural summary), `outline` (just the concise structure — heading
     tree, ids, duplicate-id warnings, landmark counts).
   - Missing required params return a structured `{ok:false, code, field}`; every successful edit returns
@@ -61,5 +61,5 @@ arbitrary tabs and never touches the network: it talks only to `http://127.0.0.1
 | `liveweave.html` / `liveweave.js` | local LiveWeave canvas for Foreman-brokered page edits (+ Copy/Download export) |
 | `offscreen.html` / `offscreen.js` | hidden offscreen DOM used for true CSS-selector targeting + structure inspection |
 | `settings.js` | `chrome.storage.local` helpers (defaults to the `liveweave` harness) |
-| `options.html` / `options.js` | enter the pairing code + driver harness |
-| `sidepanel.html` / `sidepanel.js` | connection status + open-canvas |
+| `options.html` / `options.js` | enter the pairing code + driver harness; unpair / forget token |
+| `sidepanel.html` / `sidepanel.js` | connection status, open-canvas, operator controls (New/Undo/Redo) + a recent-command log |
