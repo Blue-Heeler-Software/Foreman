@@ -17,9 +17,11 @@ namespace Foreman.EtwSidecar;
 /// tails the Security log for Event 4663 (object access). Any read of a tracked decoy by a process other
 /// than Foreman becomes a <see cref="DecoyReadMessage"/> the sidecar streams to the app.
 ///
-/// All of this needs admin (the sidecar is the only elevated component). Cleanup is exact: it removes only
-/// the audit ACEs it added, and reverts the audit subcategory ONLY if it was the one to enable it — so a
-/// policy the user already had is never touched. Everything is wrapped so a failure degrades to "no decoy
+/// All of this needs admin (the sidecar is the only elevated component). Cleanup is exact: it removes only the
+/// audit ACEs it owns — the ones it added this run, plus any identical Everyone/ReadData/Success ACE it adopted
+/// from a prior run that crashed before cleanup (its own signature on its own decoy) — and reverts the audit
+/// subcategory ONLY if it was the one to enable it, so a policy the user already had is never touched. A broader
+/// pre-existing rule is never adopted or stripped. Everything is wrapped so a failure degrades to "no decoy
 /// auditing" rather than throwing.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -45,7 +47,12 @@ internal sealed class DecoyAudit : IDisposable
         {
             EnablePrivilege("SeSecurityPrivilege");
             foreach (var p in _decoyPaths)
-                if (TrySetAuditAce(p)) _sacled.Add(p);
+                if (EnsureAuditAce(p)) _sacled.Add(p);
+            // _sacled now holds every path we are actually auditing — ones we newly SACL'd AND ones that already
+            // carried our exact ACE from a prior run that crashed before Cleanup. If it is empty, every decoy is
+            // missing or unwritable, so there is nothing to watch. (The old gate keyed off only NEWLY-added ACEs,
+            // so a full set of crash-orphaned ACEs left the watcher un-started while the app still showed
+            // "connected" — a silently dead tripwire.)
             if (_sacled.Count == 0) return false;
             _weEnabledAuditPol = EnableFileSystemAuditingIfNeeded();
             StartWatcher();
@@ -121,10 +128,15 @@ internal sealed class DecoyAudit : IDisposable
         catch { return 0; }
     }
 
-    // Returns true ONLY if we added a NEW audit ACE (so cleanup removes exactly that and nothing else). If an
-    // identical Everyone/ReadData/Success rule already existed (e.g. an admin set it), we leave it and don't
-    // claim it — so we never strip a pre-existing audit policy on cleanup.
-    private static bool TrySetAuditAce(string path)
+    // Ensures our exact Everyone/ReadData/Success audit ACE is present on a decoy path. Returns true when that
+    // ACE is present as a result — whether we just added it, OR an identical one already existed. We ADOPT the
+    // pre-existing case because that ACE is our own signature on a decoy WE plant and audit: it can only be a
+    // leftover from a prior run that crashed before Cleanup. Adopting it means (a) we count the path as audited
+    // so the watcher actually starts, and (b) a clean teardown reclaims and removes it (RemoveAuditRuleSpecific
+    // targets ONLY the exact ReadData/Success ACE, so a BROADER pre-existing rule like Everyone/FullControl is
+    // still never stripped). Returns false only when the file is missing or the SACL write failed — i.e. the
+    // path is NOT being audited and must not keep the watcher alive on its own.
+    private static bool EnsureAuditAce(string path)
     {
         try
         {
@@ -137,7 +149,7 @@ internal sealed class DecoyAudit : IDisposable
                 if (Equals(r.IdentityReference, everyone)
                     && r.FileSystemRights == FileSystemRights.ReadData
                     && r.AuditFlags == AuditFlags.Success)
-                    return false;   // identical ACE pre-exists — don't add, don't track for removal
+                    return true;   // our exact ACE already present (crash-orphaned) — adopt: watch it, remove on teardown
 
             sec.AddAuditRule(new FileSystemAuditRule(everyone, FileSystemRights.ReadData, AuditFlags.Success));
             fi.SetAccessControl(sec);

@@ -133,13 +133,43 @@ public sealed class DecoyAuditPolicyTests
     public void SearchIndexerFamily_AllFormsSuppressed(string image) =>
         Assert.False(DecoyAuditPolicy.IsDecoyRead(@"C:\Users\u\secrets.env", 9001, image, AllDecoys, Excluded));
 
-    [Theory]   // CRITICAL: a harvester named SearchProtocolHost.exe OUTSIDE System32 is NOT exempt (path-anchored)
+    [Theory]   // CRITICAL: a harvester named SearchProtocolHost.exe OUTSIDE the real System32 is NOT exempt
     [InlineData(@"C:\Users\u\AppData\Local\Temp\SearchProtocolHost.exe")]
     [InlineData(@"C:\Windows\Temp\SearchProtocolHost.exe")]
     [InlineData(@"SearchProtocolHost.exe")]                    // bare name, no System32 path → cannot be trusted
     [InlineData(@"C:\evil\System32\SearchProtocolHost.exe")]   // a "System32" not under \Windows → not the real one
+    // A FABRICATED \Windows\System32\ subtree a non-admin can create under their profile/Temp: the old
+    // EndsWith(@"\Windows\System32\SearchProtocolHost.exe") test trusted these; the volume-relative anchor rejects them.
+    [InlineData(@"C:\Users\u\AppData\Local\Temp\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"C:\Users\u\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"C:\Users\u\Windows\System32\SearchIndexer.exe")]
     public void RenamedHarvesterPosingAsIndexer_StillFires(string image) =>
         Assert.True(DecoyAuditPolicy.IsDecoyRead(@"C:\Users\u\secrets.env", 9001, image, AllDecoys, Excluded));
+
+    // ── Indexer anchor in isolation (injected System32 tail → machine-independent) ───────────────
+
+    [Theory]   // the genuine indexer, every 4663 path form, resolves to the real System32 volume-relative tail
+    [InlineData(@"C:\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"\Device\HarddiskVolume3\Windows\System32\SearchIndexer.exe")]
+    [InlineData(@"\\?\C:\Windows\System32\SearchFilterHost.exe")]
+    [InlineData(@"C:/Windows/System32/searchprotocolhost.exe")]
+    public void IndexerAnchor_RealSystem32_IsBenign(string image) =>
+        Assert.True(DecoyAuditPolicy.IsBenignSystemIndexer(image, @"\Windows\System32"));
+
+    [Theory]   // the bypass this fix closes: a fabricated \Windows\System32\ tree is NOT the real System32
+    [InlineData(@"C:\Users\bob\AppData\Local\Temp\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"C:\Users\bob\Windows\System32\SearchProtocolHost.exe")]
+    [InlineData(@"D:\junk\Windows\System32\SearchIndexer.exe")]
+    [InlineData(@"C:\evil\System32\SearchProtocolHost.exe")]
+    [InlineData(@"SearchProtocolHost.exe")]
+    [InlineData(@"C:\Windows\System32\notepad.exe")]           // a real System32 binary that isn't an indexer
+    public void IndexerAnchor_FabricatedOrWrongImage_IsNotBenign(string image) =>
+        Assert.False(DecoyAuditPolicy.IsBenignSystemIndexer(image, @"\Windows\System32"));
+
+    [Fact]   // the anchor may be supplied as a full drive path too (drive is stripped both sides)
+    public void IndexerAnchor_AcceptsFullDriveAnchor() =>
+        Assert.True(DecoyAuditPolicy.IsBenignSystemIndexer(
+            @"C:\Windows\System32\SearchProtocolHost.exe", @"C:\Windows\System32"));
 
     // ── Pipe protocol: Kind discriminator + back-compat ─────────────────────
 

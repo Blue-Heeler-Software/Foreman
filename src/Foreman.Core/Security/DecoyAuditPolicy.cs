@@ -107,25 +107,62 @@ public static class DecoyAuditPolicy
     /// True when <paramref name="readerImage"/> is the genuine Windows Search indexer content-gathering process
     /// (SearchProtocolHost / SearchIndexer / SearchFilterHost) running from its real System32 path. These crawl
     /// file CONTENT to build the search index and will read a home-root bait decoy on every pass — benign OS
-    /// behaviour, not harvesting. Matched PATH-ANCHORED under \Windows\System32\ so a renamed harvester elsewhere
-    /// is NOT exempt: a non-admin cannot write a binary into System32. (If an attacker is already SYSTEM/admin and
-    /// can drop into System32, the decoy tripwire is moot anyway.) Public for unit-testing.
+    /// behaviour, not harvesting. Anchored to the REAL System32 by its VOLUME-RELATIVE tail (e.g. \Windows\System32)
+    /// so a renamed harvester is NOT exempt no matter where it lives — including a fabricated ...\Windows\System32\
+    /// subtree a non-admin can create under their profile or Temp (which an EndsWith(@"\Windows\System32\…") test
+    /// would wrongly trust). Only a file actually IN the real System32 has that exact volume-relative tail, and
+    /// writing there needs admin (at which point the tripwire is moot anyway). Comparing the volume-relative tail
+    /// rather than a full drive path also keeps the \Device\HarddiskVolumeN\… form the real indexer's 4663 emits.
+    /// Public for unit-testing.
     /// </summary>
-    public static bool IsBenignSystemIndexer(string? readerImage)
+    public static bool IsBenignSystemIndexer(string? readerImage) =>
+        IsBenignSystemIndexer(readerImage, System32VolumeRelative);
+
+    /// <summary>
+    /// Testable core of <see cref="IsBenignSystemIndexer(string?)"/>: <paramref name="system32VolumeRelative"/> is
+    /// the drive-stripped System32 path to anchor on (e.g. <c>\Windows\System32</c>), injected so the exemption
+    /// can be verified without depending on where Windows is installed on the test host.
+    /// </summary>
+    public static bool IsBenignSystemIndexer(string? readerImage, string system32VolumeRelative)
     {
-        if (string.IsNullOrWhiteSpace(readerImage)) return false;
-        var p = Normalize(readerImage);
-        foreach (var img in SystemIndexerImages)
-            if (p.EndsWith(img, StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.IsNullOrWhiteSpace(readerImage) || string.IsNullOrWhiteSpace(system32VolumeRelative)) return false;
+        var rel = StripVolume(Normalize(readerImage));
+        var anchor = StripVolume(Normalize(system32VolumeRelative)).TrimEnd('\\');
+        foreach (var name in SystemIndexerImageNames)
+            if (rel.Equals(anchor + "\\" + name, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
-    private static readonly string[] SystemIndexerImages =
+    // The real System32's volume-relative tail (e.g. "\Windows\System32"), derived from the actual install so a
+    // non-standard %SystemRoot% still anchors correctly. Drive-stripped so it matches every 4663 path form.
+    private static readonly string System32VolumeRelative =
+        StripVolume(Normalize(Environment.GetFolderPath(Environment.SpecialFolder.System)));
+
+    private static readonly string[] SystemIndexerImageNames =
     [
-        @"\Windows\System32\SearchProtocolHost.exe",
-        @"\Windows\System32\SearchIndexer.exe",
-        @"\Windows\System32\SearchFilterHost.exe",
+        "SearchProtocolHost.exe",
+        "SearchIndexer.exe",
+        "SearchFilterHost.exe",
     ];
+
+    /// <summary>
+    /// Strips a leading volume designator so paths from any 4663 form compare on their volume-relative tail:
+    /// <c>C:\Windows\…</c> → <c>\Windows\…</c>; <c>\Device\HarddiskVolume3\Windows\…</c> → <c>\Windows\…</c>
+    /// (the <c>\\?\</c> prefix is already removed by <see cref="Normalize"/>). A path whose volume-relative tail
+    /// is <c>\Windows\System32\X</c> can only come from a file in the true System32 — writing there needs admin —
+    /// which is exactly the anchor the indexer exemption needs.
+    /// </summary>
+    private static string StripVolume(string p)
+    {
+        if (p.Length >= 2 && char.IsLetter(p[0]) && p[1] == ':') return p[2..];          // C:\… → \…
+        if (p.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase))               // \Device\<vol>\… → \…
+        {
+            var rest = p[@"\Device\".Length..];
+            var slash = rest.IndexOf('\\');
+            return slash < 0 ? "\\" : rest[slash..];
+        }
+        return p;   // already volume-relative (or an unrecognized form — left as-is, so it won't match the anchor)
+    }
 
     /// <summary>
     /// The bare executable name from a 4663 ProcessName. Handles a \\?\ prefix, the \Device\HarddiskVolumeN\…
