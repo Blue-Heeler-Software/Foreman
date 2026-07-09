@@ -38,6 +38,7 @@ public partial class App : Application
     private McpServerHost? _mcpHost;
     private volatile bool _mcpStartFailed;   // set by StartMcpSurfacingFailureAsync; read by the Setup tab
     private ElevatedSidecarController? _sidecar;
+    private System.Windows.Threading.DispatcherTimer? _sidecarWatchdog;
     private McpToolScanMonitor? _toolScan;
     private AlertResolver? _alertResolver;
     private AlertResponseRunner? _alertResponseRunner;
@@ -791,6 +792,20 @@ public partial class App : Application
         _tray.ApplyRunElevated  = _ => ApplySidecarState();
         _tray.ApplyDecoyAuditing = () => ApplySidecarState();
 
+        // Supervise the elevated sidecar. Launch is fire-and-forget, so a canary can go silently inert: if decoy
+        // read-auditing / net capture is enabled but the helper isn't connected, surface it, and auto-relaunch a
+        // genuine crash a bounded number of times — but never re-prompt UAC on a loop for a declined launch.
+        var sidecarSupervisor = new Foreman.Core.Health.SidecarSupervisor(
+            expectedUp:     () => settings.RunElevated || settings.DecoyCredentials is { Enabled: true, EnableReadAuditing: true },
+            isConnected:    () => _sidecar?.IsConnected ?? false,
+            launchDeclined: () => _sidecar?.LaunchFailed ?? false,
+            relaunch:       ApplySidecarState,
+            notify:         (sev, msg) => EventBus.Instance.Publish(
+                                new MonitoringNoticeEvent(DateTimeOffset.UtcNow, sev, "Foreman.Sidecar", msg)));
+        _sidecarWatchdog = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _sidecarWatchdog.Tick += (_, _) => { try { sidecarSupervisor.Tick(); } catch { /* a bad tick must never crash the app */ } };
+        _sidecarWatchdog.Start();
+
         // Tier 1 (opt-in): MCP tool-description injection scan. Constructed always so the Settings
         // toggle can start/stop it at runtime, but it only connects out when enabled. When off, the
         // ListMcpToolFindings MCP tool reports "scanning disabled" (GetMcpToolScan stays null).
@@ -1260,6 +1275,7 @@ public partial class App : Application
         }
 
         _cts?.Cancel();
+        _sidecarWatchdog?.Stop();
         _alertResolver?.Dispose();
         _toolScan?.Dispose();
         _headSealKey?.Dispose();

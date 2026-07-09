@@ -54,7 +54,12 @@ internal sealed class DecoyAudit : IDisposable
             // so a full set of crash-orphaned ACEs left the watcher un-started while the app still showed
             // "connected" — a silently dead tripwire.)
             if (_sacled.Count == 0) return false;
-            _weEnabledAuditPol = EnableFileSystemAuditingIfNeeded();
+            // Persist auditpol ownership across restarts: if a prior run enabled the "File System" success
+            // subcategory and then crashed/was killed before Cleanup, its in-memory ownership flag was lost and
+            // the policy would sit orphaned-on with no one to revert it. A machine-wide marker lets this run
+            // reclaim that ownership and revert it on clean teardown.
+            _weEnabledAuditPol = EnableFileSystemAuditingIfNeeded() || AuditPolMarkerExists();
+            if (_weEnabledAuditPol) WriteAuditPolMarker();
             StartWatcher();
             return true;
         }
@@ -211,8 +216,37 @@ internal sealed class DecoyAudit : IDisposable
         if (_weEnabledAuditPol)
         {
             try { RunAuditpol("/set /subcategory:\"File System\" /success:disable"); } catch { }
+            DeleteAuditPolMarker();
             _weEnabledAuditPol = false;
         }
+    }
+
+    // A machine-wide marker recording that WE enabled the "File System" success subcategory, so ownership
+    // survives a crash/kill that skips Cleanup: the next elevated run reads it, reclaims ownership, and reverts
+    // the policy on clean teardown instead of leaving it orphaned-on. Kept in ProgramData (not per-user
+    // LocalAppData) so it is stable no matter which admin account approved the UAC elevation.
+    private static string AuditPolMarkerPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Foreman", "decoy-auditpol.owned");
+
+    private static bool AuditPolMarkerExists()
+    {
+        try { return File.Exists(AuditPolMarkerPath()); } catch { return false; }
+    }
+
+    private static void WriteAuditPolMarker()
+    {
+        try
+        {
+            var m = AuditPolMarkerPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(m)!);
+            if (!File.Exists(m)) File.WriteAllText(m, DateTimeOffset.UtcNow.ToString("o"));
+        }
+        catch { }
+    }
+
+    private static void DeleteAuditPolMarker()
+    {
+        try { var m = AuditPolMarkerPath(); if (File.Exists(m)) File.Delete(m); } catch { }
     }
 
     public void Dispose() => Cleanup();

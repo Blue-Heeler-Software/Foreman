@@ -31,6 +31,7 @@ public sealed class ElevatedSidecarController : IDisposable
     private volatile Dictionary<int, double> _rates = new();
     private volatile WakeRequestSnapshot _wakeRequests = WakeRequestSnapshot.Unavailable("Elevated sidecar is not connected.");
     private volatile bool _connected;
+    private volatile bool _launchFailed;   // last launch attempt failed to START (declined UAC / missing / untrusted)
     private bool _captureNet = true;
     private bool _captureWakeRequests = true;
     private IReadOnlyList<string> _decoyPaths = [];
@@ -53,6 +54,14 @@ public sealed class ElevatedSidecarController : IDisposable
     public bool IsRunning { get; private set; }
     public bool IsConnected => _connected;
 
+    /// <summary>
+    /// True when the most recent launch attempt failed to START — the user declined the UAC prompt, or the helper
+    /// was missing / failed integrity. Distinguishes a declined (re-)elevation from a genuine post-connect crash so
+    /// a supervisor can auto-recover the latter without re-prompting UAC on a loop for the former. Cleared when a
+    /// new launch begins or the sidecar connects.
+    /// </summary>
+    public bool LaunchFailed => _launchFailed;
+
     /// <summary>Raised when the elevated sidecar reports a SACL-audited read of a decoy credential file.</summary>
     public Action<DecoyReadMessage>? OnDecoyRead { get; set; }
 
@@ -69,6 +78,7 @@ public sealed class ElevatedSidecarController : IDisposable
         {
             if (IsRunning) return;
             IsRunning = true;
+            _launchFailed = false;   // a fresh attempt is starting; clear the prior verdict
             _cts = new CancellationTokenSource();
             var cts = _cts;
             _ = Task.Run(() => RunAsync(cts));
@@ -97,7 +107,7 @@ public sealed class ElevatedSidecarController : IDisposable
         try
         {
             using var server = CreateOwnerOnlyPipe(pipeName);
-            if (!LaunchSidecar(pipeName, nonce)) return;   // exe missing or UAC declined
+            if (!LaunchSidecar(pipeName, nonce)) { _launchFailed = true; return; }   // exe missing or UAC declined
 
             await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
 
@@ -119,6 +129,7 @@ public sealed class ElevatedSidecarController : IDisposable
             if (!string.Equals(presented, nonce, StringComparison.Ordinal)) return;
 
             _connected = true;
+            _launchFailed = false;   // launched and handshook — a later drop is a crash, not a failed launch
             while (!ct.IsCancellationRequested)
             {
                 var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
