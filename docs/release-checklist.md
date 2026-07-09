@@ -16,6 +16,8 @@ Use this before publishing a public binary release.
 - Capture fresh screenshots for README/release notes.
 - Attach SHA-256 checksums to the release.
 - State clearly whether the installer is signed or unsigned (see **Code Signing** below).
+- Confirm the "Attest build provenance" step succeeded (see **Build Provenance** below); it runs on every
+  release with no setup, so a failure there means the release lacks a verifiable provenance record.
 
 ## Recommended
 
@@ -81,6 +83,31 @@ reputation (Microsoft: weeks + hundreds of clean installs). For a niche tool tha
 keep the SHA-256 checksums, walk users through "More info → Run anyway" in the install docs, and **sign
 every release with the same identity** so reputation compounds. Do **not** buy EV (no SmartScreen benefit
 in 2026; only needed for kernel drivers, which Foreman doesn't ship).
+
+## Build Provenance (GitHub Artifact Attestations)
+
+Separate from, and complementary to, Authenticode signing. The release workflow's "Attest build provenance"
+step produces a keyless (Sigstore, OIDC-backed) attestation that binds each shipped artifact to the exact
+repo, commit, and workflow run that built it. It answers "did this binary really come from this source?",
+which code signing (which answers "who published this?") does not.
+
+- **No setup.** It has no secrets or variables to configure and runs on every release, signed or unsigned. It
+  runs after the SignPath steps, so when signing is on it attests the final signed bytes.
+- **What is attested:** the installer plus the payload binaries (`Foreman.exe`,
+  `sidecar/Foreman.EtwSidecar.exe`, `guardian/Foreman.Guardian.exe`), so a user can verify either the
+  download or an installed file.
+- **Nothing is attached to the Release.** GitHub stores the attestation; verification fetches it by digest.
+- **Verify a download or an installed file:**
+
+  ```
+  gh attestation verify <path-to-exe> --repo aXL333/Foreman
+  ```
+
+  A pass prints the source repo, commit, and workflow. Worth putting this one line in the release notes so
+  security-minded users can check what they ran.
+- **Relation to the sidecar integrity gate:** provenance is a build-time supply-chain proof. It does not
+  replace the runtime Authenticode signer-match check in `SidecarIntegrity` (which needs the SignPath cert to
+  become active); the two are independent and both worth having.
 
 ## Current Alpha Gates
 

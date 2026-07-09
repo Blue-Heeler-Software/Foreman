@@ -11,7 +11,9 @@ on:
 
 permissions:
   contents: write
-  actions: read     # SignPath downloads the build artifact via the Actions API using github.token
+  actions: read       # SignPath downloads the build artifact via the Actions API using github.token
+  id-token: write     # OIDC token for the keyless Sigstore attestation (build provenance)
+  attestations: write # write the provenance attestation to the repo's attestation store
 
 jobs:
   release:
@@ -161,6 +163,20 @@ jobs:
           Get-FileHash installer/Output/*.exe -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" } |
             Set-Content -Encoding ASCII installer/Output/checksums-sha256.txt
+
+      # Supply-chain provenance: a keyless Sigstore attestation binding each shipped artifact to THIS repo,
+      # commit, and workflow run. Independent of code signing (runs whether SignPath is configured or not), and
+      # runs AFTER signing so the attested digests are the final, signed bytes. GitHub stores the attestation, so
+      # nothing extra is attached to the Release; anyone can verify a download with:
+      #   gh attestation verify <file> --repo ${{ github.repository }}
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
+            installer/Output/*.exe
+            publish/Foreman.exe
+            publish/sidecar/Foreman.EtwSidecar.exe
+            publish/guardian/Foreman.Guardian.exe
 
       - name: Attach installer to GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
