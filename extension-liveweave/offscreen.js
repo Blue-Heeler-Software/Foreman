@@ -38,7 +38,28 @@ function inspect(doc) {
     return { headings, ids, duplicateIds, landmarks, elementCount: doc.body.querySelectorAll('*').length, children };
 }
 
-function handle(msg) {
+function sanitizeGeneratedFragment(value) {
+    const doc = parse(`<div data-liveweave-generated-root>${String(value ?? '')}</div>`);
+    const root = doc.querySelector('[data-liveweave-generated-root]');
+    if (!root) return '';
+    root.querySelectorAll('script,style,iframe,frame,object,embed,link,meta,base').forEach((node) => node.remove());
+    for (const element of root.querySelectorAll('*')) {
+        for (const attribute of [...element.attributes]) {
+            const name = attribute.name.toLowerCase();
+            const attrValue = attribute.value.trim();
+            if (name.startsWith('on') || ['srcdoc', 'style', 'action', 'formaction', 'target'].includes(name)) {
+                element.removeAttribute(attribute.name);
+                continue;
+            }
+            if (['href', 'src', 'xlink:href'].includes(name) && /^(?:javascript|data:text\/html)/i.test(attrValue)) {
+                element.removeAttribute(attribute.name);
+            }
+        }
+    }
+    return root.innerHTML;
+}
+
+async function handle(msg) {
     switch (msg.op) {
         case 'apply_inner': {
             const doc = parse(msg.html);
@@ -59,6 +80,40 @@ function handle(msg) {
             }
             return { ok: true, html: doc.body.innerHTML };
         }
+        case 'set_text': {
+            const doc = parse(msg.html);
+            const el = doc.querySelector(msg.path);
+            if (!el) return { ok: false, code: 'not_found', error: `No element matches selector '${msg.path}'.` };
+            el.textContent = String(msg.text ?? '');
+            return { ok: true, html: doc.body.innerHTML };
+        }
+        case 'duplicate_element': {
+            const doc = parse(msg.html);
+            const el = doc.querySelector(msg.path);
+            if (!el) return { ok: false, code: 'not_found', error: `No element matches selector '${msg.path}'.` };
+            el.parentNode?.insertBefore(el.cloneNode(true), el.nextSibling);
+            return { ok: true, html: doc.body.innerHTML };
+        }
+        case 'remove_element': {
+            const doc = parse(msg.html);
+            const el = doc.querySelector(msg.path);
+            if (!el) return { ok: false, code: 'not_found', error: `No element matches selector '${msg.path}'.` };
+            el.remove();
+            return { ok: true, html: doc.body.innerHTML };
+        }
+        case 'inspect_element': {
+            const doc = parse(msg.html);
+            const element = doc.querySelector(msg.path);
+            if (!element) return { ok: false, code: 'not_found', error: `No element matches selector '${msg.path}'.` };
+            return { ok: true, outerHtml: element.outerHTML.slice(0, 12000) };
+        }
+        case 'apply_safe_inner': {
+            const doc = parse(msg.html);
+            const element = doc.querySelector(msg.path);
+            if (!element) return { ok: false, code: 'not_found', error: `No element matches selector '${msg.path}'.` };
+            element.innerHTML = sanitizeGeneratedFragment(msg.inner);
+            return { ok: true, html: doc.body.innerHTML };
+        }
         case 'inspect':
             return { ok: true, ...inspect(parse(msg.html)) };
         default:
@@ -68,7 +123,8 @@ function handle(msg) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.target !== 'liveweave-offscreen') return false;   // not ours — let other listeners handle it
-    try { sendResponse(handle(msg)); }
-    catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
-    return false;   // response sent synchronously
+    Promise.resolve(handle(msg))
+        .then(sendResponse)
+        .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
 });

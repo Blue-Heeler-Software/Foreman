@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveWeave Inspector Layout Fixture</title>
+  <style>
+    body { margin: 0; padding: 20px; background: #20242a; }
+    iframe { display: block; width: 380px; height: 840px; border: 1px solid #3b4350; background: #0d0f12; }
+  </style>
+</head>
+<body>
+  <iframe id="panel" src="../../sidepanel.html" title="LiveWeave inspector fixture"></iframe>
+  <script>
+    document.getElementById('panel').addEventListener('load', (event) => {
+      const doc = event.currentTarget.contentDocument;
+      doc.getElementById('browseView').style.display = 'none';
+      doc.getElementById('editorView').style.display = 'flex';
+      doc.getElementById('inspectorEmpty').style.display = 'none';
+      doc.getElementById('inspectorControls').style.display = 'block';
+      doc.getElementById('selectedLabel').textContent = '<section> #fixture-card';
+      doc.getElementById('selectedPath').textContent = '#fixture-card';
+      doc.getElementById('elementText').value = 'Import this page into LiveWeave';
+      doc.getElementById('fontSize').value = '34';
+      doc.getElementById('padding').value = '32';
+      doc.getElementById('margin').value = '0';
+      doc.getElementById('elementWidth').value = '720px';
+      doc.getElementById('borderRadius').value = '8';
+      doc.getElementById('borderWidth').value = '1';
+    });
+  </script>
+</body>
+</html>

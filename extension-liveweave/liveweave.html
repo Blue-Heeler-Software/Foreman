@@ -1,31 +1,63 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>LiveWeave Canvas</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveWeave Preview</title>
   <style>
-    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #0d0f12; color: #e6e8ec; }
-    header { height: 42px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid #2a2f37; background: #15181d; box-sizing: border-box; }
-    h1 { font-size: 13px; margin: 0; font-weight: 600; white-space: nowrap; }
-    #meta { font-size: 11px; color: #9aa3ad; margin-left: auto; }
-    .actions { display: flex; gap: 6px; }
-    .actions button { background: #1e2028; color: #e6e8ec; border: 1px solid #2a2f37; border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
-    .actions button:hover { background: #262a34; }
-    iframe { width: 100%; height: calc(100vh - 42px); border: 0; background: white; display: block; }
+    :root { color-scheme: dark; font-family: "Segoe UI", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #0d0f12; color: #e6e8ec; }
+    header { height: 46px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border-bottom: 1px solid #2a2f37; background: #15181d; }
+    .identity { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+    h1 { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; margin: 0; font-weight: 700; }
+    #source { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8f9aaa; font-size: 10px; }
+    #meta { margin-left: auto; color: #9aa3ad; font-size: 10px; white-space: nowrap; }
+    #dirty { color: #fbbf24; }
+    #selectBtn.active { border-color: #5b8cff; background: #dbe5ff; color: #17203a; font-weight: 700; }
+    .segmented, .actions { display: flex; gap: 4px; }
+    button { height: 30px; border: 1px solid #303641; border-radius: 5px; background: #1c2027; color: #e6e8ec; padding: 0 9px; font-size: 11px; cursor: pointer; }
+    button:hover:not(:disabled) { background: #272d37; }
+    button:disabled { opacity: .4; cursor: default; }
+    .segmented { border: 1px solid #303641; border-radius: 5px; overflow: hidden; gap: 0; }
+    .segmented button { border: 0; border-radius: 0; width: 34px; padding: 0; font-weight: 700; }
+    .segmented button.active { background: #dbe5ff; color: #17203a; }
+    #stage { width: 100%; height: calc(100vh - 46px); display: grid; place-items: start center; overflow: auto; background: #20242a; padding: 0; }
+    #stage.selecting, #stage.selecting iframe { cursor: crosshair; }
+    #frameShell { width: 100%; height: 100%; background: white; transition: width 160ms ease, height 160ms ease; }
+    #frameShell.tablet { width: 768px; height: min(1024px, calc(100vh - 70px)); margin: 12px; box-shadow: 0 12px 36px rgba(0,0,0,.35); }
+    #frameShell.mobile { width: 390px; height: min(844px, calc(100vh - 70px)); margin: 12px; box-shadow: 0 12px 36px rgba(0,0,0,.35); }
+    iframe { width: 100%; height: 100%; border: 0; background: white; display: block; }
+    @media (max-width: 850px) {
+      #source, #meta { display: none; }
+      h1 { max-width: 180px; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1 id="title">LiveWeave Canvas</h1>
-    <div id="meta">local extension page</div>
+    <div class="identity">
+      <h1 id="title">LiveWeave Preview</h1>
+      <span id="source">Local project</span>
+    </div>
+    <span id="meta">Ready <span id="dirty"></span></span>
+    <div class="segmented" role="group" aria-label="Preview width">
+      <button data-width="desktop" class="active" title="Desktop viewport using the imported snapshot">D</button>
+      <button data-width="tablet" title="Tablet viewport at 768px using the imported snapshot">T</button>
+      <button data-width="mobile" title="Mobile viewport at 390px using the imported snapshot">M</button>
+    </div>
     <div class="actions">
-      <button id="copyBtn" title="Copy the page's HTML + CSS to the clipboard">Copy</button>
-      <button id="downloadBtn" title="Download the page as a single .html file">Download</button>
+      <button id="selectBtn" title="Select elements in the preview">Select</button>
+      <button id="originalBtn" title="Open the original source page">Original</button>
+      <button id="copyBtn" title="Copy the self-contained HTML document">Copy</button>
+      <button id="downloadBtn" title="Download the page as one HTML file">Download</button>
     </div>
   </header>
-  <!-- Display surface, not a form host: allow-forms is dropped so agent content can't POST operator input
-       off-machine (the CSP's form-action 'none' is the belt to this suspenders). -->
-  <iframe id="preview" title="LiveWeave preview" sandbox="allow-scripts"></iframe>
+  <main id="stage">
+    <div id="frameShell">
+      <iframe id="preview" title="LiveWeave preview" sandbox="allow-scripts"></iframe>
+    </div>
+  </main>
   <script type="module" src="liveweave.js"></script>
 </body>
 </html>

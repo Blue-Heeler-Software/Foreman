@@ -531,12 +531,14 @@ public sealed class CallerScopeToolTests : IDisposable
     {
         const string ghp = "ghp_0123456789abcdefghij0123456789abcdef";
         ForemanMcpTools.LiveweavePollCommands(
-            tabInfoJson: $"{{\"url\":\"https://x.com/?token={ghp}\",\"title\":\"hi\",\"evil\":\"DROPME\"}}",
+            tabInfoJson: $"{{\"url\":\"https://x.com/?token={ghp}\",\"title\":\"hi\",\"extensionVersion\":\"0.4.1\",\"canvasConnected\":true,\"evil\":\"DROPME\"}}",
             http: AsLiveweave);
         using var status = J(ForemanMcpTools.LiveweaveStatus());
         var raw = status.RootElement.GetRawText();
         Assert.DoesNotContain(ghp, raw);       // secret-shaped text in the URL is redacted
         Assert.DoesNotContain("DROPME", raw);  // unknown fields are dropped, not stored
+        Assert.Equal("0.4.1", status.RootElement.GetProperty("tab").GetProperty("extensionVersion").GetString());
+        Assert.True(status.RootElement.GetProperty("tab").GetProperty("canvasConnected").GetBoolean());
     }
 
     [Fact]
@@ -570,6 +572,80 @@ public sealed class CallerScopeToolTests : IDisposable
     }
 
     // ── request_harness_review: bounded harness mail / outbound handoff ───────────────────────────
+    [Fact]
+    public async System.Threading.Tasks.Task LiveweaveRequestEdit_QueuesScopedOperatorTask_AndReturnsReply()
+    {
+        _state.LiveWeave.SetDriver("codex");
+        _state.DeliverHarnessAsk = (_, _, _, _) => System.Threading.Tasks.Task.FromResult("notified");
+        using var queued = J(await ForemanMcpTools.LiveweaveRequestEdit(
+            "codex",
+            "Make the card easier to read",
+            "#card",
+            "project-1",
+            "Broken landing page",
+            4,
+            "https://example.test",
+            "{\"tag\":\"section\",\"text\":\"untrusted site text\"}",
+            http: AsLiveweave));
+
+        Assert.True(queued.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("notified", queued.RootElement.GetProperty("delivered").GetString());
+        var requestId = queued.RootElement.GetProperty("requestId").GetString();
+        var request = Assert.IsType<AskHarnessRequest>(_state.GetAskHarnessRequest(requestId!));
+        Assert.Equal("liveweave", request.SenderHarnessId);
+        Assert.Equal("liveweave_edit", request.RequestKind);
+        Assert.Contains("operator-initiated LiveWeave creation or edit request", request.SystemPrompt);
+        Assert.Contains("Make the card easier to read", request.Prompt);
+        Assert.Contains("BEGIN UNTRUSTED SELECTION SNAPSHOT", request.Prompt);
+
+        using var replied = J(ForemanMcpTools.ReplyToAskHarnessRequest(
+            requestId!, "Applied set_style and verified revision 5.", "LiveWeave edit completed", http: AsCodex));
+        Assert.True(replied.RootElement.GetProperty("accepted").GetBoolean());
+
+        using var result = J(ForemanMcpTools.LiveweaveEditRequestResult(requestId!, http: AsLiveweave));
+        Assert.True(result.RootElement.GetProperty("found").GetBoolean());
+        Assert.Equal("answered", result.RootElement.GetProperty("status").GetString());
+        Assert.Contains("Applied set_style", result.RootElement.GetProperty("replyText").GetString());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task LiveweaveRequestEdit_AtomicallySelectsTargetDriver()
+    {
+        _state.LiveWeave.SetDriver("claude-code");
+        using var result = J(await ForemanMcpTools.LiveweaveRequestEdit(
+            "codex", "Fix it", "#card", "project-1", "Page", 1, http: AsLiveweave));
+        Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("codex", _state.LiveWeave.Driver);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task LiveweaveRequestEdit_RejectsNonExtensionCaller()
+    {
+        _state.LiveWeave.SetDriver("claude-code");
+        using var result = J(await ForemanMcpTools.LiveweaveRequestEdit(
+            "claude-code", "Fix it", "#card", "project-1", "Page", 1, http: AsCodex));
+        Assert.False(result.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public void LiveweaveEditRequestResult_DoesNotExposeGenericHarnessMail()
+    {
+        var request = _state.CreateAskHarnessRequest(
+            "codex", "sys", "prompt", "", null, null, senderHarnessId: "liveweave", requestKind: "harness_mail");
+        using var result = J(ForemanMcpTools.LiveweaveEditRequestResult(request.RequestId, http: AsLiveweave));
+        Assert.False(result.RootElement.GetProperty("found").GetBoolean());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task LiveweaveEditRequestResult_RejectsSiblingHarnessCaller()
+    {
+        using var queued = J(await ForemanMcpTools.LiveweaveRequestEdit(
+            "claude-code", "Fix it", "#card", "project-1", "Page", 1, http: AsLiveweave));
+        var requestId = queued.RootElement.GetProperty("requestId").GetString();
+        using var result = J(ForemanMcpTools.LiveweaveEditRequestResult(requestId!, http: AsCodex));
+        Assert.False(result.RootElement.GetProperty("found").GetBoolean());
+    }
+
     [Fact]
     public async System.Threading.Tasks.Task RequestHarnessReview_Operator_CreatesAndDelivers()
     {

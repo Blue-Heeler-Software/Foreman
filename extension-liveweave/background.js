@@ -4,14 +4,34 @@
  * Bridges the browser to the LOCAL Foreman desktop app over loopback HTTP (never the network). Pairs as the
  * `liveweave` harness (closed-loop challenge/response; the code never crosses the wire), then polls Foreman's
  * `liveweave_*` broker and renders Foreman-brokered edits into `liveweave.html` — a local, extension-owned
- * canvas. It does NOT drive arbitrary tabs.
+ * canvas. A page snapshot is read only after the operator invokes the action on that tab and chooses Edit.
  *
  * Split out from the Foreman Agent Safety extension so the page-builder feature lives on its own, with its own
  * pairing/token, separate from the safety watchdog arm.
  */
 import { loadSettings, saveSettings, onSettingsChanged } from './settings.js';
 import { callMcpTool, openMcpSession } from './mcp-client.js';
+import { canvasNeedsReload, canvasRuntimeReady } from './canvas-runtime.mjs';
+import {
+    boundedScan,
+    canvasFromProject,
+    capStructure,
+    createProject,
+    markProjectSaved,
+    readProjectSource,
+    replaceProjectSource,
+    searchProjectSource,
+    updateProjectFromCanvas,
+} from './project-model.mjs';
+import {
+    getActiveProject,
+    getProject,
+    listProjects,
+    putProject,
+    setActiveProjectId,
+} from './project-store.js';
 
+const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '', harnessId: 'liveweave', liveweaveDriver: '' };
 let connected = false;
 let lastMcpError = null;
@@ -22,6 +42,35 @@ let polling = false;         // re-entrancy guard: never let two polls execute c
 let needsPair = false;       // set when the token is rejected (401/403) — stop polling a dead token, prompt re-pair
 let mcpSession = null;
 const cmdLog = [];           // recent commands {action, ok, error, ts} for the side-panel log (in-memory; resets on SW restart)
+let captureCandidate = null; // set only by an explicit toolbar action; activeTab access is tied to that gesture
+let currentProjectSummary = null;
+let selectionModeRequested = false;
+let currentNanoStatus = 'unknown';
+let canvasClientVersion = '';
+let previewClientVersion = '';
+
+function setSelectionModeRequested(enabled) {
+    selectionModeRequested = !!enabled;
+    const message = { kind: 'selection-mode', enabled: selectionModeRequested };
+    if (canvasPort) postTo(canvasPort, message);
+    for (const panel of [...sidePanelPorts]) postTo(panel, message);
+}
+
+const canvasRuntimeState = () => ({
+    hasPort: !!canvasPort,
+    canvasVersion: canvasClientVersion,
+    previewVersion: previewClientVersion,
+    extensionVersion: EXTENSION_VERSION,
+});
+const canvasIsReady = () => canvasRuntimeReady(canvasRuntimeState());
+
+async function waitForCanvasReady(timeoutMs = 2500) {
+    const deadline = Date.now() + timeoutMs;
+    while (!canvasIsReady() && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return canvasIsReady();
+}
 
 function logCommand(action, result) {
     cmdLog.push({ action, ok: !!result?.ok, error: result?.ok ? null : (result?.error || null), ts: Date.now() });
@@ -39,6 +88,10 @@ const POLL_ALARM_PERIOD_MIN = 0.5;   // idle heartbeat. Chrome 120+ honours a 30
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
 const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
+const safeOrigin = (value) => {
+    try { return new URL(String(value || '')).origin.slice(0, 500); }
+    catch { return ''; }
+};
 
 // ── Pairing ────────────────────────────────────────────────────────────────
 
@@ -115,6 +168,10 @@ const DEFAULT_CANVAS = {
     title: 'LiveWeave Canvas',
     html: '<main style="font-family: system-ui, sans-serif; padding: 32px;"><h1>LiveWeave Canvas</h1><p>Ready for Foreman-brokered edits.</p></main>',
     css: '',
+    projectId: '',
+    sourceUrl: '',
+    revision: 0,
+    dirty: false,
     updatedAt: '',
 };
 
@@ -127,17 +184,63 @@ async function readCanvas() {
     };
 }
 
+function summarizeProject(project) {
+    if (!project) return null;
+    return {
+        id: project.id,
+        title: project.title,
+        sourceUrl: project.source?.url || '',
+        sourceKind: project.source?.kind || 'blank',
+        warningCount: Array.isArray(project.warnings) ? project.warnings.length : 0,
+        revision: Number(project.revision || 0),
+        dirty: !!project.dirty,
+        updatedAt: project.updatedAt || '',
+        savedAt: project.savedAt || '',
+    };
+}
+
+async function ensureActiveProject(canvas) {
+    let project = await getActiveProject();
+    if (project) return project;
+    project = createProject({ title: canvas.title, html: canvas.html, css: canvas.css, kind: 'blank' });
+    await putProject(project);
+    await setActiveProjectId(project.id);
+    return project;
+}
+
+async function publishProject(project, { resetHistory = false, open = true } = {}) {
+    await putProject(project);
+    await setActiveProjectId(project.id);
+    currentProjectSummary = summarizeProject(project);
+    const canvas = canvasFromProject(project);
+    const patch = { liveweaveCanvas: canvas };
+    if (resetHistory) {
+        patch.liveweaveHistory = [];
+        patch.liveweaveRedo = [];
+    }
+    await chrome.storage.local.set(patch);
+    if (open) await openLiveWeaveCanvas({ active: false });
+    broadcastProjectChanged(project);
+    return canvas;
+}
+
 async function saveCanvas(canvas, pushHistory = true, clearRedo = true) {
     const prior = await readCanvas();
-    const next = { ...DEFAULT_CANVAS, ...canvas, updatedAt: new Date().toISOString() };
+    const active = await ensureActiveProject(prior.canvas);
+    const changed = active.title !== canvas.title || active.html !== canvas.html || active.css !== canvas.css;
+    const project = updateProjectFromCanvas(active, { ...DEFAULT_CANVAS, ...canvas });
+    await putProject(project);
+    currentProjectSummary = summarizeProject(project);
+    const next = { ...DEFAULT_CANVAS, ...canvasFromProject(project), updatedAt: new Date().toISOString() };
     const patch = { liveweaveCanvas: next };
-    if (pushHistory) patch.liveweaveHistory = [...prior.history.slice(-9), prior.canvas];
-    if (clearRedo) patch.liveweaveRedo = [];   // a fresh edit invalidates the redo stack (standard undo/redo)
+    if (pushHistory && changed) patch.liveweaveHistory = [...prior.history.slice(-9), prior.canvas];
+    if (clearRedo && changed) patch.liveweaveRedo = [];   // a fresh edit invalidates the redo stack (standard undo/redo)
     await chrome.storage.local.set(patch);
     // Ensure the canvas exists so the edit is visible, but DON'T steal focus on every brokered micro-edit (a burst
     // of agent commands used to yank the tab forward up to 5x per poll). The canvas re-renders live from storage;
     // explicit user actions (start_builder, side-panel "Open canvas") are the ones that raise it.
     await openLiveWeaveCanvas({ active: false });
+    broadcastProjectChanged(project);
     return next;
 }
 
@@ -148,21 +251,326 @@ async function openLiveWeaveCanvas({ active = false } = {}) {
     const url = chrome.runtime.getURL('liveweave.html');
     const { liveweaveTabId } = await chrome.storage.local.get({ liveweaveTabId: null });
     if (liveweaveTabId != null) {
+        let tab = null;
         try {
-            await chrome.tabs.get(liveweaveTabId);          // rejects if the tab was closed
-            if (active) await chrome.tabs.update(liveweaveTabId, { active: true });
-            return;
-        } catch { /* tab gone — recreate below */ }
+            tab = await chrome.tabs.get(liveweaveTabId);          // rejects if the tab was closed
+        } catch {
+            await chrome.storage.local.remove('liveweaveTabId');
+        }
+        if (tab) {
+            const stale = canvasNeedsReload(canvasRuntimeState());
+            if (stale) {
+                try { await chrome.tabs.reload(liveweaveTabId); }
+                catch { tab = await chrome.tabs.update(liveweaveTabId, { url, active }); }
+            }
+            if (active) {
+                if (tab.windowId != null && chrome.windows?.update) {
+                    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+                }
+                await chrome.tabs.update(liveweaveTabId, { active: true });
+            }
+            return { tabId: liveweaveTabId, created: false, reloaded: stale };
+        }
     }
     const tab = await chrome.tabs.create({ url, active });
     if (tab?.id != null) await chrome.storage.local.set({ liveweaveTabId: tab.id });
+    return { tabId: tab?.id ?? null, created: true, reloaded: false };
 }
 
 // Forget the tracked tab when it's closed, so the next open cleanly recreates instead of racing a stale id.
 chrome.tabs.onRemoved.addListener(async (tabId) => {
     const { liveweaveTabId } = await chrome.storage.local.get({ liveweaveTabId: null });
     if (liveweaveTabId === tabId) await chrome.storage.local.remove('liveweaveTabId');
+    if (captureCandidate?.tabId === tabId) {
+        captureCandidate = null;
+        await chrome.storage.session.remove('liveweaveCaptureCandidate');
+        broadcast();
+    }
 });
+
+function capturablePage(tab) {
+    const url = String(tab?.url || '');
+    let reason = '';
+    if (!url) reason = 'Click the LiveWeave toolbar icon on the page you want to edit.';
+    else if (!/^https?:/i.test(url) && !/^file:/i.test(url)) reason = 'Chrome internal, extension, and browser-owned pages cannot be imported.';
+    return {
+        tabId: tab?.id ?? null,
+        windowId: tab?.windowId ?? null,
+        title: String(tab?.title || 'Current page'),
+        url,
+        available: !reason,
+        reason,
+    };
+}
+
+async function rememberCaptureCandidate(tab) {
+    captureCandidate = capturablePage(tab);
+    await chrome.storage.session.set({ liveweaveCaptureCandidate: captureCandidate });
+    broadcast();
+}
+
+async function refreshCaptureCandidate() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        // chrome.tabs.query can return an id but mask url/title when the panel itself was opened without a fresh
+        // activeTab grant. Do not erase the stronger candidate recorded by action.onClicked for the same tab.
+        if (tab?.id === captureCandidate?.tabId && !tab.url && captureCandidate.url) return captureCandidate;
+        await rememberCaptureCandidate(tab || null);
+    } catch {
+        await rememberCaptureCandidate(null);
+    }
+    return captureCandidate;
+}
+
+async function importCaptureCandidate() {
+    const page = captureCandidate;
+    if (!page?.available || page.tabId == null) {
+        return { ok: false, code: 'no_page_access', error: page?.reason || 'Open LiveWeave from the page you want to edit.' };
+    }
+    let result;
+    try {
+        const execution = await chrome.scripting.executeScript({
+            target: { tabId: page.tabId },
+            files: ['capture-page.js'],
+        });
+        result = execution?.[0]?.result;
+    } catch (e) {
+        return {
+            ok: false,
+            code: 'capture_denied',
+            error: `Could not read this tab. Click the LiveWeave toolbar icon on it and try again. (${String(e?.message || e)})`,
+        };
+    }
+    if (!result?.ok) return result || { ok: false, code: 'capture_failed', error: 'The page returned no capture result.' };
+
+    const project = createProject({
+        title: result.title,
+        html: result.html,
+        css: result.css,
+        sourceUrl: result.url,
+        warnings: result.warnings,
+        kind: 'imported',
+    });
+    const canvas = await publishProject(project, { resetHistory: true, open: false });
+    // Keep focus on the source page so the side panel can enter editor mode. The preview is created in the
+    // background and receives live updates; the operator raises it explicitly with the Preview button.
+    await openLiveWeaveCanvas({ active: false });
+    return { ok: true, project, canvas, stats: result.stats || {} };
+}
+
+async function createBlankProject(title = 'Untitled LiveWeave Page') {
+    const project = createProject({
+        title,
+        html: '<main class="lw-blank"><h1>Start building</h1><p>Edit the HTML and CSS from the LiveWeave side panel.</p></main>',
+        css: 'body{margin:0;font-family:system-ui,sans-serif}.lw-blank{padding:48px;max-width:720px;margin:auto}',
+        kind: 'blank',
+    });
+    await publishProject(project, { resetHistory: true });
+    return project;
+}
+
+async function operatorRequest(action, params = {}) {
+    switch (action) {
+        case 'get_state': {
+            const { liveweaveAgentEdit = null } = await chrome.storage.local.get({ liveweaveAgentEdit: null });
+            return { ok: true, project: await getActiveProject(), projects: await listProjects(), page: captureCandidate, agentEdit: liveweaveAgentEdit };
+        }
+        case 'refresh_page':
+            return { ok: true, page: await refreshCaptureCandidate() };
+        case 'import_page':
+            return importCaptureCandidate();
+        case 'new_project': {
+            const project = await createBlankProject(String(params.title || 'Untitled LiveWeave Page'));
+            return { ok: true, project };
+        }
+        case 'activate_project': {
+            const project = await getProject(String(params.projectId || ''));
+            if (!project) return { ok: false, code: 'not_found', error: 'LiveWeave project not found.' };
+            await publishProject(project, { resetHistory: true });
+            return { ok: true, project };
+        }
+        case 'update_source': {
+            const project = await getActiveProject();
+            if (!project) return { ok: false, code: 'no_project', error: 'No LiveWeave project is active.' };
+            if (Number(params.expectedRevision) !== Number(project.revision)) {
+                return { ok: false, code: 'revision_conflict', error: 'The project changed while you were editing.', project };
+            }
+            const file = String(params.file || '').toLowerCase();
+            if (!['html', 'css'].includes(file)) return { ok: false, code: 'bad_file', error: "file must be 'html' or 'css'." };
+            const { canvas } = await readCanvas();
+            const next = await saveCanvas({ ...canvas, [file]: String(params.value ?? '') });
+            return { ok: true, project: await getActiveProject(), canvas: next };
+        }
+        case 'set_element_style': {
+            const path = safeSelector(String(params.path || ''));
+            const styles = safeDeclarations(String(params.styles || ''));
+            if (!path || styles == null) return { ok: false, code: 'bad_style', error: 'A valid selector and plain CSS declarations are required.' };
+            const { canvas } = await readCanvas();
+            const next = await saveCanvas({ ...canvas, css: upsertMarked(canvas.css || '', `lw:s:${path}`, `${path}{${styles}}`) });
+            return { ok: true, project: await getActiveProject(), canvas: next, path };
+        }
+        case 'clear_element_style': {
+            const path = safeSelector(String(params.path || ''));
+            if (!path) return { ok: false, code: 'bad_selector', error: 'A valid selector is required.' };
+            const { canvas } = await readCanvas();
+            const next = await saveCanvas({ ...canvas, css: removeMarked(canvas.css || '', `lw:s:${path}`) });
+            return { ok: true, project: await getActiveProject(), canvas: next, path };
+        }
+        case 'set_element_text':
+        case 'duplicate_element':
+        case 'remove_element': {
+            const path = safeSelector(String(params.path || ''));
+            if (!path) return { ok: false, code: 'bad_selector', error: 'A valid selector is required.' };
+            const { canvas } = await readCanvas();
+            const op = action === 'set_element_text' ? 'set_text' : action;
+            const dom = await domOp(op, { html: canvas.html, path, text: params.text ?? '' });
+            if (!dom?.ok) return dom || { ok: false, code: 'dom_unavailable', error: 'The LiveWeave DOM helper is unavailable.' };
+            const next = await saveCanvas({ ...canvas, html: dom.html });
+            return { ok: true, project: await getActiveProject(), canvas: next, path };
+        }
+        case 'get_element_context': {
+            const path = safeSelector(String(params.path || ''));
+            if (!path) return { ok: false, code: 'bad_selector', error: 'Pick an element first.' };
+            const { canvas } = await readCanvas();
+            const context = await domOp('inspect_element', { html: canvas.html, path });
+            if (!context?.ok) return context || { ok: false, code: 'dom_unavailable', error: 'Could not inspect the selected element.' };
+            return { ok: true, path, outerHtml: context.outerHtml, revision: Number(canvas.revision || 0) };
+        }
+        case 'apply_nano_patch': {
+            const path = safeSelector(String(params.path || ''));
+            const hasInner = params.innerHtml !== null && params.innerHtml !== undefined;
+            const innerHtml = hasInner ? String(params.innerHtml).slice(0, 40000) : null;
+            const styles = safeDeclarations(String(params.styles || '').slice(0, 4000));
+            if (!path || styles == null || (!hasInner && !styles)) {
+                return { ok: false, code: 'nano_bad_patch', error: 'Nano returned no valid selected-element change.' };
+            }
+            if (/(?:@import|expression\s*\(|javascript\s*:|url\s*\()/i.test(styles)) {
+                return { ok: false, code: 'nano_bad_style', error: 'Nano returned unsafe CSS.' };
+            }
+            const { canvas } = await readCanvas();
+            if (Number(params.expectedRevision) !== Number(canvas.revision)) {
+                return { ok: false, code: 'revision_conflict', error: 'The project changed while Nano was working. Pick the element and try again.', project: await getActiveProject() };
+            }
+            let html = canvas.html;
+            if (hasInner) {
+                const changed = await domOp('apply_safe_inner', { html, path, inner: innerHtml });
+                if (!changed?.ok) return changed || { ok: false, code: 'dom_unavailable', error: 'Could not apply Nano HTML safely.' };
+                html = changed.html;
+            }
+            const css = styles
+                ? upsertMarked(canvas.css || '', `lw:s:${path}`, `${path}{${styles}}`)
+                : canvas.css;
+            const next = await saveCanvas({ ...canvas, html, css });
+            return { ok: true, project: await getActiveProject(), canvas: next, path, summary: String(params.summary || 'Element updated with Nano.').slice(0, 500) };
+        }
+        case 'request_agent_edit': {
+            const project = await getActiveProject();
+            const path = safeSelector(String(params.path || ''));
+            const instruction = String(params.instruction || '').trim().slice(0, 4000);
+            const targetHarnessId = String(params.targetHarnessId || '').trim().toLowerCase();
+            if (!project) return { ok: false, code: 'no_project', error: 'No LiveWeave project is active.' };
+            if (!path || !instruction) return { ok: false, code: 'bad_prompt', error: 'Choose a page or element target and describe the change first.' };
+            if (!/^[a-z0-9._:-]{1,80}$/.test(targetHarnessId) || targetHarnessId === 'any' || targetHarnessId === 'liveweave') {
+                return { ok: false, code: 'bad_harness', error: 'Choose a specific Foreman harness.' };
+            }
+            if (!cfg.token || !connected) return { ok: false, code: 'foreman_offline', error: 'Pair LiveWeave with Foreman before sending an agent edit.' };
+            if (cfg.liveweaveDriver !== targetHarnessId) {
+                cfg = { ...cfg, liveweaveDriver: targetHarnessId };
+                await saveSettings({ liveweaveDriver: targetHarnessId });
+                mcpSession = null;
+                broadcast();
+            }
+            const selectionJson = JSON.stringify(params.selection || {}).slice(0, 6000);
+            const result = await mcpCall('liveweave_request_edit', {
+                targetHarnessId,
+                instruction,
+                path,
+                projectId: project.id,
+                projectTitle: project.title,
+                projectRevision: Number(project.revision || 0),
+                sourceOrigin: project.source?.url ? safeOrigin(project.source.url) : '',
+                selectionJson,
+            });
+            if (!result?.ok) return { ok: false, code: 'agent_request_failed', error: result?.reason || lastMcpError || 'Foreman could not queue the edit request.' };
+            await chrome.storage.local.set({
+                liveweaveAgentEdit: {
+                    requestId: result.requestId,
+                    targetHarnessId,
+                    projectId: project.id,
+                    createdAt: new Date().toISOString(),
+                },
+            });
+            return result;
+        }
+        case 'agent_edit_status': {
+            const requestId = String(params.requestId || '').trim();
+            if (!requestId) return { ok: false, code: 'missing_request', error: 'No agent edit request is active.' };
+            const result = await mcpCall('liveweave_edit_request_result', { requestId });
+            if (!result?.found) {
+                await chrome.storage.local.remove('liveweaveAgentEdit');
+                return { ok: false, code: 'request_not_found', error: result?.reason || lastMcpError || 'Foreman could not read the edit request.' };
+            }
+            if (result.status !== 'pending') await chrome.storage.local.remove('liveweaveAgentEdit');
+            return { ok: true, ...result };
+        }
+        case 'report_nano_status': {
+            const value = String(params.value || '').toLowerCase();
+            if (!['available', 'downloadable', 'downloading', 'unavailable'].includes(value)) {
+                return { ok: false, code: 'bad_nano_status', error: 'Unknown Nano availability state.' };
+            }
+            currentNanoStatus = value;
+            return { ok: true, nanoStatus: currentNanoStatus };
+        }
+        case 'mark_saved': {
+            const project = await getActiveProject();
+            if (!project) return { ok: false, code: 'no_project', error: 'No LiveWeave project is active.' };
+            const saved = markProjectSaved(project);
+            const canvas = await publishProject(saved, { resetHistory: false, open: false });
+            return { ok: true, project: saved, canvas };
+        }
+        case 'open_canvas': {
+            const canvas = await openLiveWeaveCanvas({ active: true });
+            const canvasConnected = await waitForCanvasReady();
+            return {
+                ok: canvasConnected,
+                canvas,
+                canvasConnected,
+                extensionVersion: EXTENSION_VERSION,
+                error: canvasConnected ? null : 'The preview tab opened but its LiveWeave script did not connect. Reload the extension and try again.',
+            };
+        }
+        case 'start_selection': {
+            setSelectionModeRequested(true);
+            const canvas = await openLiveWeaveCanvas({ active: true });
+            const canvasConnected = await waitForCanvasReady();
+            if (!canvasConnected) setSelectionModeRequested(false);
+            return {
+                ok: canvasConnected,
+                canvas,
+                canvasConnected,
+                selecting: canvasConnected,
+                extensionVersion: EXTENSION_VERSION,
+                error: canvasConnected ? null : 'Picking could not start because the preview script did not connect. Reload the extension and try again.',
+            };
+        }
+        case 'stop_selection':
+            setSelectionModeRequested(false);
+            return { ok: true, selecting: false, extensionVersion: EXTENSION_VERSION };
+        case 'set_driver': {
+            const liveweaveDriver = String(params.value || '').trim().toLowerCase();
+            if (liveweaveDriver && liveweaveDriver !== 'any' && !/^[a-z0-9._:-]{1,80}$/.test(liveweaveDriver)) {
+                return { ok: false, code: 'bad_harness', error: 'Driver must be a bounded harness id.' };
+            }
+            cfg = { ...cfg, liveweaveDriver };
+            await saveSettings({ liveweaveDriver });
+            mcpSession = null;
+            await refresh();
+            return { ok: true, liveweaveDriver };
+        }
+        default:
+            return { ok: false, code: 'unsupported', error: `Unsupported operator action '${action}'.` };
+    }
+}
 
 function textParam(params, name, fallback = '') {
     const v = params?.[name];
@@ -272,6 +680,14 @@ async function executeLiveWeaveCommand(cmd) {
     const action = String(cmd.action || '').toLowerCase();
     const params = cmd.parameters || {};
     const { canvas, history, redo } = await readCanvas();
+    const sourceProject = {
+        id: canvas.projectId || '',
+        title: canvas.title,
+        html: canvas.html,
+        css: canvas.css,
+        sourceUrl: canvas.sourceUrl || '',
+        revision: Number(canvas.revision || 0),
+    };
     // Effect confirmation appended to every successful mutation so the agent can verify the edit actually landed.
     const effect = (c) => ({ appliedTitle: c.title, htmlLength: (c.html || '').length, cssLength: (c.css || '').length });
 
@@ -288,8 +704,10 @@ async function executeLiveWeaveCommand(cmd) {
             return { ok: true, stopped: true, note: 'Canvas tab closed; a later edit reopens it.' };
         }
 
-        case 'new_canvas':
-            return { ok: true, ...effect(await saveCanvas({ ...DEFAULT_CANVAS, title: textParam(params, 'title', 'LiveWeave Canvas') })) };
+        case 'new_canvas': {
+            const project = await createBlankProject(textParam(params, 'title', 'LiveWeave Canvas'));
+            return { ok: true, projectId: project.id, ...effect(canvasFromProject(project)) };
+        }
 
         case 'generate':
             return { ok: true, ...effect(await saveCanvas(generatedCanvas(params, canvas))) };
@@ -368,6 +786,18 @@ async function executeLiveWeaveCommand(cmd) {
             return { ok: true, ...effect(c) };
         }
 
+        case 'set_text':
+        case 'duplicate_element':
+        case 'remove_element': {
+            const path = safeSelector(textParam(params, 'path'));
+            if (!path) return { ok: false, code: 'bad_selector', error: 'path must be a plain CSS selector.' };
+            const op = action === 'set_text' ? 'set_text' : action;
+            const dom = await domOp(op, { html: canvas.html, path, text: params.text ?? '' });
+            if (!dom?.ok) return dom || { ok: false, code: 'dom_unavailable', error: 'The LiveWeave DOM helper is unavailable.' };
+            const c = await saveCanvas({ ...canvas, html: dom.html });
+            return { ok: true, target: path, ...effect(c) };
+        }
+
         case 'undo': {
             if (history.length === 0) return { ok: false, error: 'Nothing to undo.' };
             const previous = history[history.length - 1];
@@ -386,43 +816,63 @@ async function executeLiveWeaveCommand(cmd) {
             return { ok: true, ...effect(c) };
         }
 
-        case 'scan': {   // full source + structure — for an agent that lost context
+        case 'scan': {   // bounded source preview + structure; large projects continue through read_source
             const dom = await domOp('inspect', { html: canvas.html });
             const structure = dom?.ok ? stripOk(dom) : outlineOf(canvas.html);   // real DOM structure, or regex fallback
-            return { ok: true, title: canvas.title, html: canvas.html, css: canvas.css,
-                     htmlLength: canvas.html.length, cssLength: canvas.css.length, structure };
+            return { ok: true, ...boundedScan(sourceProject, structure) };
         }
 
         case 'outline': {   // concise structure only — cheap for targeting decisions
             const dom = await domOp('inspect', { html: canvas.html });
-            const s = dom?.ok ? stripOk(dom) : outlineOf(canvas.html);
-            return { ok: true, title: canvas.title, htmlLength: canvas.html.length, cssLength: canvas.css.length, ...s };
+            const s = capStructure(dom?.ok ? stripOk(dom) : outlineOf(canvas.html));
+            return { ok: true, title: canvas.title, projectId: canvas.projectId || '', revision: canvas.revision || 0,
+                     htmlLength: canvas.html.length, cssLength: canvas.css.length, ...s };
+        }
+
+        case 'read_source': {
+            try {
+                return { ok: true, projectId: sourceProject.id, ...readProjectSource(sourceProject, textParam(params, 'file'), params.offset, params.length) };
+            } catch (e) {
+                return { ok: false, code: 'bad_read', error: String(e?.message || e) };
+            }
+        }
+
+        case 'search_source': {
+            try {
+                return { ok: true, projectId: sourceProject.id, ...searchProjectSource(sourceProject, textParam(params, 'query'), textParam(params, 'file'), params.limit) };
+            } catch (e) {
+                return { ok: false, code: 'bad_search', error: String(e?.message || e) };
+            }
+        }
+
+        case 'replace_source': {
+            const result = replaceProjectSource(sourceProject, {
+                file: textParam(params, 'file'),
+                start: params.start,
+                end: params.end,
+                text: params.text ?? '',
+                expectedRevision: params.expectedRevision,
+            });
+            if (!result.ok) return result;
+            const next = await saveCanvas({ ...canvas, html: result.project.html, css: result.project.css });
+            return { ok: true, file: result.file, start: result.start, end: result.end,
+                     insertedLength: result.insertedLength, ...effect(next), revision: next.revision };
         }
 
         default:
-            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, undo, redo, scan, outline.` };
+            return { ok: false, error: `Unsupported LiveWeave action '${action}'. Supported: start_builder, stop_builder, new_canvas, generate, template, apply_page, apply_section, apply_inner, set_style, set_background, set_text, duplicate_element, remove_element, undo, redo, scan, outline, read_source, search_source, replace_source.` };
     }
+}
+
+function removeMarked(css, marker) {
+    const re = new RegExp(`\\n?\\/\\*${escapeRe(marker)}\\*\\/[^\\n]*`);
+    return String(css || '').replace(re, '');
 }
 
 // Honest on-device model availability (was hardcoded 'unavailable'). Chrome's Prompt API is a document-context
 // API, so it is usually absent in the service worker — in which case we correctly report 'unavailable'. If a
 // future channel exposes it here (or an offscreen document is added), this reports the real state. Clamped by
 // Foreman's SanitizeNanoStatus to {available, downloadable, downloading, unavailable}.
-async function nanoStatus() {
-    try {
-        if (typeof self.LanguageModel?.availability === 'function') {
-            const a = await self.LanguageModel.availability();
-            return ['available', 'downloadable', 'downloading', 'unavailable'].includes(a) ? a : 'unavailable';
-        }
-        const caps = await self.ai?.languageModel?.capabilities?.();
-        if (caps?.available === 'readily') return 'available';
-        if (caps?.available === 'after-download') return 'downloadable';
-        return 'unavailable';
-    } catch {
-        return 'unavailable';
-    }
-}
-
 async function liveweaveTabInfo() {
     const { canvas } = await readCanvas();
     return {
@@ -430,6 +880,8 @@ async function liveweaveTabInfo() {
         title: canvas.title || 'LiveWeave Canvas',
         kind: 'extension-canvas',
         editable: true,
+        extensionVersion: EXTENSION_VERSION,
+        canvasConnected: canvasIsReady(),
     };
 }
 
@@ -443,7 +895,7 @@ async function pollLiveWeave() {
         const batch = await mcpCall('liveweave_poll_commands', {
             limit: 5,
             tabInfoJson,
-            nanoStatus: await nanoStatus(),
+            nanoStatus: currentNanoStatus,
             driverHarness: cfg.liveweaveDriver || '',
         });
         const commands = Array.isArray(batch?.commands) ? batch.commands : [];
@@ -501,12 +953,48 @@ chrome.runtime.onConnect.addListener((port) => {
     // fall back to the alarm heartbeat.
     if (port.name === 'foreman-liveweave-canvas') {
         canvasPort = port;
+        canvasClientVersion = '';
+        previewClientVersion = '';
+        postTo(port, { kind: 'selection-mode', enabled: selectionModeRequested });
+        port.onMessage.addListener((msg) => {
+            if (msg?.kind === 'canvas-ready') {
+                canvasClientVersion = String(msg.version || '');
+                broadcast();
+                return;
+            }
+            if (msg?.kind === 'preview-loading') {
+                previewClientVersion = '';
+                broadcast();
+                return;
+            }
+            if (msg?.kind === 'preview-ready') {
+                previewClientVersion = String(msg.version || '');
+                broadcast();
+                return;
+            }
+            if (msg?.kind === 'selection-mode-changed') {
+                setSelectionModeRequested(msg.enabled);
+                return;
+            }
+            if (msg?.kind !== 'preview-selection' || !msg.selection?.path) return;
+            setSelectionModeRequested(false);
+            const message = { kind: 'preview-selection', selection: msg.selection };
+            for (const panel of [...sidePanelPorts]) postTo(panel, message);
+        });
         refresh();
-        port.onDisconnect.addListener(() => { if (canvasPort === port) canvasPort = null; });
+        port.onDisconnect.addListener(() => {
+            if (canvasPort === port) {
+                canvasPort = null;
+                canvasClientVersion = '';
+                previewClientVersion = '';
+                broadcast();
+            }
+        });
         return;
     }
     if (port.name !== 'foreman-liveweave-sidepanel') return;
     sidePanelPorts.add(port);    // track ALL open panels (a second browser window used to orphan the first)
+    postTo(port, { kind: 'selection-mode', enabled: selectionModeRequested });
     postTo(port, statusMessage());   // show last-known state to THIS panel immediately…
     refresh();                       // …then pull fresh state (the SW may have been suspended)
     port.onMessage.addListener(async (msg) => {
@@ -518,6 +1006,11 @@ chrome.runtime.onConnect.addListener((port) => {
             await refresh();
         } else if (msg?.kind === 'open-canvas') {
             await openLiveWeaveCanvas({ active: true });    // explicit user action — raise the canvas
+        } else if (msg?.kind === 'start-selection') {
+            setSelectionModeRequested(true);
+            await openLiveWeaveCanvas({ active: true });
+        } else if (msg?.kind === 'stop-selection') {
+            setSelectionModeRequested(false);
         } else if (msg?.kind === 'command') {
             // Operator-driven builder command from the panel (New/Undo/Redo/Clear) — same executor as brokered ones.
             let result;
@@ -537,15 +1030,28 @@ function statusMessage() {
         paired: !!cfg.token,
         needsPair,
         base: base(),
+        extensionVersion: EXTENSION_VERSION,
+        canvasConnected: canvasIsReady(),
+        canvasClientVersion,
+        previewClientVersion,
         liveweaveDriver: cfg.liveweaveDriver || '',
+        nanoStatus: currentNanoStatus,
         mcpError: lastMcpError,
         log: cmdLog,
+        page: captureCandidate,
+        project: currentProjectSummary,
     };
 }
 
 function broadcast() {
     const m = statusMessage();
     for (const port of [...sidePanelPorts]) postTo(port, m);
+}
+
+function broadcastProjectChanged(project) {
+    const message = { kind: 'project-changed', project: summarizeProject(project) };
+    for (const port of [...sidePanelPorts]) postTo(port, message);
+    broadcast();
 }
 
 function postTo(port, message) {
@@ -555,12 +1061,33 @@ function postTo(port, message) {
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
-    if (tab?.windowId !== undefined) await chrome.sidePanel.open({ windowId: tab.windowId });
+    // Keep sidePanel.open directly in the action gesture. Awaiting storage first can consume Chrome's transient
+    // user activation and leave an already-open panel with no candidate for the newly selected tab.
+    captureCandidate = capturablePage(tab);
+    broadcast();
+    const persist = chrome.storage.session.set({ liveweaveCaptureCandidate: captureCandidate }).catch(() => {});
+    const open = tab?.windowId !== undefined
+        ? chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {})
+        : Promise.resolve();
+    await Promise.all([persist, open]);
 });
-try { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }); } catch { /* Chrome < 114 */ }
+// Do not enable openPanelOnActionClick. Chrome may consume the action gesture for its automatic panel path,
+// bypassing the onClicked handler above before it records the one-tab activeTab grant. The flag is persistent,
+// so bootstrap explicitly clears it for users upgrading from the older auto-open implementation.
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.kind === 'pair') { pair(msg.code, msg.liveweaveDriver).then(sendResponse); return true; }
+    if (msg?.kind === 'operator') {
+        const ownPage = sender?.id === chrome.runtime.id && String(sender?.url || '').startsWith(selfOrigin());
+        if (!ownPage) {
+            sendResponse({ ok: false, code: 'forbidden', error: 'Operator requests are accepted only from LiveWeave extension pages.' });
+            return false;
+        }
+        operatorRequest(String(msg.action || ''), msg.params || {})
+            .then(sendResponse)
+            .catch((e) => sendResponse({ ok: false, code: 'operator_error', error: String(e?.message || e) }));
+        return true;
+    }
     return false;
 });
 
@@ -572,7 +1099,13 @@ let booted = false;
 async function bootstrap() {
     if (booted) return;
     booted = true;
+    try { await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); } catch { /* Chrome < 114 */ }
     try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
+    try {
+        const session = await chrome.storage.session.get({ liveweaveCaptureCandidate: null });
+        captureCandidate = session.liveweaveCaptureCandidate || null;
+        currentProjectSummary = summarizeProject(await getActiveProject());
+    } catch { /* first run or storage unavailable */ }
     startPolling();
 }
 // Only react to REAL settings changes. The canvas + history + tracked tab id also live in storage.local and are

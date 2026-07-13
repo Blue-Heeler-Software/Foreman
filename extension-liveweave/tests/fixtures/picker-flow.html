@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveWeave picker flow fixture</title>
+  <style>
+    body { margin: 20px; font-family: system-ui, sans-serif; background: #20242a; color: #e6e8ec; }
+    iframe { width: 720px; height: 420px; border: 1px solid #4b5563; background: white; }
+    output { display: block; margin-top: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <iframe id="preview" title="Picker test preview" sandbox="allow-scripts"></iframe>
+  <output id="status">Loading picker...</output>
+  <script type="module">
+    const source = await fetch('../../liveweave.js').then((response) => response.text());
+    const start = source.indexOf('function inspectorBridge(enabled)');
+    const end = source.indexOf('\n\nfunction render', start);
+    if (start < 0 || end < 0) throw new Error('Could not extract inspectorBridge from liveweave.js');
+    const inspectorBridge = new Function(`${source.slice(start, end)}; return inspectorBridge;`)();
+    const frame = document.getElementById('preview');
+    const status = document.getElementById('status');
+    window.addEventListener('message', (event) => {
+      if (event.source !== frame.contentWindow || event.data?.source !== 'liveweave-preview') return;
+      if (event.data.kind === 'selection-ready') {
+        status.dataset.ready = String(event.data.enabled);
+        status.textContent = event.data.enabled ? 'Picker ready' : status.textContent;
+      }
+      if (event.data.kind === 'selection') {
+        status.dataset.path = event.data.selection.path;
+        status.textContent = JSON.stringify(event.data.selection, null, 2);
+      }
+      if (event.data.kind === 'selection-complete') status.dataset.complete = 'true';
+    });
+    const bridge = inspectorBridge(true).replace(/<\/script/gi, '<\\/script');
+    frame.srcdoc = `<!doctype html><html><head><style>
+      body{font:16px system-ui;padding:24px;color:#111}
+      section{margin:16px;padding:24px;border:1px solid #aaa}
+      html[data-liveweave-picking],html[data-liveweave-picking] body,html[data-liveweave-picking] body *{cursor:crosshair!important}
+      [data-liveweave-hover]{outline:2px solid #5b8cff!important;outline-offset:2px!important}
+      [data-liveweave-selected]{outline:2px solid #20b66a!important;outline-offset:2px!important}
+    </style><script>${bridge}<\/script></head><body>
+      <section id="duplicate">First duplicate</section>
+      <main><section id="duplicate" class="repair-target">Second duplicate target</section></main>
+    </body></html>`;
+  </script>
+</body>
+</html>

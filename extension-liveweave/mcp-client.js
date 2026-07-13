@@ -13,7 +13,7 @@ function httpError(status, message) {
     return e;
 }
 
-export async function openMcpSession(baseUrl, token, clientInfo = { name: 'foreman-liveweave', version: '0.1.0' }) {
+export async function openMcpSession(baseUrl, token, clientInfo = { name: 'foreman-liveweave', version: '0.4.1' }) {
     const headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',

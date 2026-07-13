@@ -1,45 +1,257 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Foreman LiveWeave</title>
   <style>
-    body { font-family: "Segoe UI", system-ui, sans-serif; background: #0d0f12; color: #e6e8ec; margin: 0; padding: 14px; }
-    h1 { font-size: 15px; margin: 0 0 10px; }
-    #badge { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px; margin-bottom: 8px; }
-    #badge.ok { background: #14321f; color: #4ade80; }
-    #badge.warn { background: #322a14; color: #fbbf24; }
-    #badge.bad { background: #321414; color: #f87171; }
-    #hint { font-size: 12px; color: #9aa3ad; margin-bottom: 12px; line-height: 1.4; }
-    .row { display: flex; gap: 8px; margin-top: 12px; }
-    button { background: #15181d; color: #e6e8ec; border: 1px solid #2a2f37; border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
-    button.primary { background: #4ade80; color: #0d0f12; border: 0; font-weight: 700; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
-    .grid .label { display: block; font-size: 11px; color: #9aa3ad; }
-    a { color: #7dd3fc; cursor: pointer; }
-    .muted { color: #9aa3ad; font-size: 12px; }
-    #controls button { flex: 1; padding: 6px 8px; font-size: 12px; }
-    .log { margin-top: 14px; font-size: 11px; max-height: 168px; overflow-y: auto; }
-    .log .ln { display: flex; gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid #1a1d24; }
-    .log .ok { color: #4ade80; }
-    .log .bad { color: #f87171; }
+    :root { color-scheme: dark; font-family: "Segoe UI", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 280px; background: #0d0f12; color: #e6e8ec; }
+    button, select, textarea, input { font: inherit; }
+    button { min-height: 32px; border: 1px solid #303641; border-radius: 5px; background: #191d23; color: #e6e8ec; cursor: pointer; }
+    button:hover:not(:disabled) { background: #232832; }
+    button:disabled { opacity: .45; cursor: default; }
+    button.primary { border-color: #4ade80; background: #2fd36d; color: #07140b; font-weight: 700; }
+    button.primary:hover:not(:disabled) { background: #55e58b; }
+    button.icon { width: 32px; padding: 0; font-size: 17px; }
+    .appbar { height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid #272c34; background: #14171c; }
+    .brand { font-size: 14px; font-weight: 700; white-space: nowrap; }
+    #badge { margin-left: auto; font-size: 11px; color: #fbbf24; }
+    #badge.ok { color: #4ade80; }
+    #badge.bad { color: #f87171; }
+    .view { padding: 12px; }
+    .section { padding: 12px 0; border-bottom: 1px solid #252a32; }
+    .section:first-child { padding-top: 0; }
+    .eyebrow { margin: 0 0 5px; color: #8f9aaa; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+    h1, h2, p { margin: 0; }
+    h2 { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+    .url { margin-top: 4px; color: #8f9aaa; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+    .hint { margin-top: 7px; color: #aab2bf; font-size: 12px; line-height: 1.45; }
+    .actions { display: flex; gap: 7px; margin-top: 10px; }
+    .actions button { flex: 1; padding: 0 10px; }
+    .projects { display: grid; gap: 5px; margin-top: 8px; }
+    .project-row { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 7px 9px; text-align: left; }
+    .project-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-row small { color: #8f9aaa; }
+    .driver-row { display: grid; grid-template-columns: 1fr; gap: 5px; }
+    select { width: 100%; height: 32px; border: 1px solid #303641; border-radius: 5px; background: #191d23; color: #e6e8ec; padding: 0 8px; }
+    #editorView { display: none; flex-direction: column; height: calc(100vh - 44px); padding: 0; overflow: hidden; }
+    .editor-head { height: 48px; display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid #272c34; }
+    .editor-title { min-width: 0; flex: 1; }
+    .editor-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .editor-title small { color: #8f9aaa; font-size: 10px; }
+    #dirty { color: #fbbf24; }
+    .editor-tools { height: 40px; display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-bottom: 1px solid #272c34; }
+    .tabs { display: flex; height: 30px; border: 1px solid #303641; border-radius: 5px; overflow: hidden; }
+    .tabs button { min-height: 28px; border: 0; border-radius: 0; padding: 0 10px; font-size: 11px; }
+    .tabs button.active { background: #dbe5ff; color: #16203a; font-weight: 700; }
+    .editor-tools .spacer { flex: 1; }
+    .editor-tools button { min-height: 30px; padding: 0 9px; font-size: 11px; }
+    .source-wrap { display: none; flex: 1 1 auto; min-height: 140px; position: relative; }
+    #source { width: 100%; height: 100%; resize: none; border: 0; outline: 0; background: #101318; color: #dfe5ef; padding: 12px; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; tab-size: 2; white-space: pre; overflow: auto; }
+    #designWrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; background: #101318; }
+    .selection-band { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid #2b313a; background: #171b21; }
+    .selection-band strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .selection-band code { display: block; margin-top: 2px; color: #8f9aaa; font: 10px/1.3 Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .selection-band button { padding: 0 10px; }
+    #pickElement.active { border-color: #5b8cff; background: #dbe5ff; color: #17203a; }
+    .inspector-empty { padding: 18px 12px; color: #9aa3ad; font-size: 12px; line-height: 1.5; text-align: center; }
+    #inspectorControls { display: none; }
+    .inspector-section { padding: 10px; border-bottom: 1px solid #252a32; }
+    .inspector-section h3 { margin: 0 0 8px; color: #aeb7c4; font-size: 10px; text-transform: uppercase; }
+    .control-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+    .control { min-width: 0; }
+    .control > span { display: block; margin-bottom: 4px; color: #8f9aaa; font-size: 10px; }
+    .control input:not([type="color"]), .control select, #elementText { width: 100%; min-width: 0; border: 1px solid #303641; border-radius: 4px; background: #191d23; color: #e6e8ec; }
+    .control input:not([type="color"]), .control select { height: 30px; padding: 0 7px; }
+    .color-control { display: grid; grid-template-columns: 32px minmax(0,1fr); gap: 5px; }
+    input[type="color"] { width: 32px; height: 30px; padding: 2px; border: 1px solid #303641; border-radius: 4px; background: #191d23; }
+    .color-value { height: 30px; padding: 0 6px; border: 1px solid #303641; border-radius: 4px; background: #191d23; color: #b9c2cf; font-size: 10px; }
+    #elementText { min-height: 58px; resize: vertical; padding: 7px; line-height: 1.4; }
+    .prompt-mode { display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 8px; border: 1px solid #303641; border-radius: 5px; overflow: hidden; }
+    .prompt-mode button { min-height: 30px; border: 0; border-radius: 0; font-size: 11px; }
+    .prompt-mode button.active { background: #dbe5ff; color: #17203a; font-weight: 700; }
+    #agentHarness { margin-bottom: 8px; }
+    #agentPrompt { width: 100%; min-height: 72px; resize: vertical; padding: 8px; border: 1px solid #303641; border-radius: 4px; background: #191d23; color: #e6e8ec; line-height: 1.4; }
+    .agent-submit { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; align-items: center; margin-top: 7px; }
+    #agentStatus { min-width: 0; color: #8f9aaa; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+    #agentStatus.bad { color: #fca5a5; }
+    #runAgentEdit { min-width: 96px; padding: 0 10px; }
+    .inline-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .inline-actions button { flex: 1; padding: 0 8px; font-size: 11px; }
+    .danger { border-color: #66333a; color: #fca5a5; }
+    .editor-foot { height: 54px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 6px 9px; border-top: 1px solid #272c34; background: #14171c; }
+    #editorStatus { color: #98a2b1; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .save-actions { display: flex; gap: 5px; }
+    .save-actions button { min-height: 30px; padding: 0 9px; font-size: 11px; }
+    #warningPanel { display: none; flex: 0 1 auto; max-height: 112px; overflow: auto; margin: 0; padding: 7px 10px; border-top: 1px solid #3b3421; background: #1b1913; color: #d9cfae; font-size: 10px; }
+    #warningPanel summary { cursor: pointer; font-weight: 700; }
+    #warningPanel ul { margin: 6px 0 0; padding-left: 17px; line-height: 1.45; }
+    #toast { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 5; display: none; padding: 8px 10px; border: 1px solid #3b4452; border-radius: 5px; background: #20252d; color: #e6e8ec; font-size: 11px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+    #toast.bad { border-color: #7f3030; color: #fecaca; }
   </style>
 </head>
 <body>
-  <h1>🧩 Foreman LiveWeave</h1>
-  <div id="badge" class="warn" role="status" aria-live="polite">…</div>
-  <div id="hint" aria-live="polite"></div>
-  <div id="body"></div>
-  <div class="row">
-    <button id="openCanvas" class="primary">Open canvas</button>
-    <button id="refresh">Refresh</button>
-  </div>
-  <div class="row" id="controls" style="display:none">
-    <button data-cmd="new_canvas" title="Start a blank canvas">New</button>
-    <button data-cmd="undo">Undo</button>
-    <button data-cmd="redo">Redo</button>
-  </div>
-  <div id="log" class="log" aria-live="polite"></div>
+  <header class="appbar">
+    <span class="brand">LiveWeave</span>
+    <span id="badge" role="status">Checking</span>
+    <button id="refresh" class="icon" title="Refresh connection and current page" aria-label="Refresh">&#8635;</button>
+  </header>
+
+  <main id="browseView" class="view">
+    <section class="section">
+      <p class="eyebrow">Current page</p>
+      <h2 id="pageTitle">Open LiveWeave on a page</h2>
+      <p id="pageUrl" class="url"></p>
+      <p id="pageHint" class="hint">Click the LiveWeave toolbar icon on an HTTP page to grant one-tab import access.</p>
+      <div class="actions">
+        <button id="editPage" class="primary" disabled>Edit this page</button>
+        <button id="newProject">New blank</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <p class="eyebrow">Recent projects</p>
+      <div id="projects" class="projects"><p class="hint">No saved projects yet.</p></div>
+    </section>
+
+    <section class="section driver-row">
+      <label class="eyebrow" for="driver">Agent driver</label>
+      <select id="driver">
+        <option value="">Operator only</option>
+        <option value="codex">Codex</option>
+        <option value="claude-code">Claude Code</option>
+        <option value="cursor">Cursor</option>
+        <option value="opencode">OpenCode</option>
+        <option value="any">Any connected harness</option>
+      </select>
+      <p id="connectionHint" class="hint"></p>
+    </section>
+  </main>
+
+  <main id="editorView">
+    <div class="editor-head">
+      <button id="back" class="icon" title="Projects" aria-label="Back to projects">&#8592;</button>
+      <div class="editor-title">
+        <strong id="projectTitle">Untitled project</strong>
+        <small><span id="projectSource">Local project</span> <span id="dirty"></span></small>
+      </div>
+      <button id="openOriginal" class="icon" title="Open original page" aria-label="Open original page">&#8599;</button>
+    </div>
+
+    <div class="editor-tools">
+      <div class="tabs" role="tablist" aria-label="Editing mode">
+        <button data-view="design" class="active" role="tab">Design</button>
+        <button data-view="html" role="tab">HTML</button>
+        <button data-view="css" role="tab">CSS</button>
+      </div>
+      <span class="spacer"></span>
+      <button id="undo" title="Undo the latest project change">Undo</button>
+      <button id="redo" title="Redo the latest undone change">Redo</button>
+      <button id="preview">Preview</button>
+    </div>
+
+    <div id="designWrap">
+      <div class="selection-band">
+        <div>
+          <strong id="selectedLabel">No element selected</strong>
+          <code id="selectedPath">Open the preview and pick an element</code>
+        </div>
+        <button id="pickElement" class="primary">Pick</button>
+      </div>
+
+      <section class="inspector-section">
+        <h3>Agent edit</h3>
+        <div class="prompt-mode" role="group" aria-label="Agent source">
+          <button id="agentModeForeman" class="active" aria-pressed="true">Foreman</button>
+          <button id="agentModeNano" aria-pressed="false">Nano</button>
+        </div>
+        <select id="agentHarness" aria-label="Foreman harness">
+          <option value="codex">Codex</option>
+          <option value="claude-code">Claude Code</option>
+          <option value="cursor">Cursor</option>
+          <option value="opencode">OpenCode</option>
+        </select>
+        <textarea id="agentPrompt" maxlength="4000" placeholder="Describe what to create, improve, or change" aria-label="Describe the page or selected element change"></textarea>
+        <div class="agent-submit">
+          <span id="agentStatus" role="status" aria-live="polite"></span>
+          <button id="runAgentEdit" class="primary" disabled>Send edit</button>
+        </div>
+      </section>
+
+      <p id="inspectorEmpty" class="inspector-empty">No element selected</p>
+
+      <div id="inspectorControls">
+        <section class="inspector-section">
+          <h3>Content</h3>
+          <textarea id="elementText" aria-label="Selected element text"></textarea>
+          <div class="inline-actions"><button id="applyText">Apply text</button></div>
+        </section>
+
+        <section class="inspector-section">
+          <h3>Colors</h3>
+          <div class="control-grid">
+            <label class="control"><span>Background</span><span class="color-control"><input id="backgroundColor" type="color" value="#ffffff"><input id="backgroundValue" class="color-value" value="#ffffff"></span></label>
+            <label class="control"><span>Text</span><span class="color-control"><input id="textColor" type="color" value="#111111"><input id="textColorValue" class="color-value" value="#111111"></span></label>
+          </div>
+        </section>
+
+        <section class="inspector-section">
+          <h3>Typography</h3>
+          <div class="control-grid">
+            <label class="control"><span>Size (px)</span><input id="fontSize" type="number" min="1" max="300"></label>
+            <label class="control"><span>Weight</span><select id="fontWeight"><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semibold</option><option value="700">Bold</option><option value="800">Extra bold</option></select></label>
+            <label class="control"><span>Align</span><select id="textAlign"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option><option value="justify">Justify</option></select></label>
+            <label class="control"><span>Display</span><select id="display"><option value="block">Block</option><option value="inline">Inline</option><option value="inline-block">Inline block</option><option value="flex">Flex</option><option value="grid">Grid</option><option value="none">Hidden</option></select></label>
+          </div>
+        </section>
+
+        <section class="inspector-section">
+          <h3>Spacing and size</h3>
+          <div class="control-grid">
+            <label class="control"><span>Padding (px)</span><input id="padding" type="number" min="0" max="500"></label>
+            <label class="control"><span>Margin (px)</span><input id="margin" type="number" min="0" max="500"></label>
+            <label class="control"><span>Width</span><input id="elementWidth" placeholder="auto or 100%"></label>
+            <label class="control"><span>Radius (px)</span><input id="borderRadius" type="number" min="0" max="500"></label>
+          </div>
+        </section>
+
+        <section class="inspector-section">
+          <h3>Border</h3>
+          <div class="control-grid">
+            <label class="control"><span>Width (px)</span><input id="borderWidth" type="number" min="0" max="50"></label>
+            <label class="control"><span>Color</span><span class="color-control"><input id="borderColor" type="color" value="#000000"><input id="borderColorValue" class="color-value" value="#000000"></span></label>
+          </div>
+          <div class="inline-actions"><button id="applyStyle" class="primary">Apply styles</button><button id="resetStyle">Reset styles</button></div>
+        </section>
+
+        <section class="inspector-section">
+          <h3>Element</h3>
+          <div class="inline-actions"><button id="duplicateElement">Duplicate</button><button id="deleteElement" class="danger">Delete</button></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="source-wrap">
+      <textarea id="source" spellcheck="false" aria-label="LiveWeave source editor"></textarea>
+    </div>
+
+    <details id="warningPanel">
+      <summary id="warningSummary">Import warnings</summary>
+      <ul id="warnings"></ul>
+    </details>
+
+    <div class="editor-foot">
+      <span id="editorStatus">Ready</span>
+      <div class="save-actions">
+        <button id="save">Save</button>
+        <button id="saveAs">Save as</button>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="sidepanel.js"></script>
 </body>
 </html>
