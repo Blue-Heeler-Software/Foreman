@@ -66,7 +66,7 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 | `options.html` / `options.js` | enter the pairing code |
 | `sidepanel.html` / `sidepanel.js` | status grid, verified badge, Ask-Harness inbox, on-device summary |
 
-## TODO (next iterations)
+## Roadmap
 
 - **Broad browser-use mode** (operator opt-in): add `scripting` + host permissions so `click`/`type`/`read`
   page content / `screenshot` work on live pages, with a per-origin lease and an in-panel toggle.

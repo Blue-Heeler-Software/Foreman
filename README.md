@@ -21,6 +21,10 @@
 
 > **Status:** alpha. Foreman Agent Safety targets the stable .NET 10 SDK and runs on Windows 10/11 x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
 
+> **OpenAI Build Week 2026:** Foreman predates the event. See
+> [docs/openai-build-week-2026.md](docs/openai-build-week-2026.md) for the pre-event baseline,
+> eligible extension, Codex collaboration record, and judge testing path.
+
 ## Why Foreman Agent Safety Exists
 
 AI coding agents can move quickly across shells, files, credentials, networked tools, and MCP servers. Most of that work is useful. Some of it is surprising, expensive, stuck, or unsafe.
@@ -99,7 +103,11 @@ Anything else can be added in Settings as a custom harness executable name.
 
 ### Install
 
-Binary releases are published from the release workflow once an alpha installer is cut. Until then, build from source:
+Download the newest alpha installer and its SHA-256 checksum from
+[GitHub Releases](https://github.com/aXL333/Foreman/releases). Releases are self-contained, so judges and
+other evaluators do not need to rebuild Foreman or install the .NET SDK.
+
+The repository can be newer than the most recent installer. To test an unreleased commit or work from source:
 
 ```powershell
 dotnet build .\Foreman.slnx -c Release
