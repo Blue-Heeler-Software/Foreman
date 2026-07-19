@@ -88,10 +88,11 @@ public sealed class EventLogStoreTests : IDisposable
     [Fact]
     public void Load_TrimsToMaxEntries()
     {
-        var store = new EventLogStore(_dir, maxEntries: 10);
+        var writer = new EventLogStore(_dir, maxEntries: 100);
         for (var i = 0; i < 25; i++)
-            store.Append(new InfoEvent(T, "src", $"e{i}"));
+            writer.Append(new InfoEvent(T, "src", $"e{i}"));
 
+        var store = new EventLogStore(_dir, maxEntries: 10);
         var loaded = store.Load();
         Assert.Equal(10, loaded.Count);
         Assert.Equal("e15", loaded[0].Message);     // kept the most recent 10
@@ -101,12 +102,13 @@ public sealed class EventLogStoreTests : IDisposable
     [Fact]
     public void Load_TrimRewrite_RaisesChainRewritten_SoASupersedingAnchorCanBePublished()
     {
-        var store = new EventLogStore(_dir, maxEntries: 5);
+        var writer = new EventLogStore(_dir, maxEntries: 100);
         for (var i = 0; i < 12; i++)
-            store.Append(new InfoEvent(T, "src", $"e{i}"));
+            writer.Append(new InfoEvent(T, "src", $"e{i}"));
         // What a prior launch (or clean stop) would have witnessed externally, BEFORE the trim.
-        var preTrimWitness = LogHeadReader.CurrentAnchor(store.FilePath);
+        var preTrimWitness = LogHeadReader.CurrentAnchor(writer.FilePath);
 
+        var store = new EventLogStore(_dir, maxEntries: 5);
         LogAnchor? raised = null;
         store.ChainRewritten += a => raised = a;
         store.Load();
@@ -134,6 +136,96 @@ public sealed class EventLogStoreTests : IDisposable
         store.Load();
 
         Assert.False(raised);
+    }
+
+    [Fact]
+    public void Append_EnforcesEntryCapWithoutWaitingForLoad()
+    {
+        var store = new EventLogStore(_dir, maxEntries: 10);
+        var rewrites = 0;
+        store.ChainRewritten += _ => rewrites++;
+
+        for (var i = 0; i < 25; i++)
+            store.Append(new InfoEvent(T, "src", $"e{i}"));
+
+        Assert.Equal(10, Raw(store).Length);
+        var loaded = store.Load();
+        Assert.Equal("e15", loaded[0].Message);
+        Assert.Equal("e24", loaded[^1].Message);
+        Assert.True(rewrites > 0);
+        var verified = store.Verify();
+        Assert.Equal(VerifyStatus.Valid, verified.Status);
+        Assert.Equal(10, verified.Count);
+    }
+
+    [Fact]
+    public void Append_FirstWriteRepairsLegacyOversizedFile()
+    {
+        var writer = new EventLogStore(_dir, maxEntries: 100);
+        for (var i = 0; i < 25; i++)
+            writer.Append(new InfoEvent(T, "src", $"e{i}"));
+
+        var restarted = new EventLogStore(_dir, maxEntries: 10);
+        LogAnchor? rewritten = null;
+        restarted.ChainRewritten += a => rewritten = a;
+
+        Assert.True(restarted.TryAppend(new InfoEvent(T, "src", "e25"), out var error), error);
+
+        var loaded = restarted.Load();
+        Assert.Equal(10, loaded.Count);
+        Assert.Equal("e16", loaded[0].Message);
+        Assert.Equal("e25", loaded[^1].Message);
+        Assert.NotNull(rewritten);
+        Assert.Equal(VerifyStatus.Valid, restarted.Verify().Status);
+    }
+
+    [Fact]
+    public void Append_ByteCeilingCompactsInBatches()
+    {
+        var store = new EventLogStore(_dir, maxEntries: 100, maxBytes: 4096);
+        var rewrites = 0;
+        store.ChainRewritten += _ => rewrites++;
+
+        for (var i = 0; i < 12; i++)
+            store.Append(new InfoEvent(T, "src", $"e{i}:{new string('x', 1200)}"));
+
+        Assert.True(new FileInfo(store.FilePath).Length < 8192); // ceiling plus at most one bounded record
+        Assert.InRange(Raw(store).Length, 1, 5);
+        Assert.True(rewrites > 0);
+        Assert.Equal(VerifyStatus.Valid, store.Verify().Status);
+    }
+
+    [Fact]
+    public void TryAppend_MalformedExistingLogFailsClosedWithoutGrowingFile()
+    {
+        var writer = new EventLogStore(_dir, maxEntries: 100);
+        writer.Append(new InfoEvent(T, "src", "good"));
+        File.AppendAllText(writer.FilePath, "{ not valid json\n");
+        var before = new FileInfo(writer.FilePath).Length;
+
+        var restarted = new EventLogStore(_dir, maxEntries: 5);
+        Assert.False(restarted.TryAppend(new InfoEvent(T, "src", "must not append"), out var error));
+        Assert.Contains("malformed event log", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, new FileInfo(writer.FilePath).Length);
+        Assert.IsType<InvalidDataException>(restarted.LastAppendError);
+    }
+
+    [Fact]
+    public void TryAppend_AfterCrashTornTail_RepairsAndKeepsAppending()
+    {
+        var writer = new EventLogStore(_dir, maxEntries: 100);
+        writer.Append(new InfoEvent(T, "src", "committed"));
+        // A crash mid-append leaves a partial record with NO terminating newline (distinct from the malformed
+        // but newline-terminated line above). This must not brick the log — it is crash debris, not tamper.
+        File.AppendAllText(writer.FilePath, "{\"partial\":\"torn record, never got its newline");
+
+        var restarted = new EventLogStore(_dir, maxEntries: 100);
+        Assert.True(restarted.TryAppend(new InfoEvent(T, "src", "after-crash"), out var error), error);
+
+        var loaded = restarted.Load();
+        Assert.Equal(["committed", "after-crash"], loaded.Select(e => e.Message).ToArray());   // tail dropped, not merged
+        Assert.Equal(VerifyStatus.Valid, restarted.Verify().Status);                            // chain still intact
+        Assert.Equal(2, Raw(restarted).Length);                                                 // exactly the two good records
     }
 
     [Fact]

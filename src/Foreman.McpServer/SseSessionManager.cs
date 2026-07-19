@@ -104,11 +104,9 @@ public sealed class SseSessionManager
         Prune();
         if (_sessions.IsEmpty) return;
 
-        var tasks = _sessions.Values.Select(e => e.Server).Select(server =>
-            server.SendNotificationAsync("notifications/message", new { level, logger, data })
-                  .ContinueWith(t => { /* swallow per-client errors */ }, TaskScheduler.Default));
-
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var snapshot = _sessions.ToArray();
+        await Task.WhenAll(snapshot.Select(item =>
+            SendNotificationAsync(item.Key, item.Value, new { level, logger, data }))).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -127,13 +125,14 @@ public sealed class SseSessionManager
         string? requestId = null,
         CancellationToken ct = default)
     {
-        var matches = _sessions.Values.Select(e => e.Server)
-            .Where(s => MatchesHarness(s.ClientInfo?.Name, s.ClientInfo?.Title, harnessId))
+        Prune();
+        var matches = _sessions.ToArray()
+            .Where(item => MatchesHarness(item.Value.Server.ClientInfo?.Name, item.Value.Server.ClientInfo?.Title, harnessId))
             .ToList();
 
         // 1) true round-trip via sampling, on the first matching session that supports it
-        var sampler = matches.FirstOrDefault(s => s.ClientCapabilities?.Sampling is not null);
-        if (sampler is not null)
+        var sampler = matches.FirstOrDefault(item => item.Value.Server.ClientCapabilities?.Sampling is not null);
+        if (sampler.Value is not null)
         {
             try
             {
@@ -147,8 +146,9 @@ public sealed class SseSessionManager
                         Content = [new TextContentBlock { Text = userPrompt }],
                     }],
                 };
-                var res = await sampler.SampleAsync(req, ct).ConfigureAwait(false);
-                return new AskOffenderResult(AskOutcome.Sampled, ExtractText(res.Content), ClientLabel(sampler), requestId);
+                var res = await sampler.Value.Server.SampleAsync(req, ct).ConfigureAwait(false);
+                return new AskOffenderResult(
+                    AskOutcome.Sampled, ExtractText(res.Content), ClientLabel(sampler.Value.Server), requestId);
             }
             catch { /* client declined / errored / timed out — degrade to notification */ }
         }
@@ -157,15 +157,34 @@ public sealed class SseSessionManager
         if (matches.Count > 0)
         {
             var data = new { type = "ask_harness", harnessId, requestId, prompt = userPrompt };
-            var tasks = matches.Select(s =>
-                s.SendNotificationAsync("notifications/message", new { level = "warning", logger = "foreman", data })
-                 .ContinueWith(_ => { /* swallow per-client errors */ }, TaskScheduler.Default));
-            await Task.WhenAll(tasks).ConfigureAwait(false);
-            return new AskOffenderResult(AskOutcome.Notified, null, ClientLabel(matches[0]), requestId);
+            var sent = await Task.WhenAll(matches.Select(item =>
+                SendNotificationAsync(
+                    item.Key, item.Value,
+                    new { level = "warning", logger = "foreman", data }))).ConfigureAwait(false);
+            var firstSuccess = Array.FindIndex(sent, success => success);
+            if (firstSuccess >= 0)
+                return new AskOffenderResult(
+                    AskOutcome.Notified, null, ClientLabel(matches[firstSuccess].Value.Server), requestId);
         }
 
         // 3) offender not connected to Foreman's MCP
         return new AskOffenderResult(AskOutcome.NoSession, null, null, requestId);
+    }
+
+    private async Task<bool> SendNotificationAsync(string key, Entry entry, object payload)
+    {
+        try
+        {
+            await entry.Server.SendNotificationAsync("notifications/message", payload).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            // Failed transports are dead now, not in 15 minutes. Remove only the exact entry we attempted.
+            if (_sessions.TryGetValue(key, out var current) && ReferenceEquals(current.Server, entry.Server))
+                _sessions.TryRemove(key, out _);
+            return false;
+        }
     }
 
     private static string? ClientLabel(McpServerType s) =>

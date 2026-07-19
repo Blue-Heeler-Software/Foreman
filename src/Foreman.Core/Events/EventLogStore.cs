@@ -10,8 +10,8 @@ namespace Foreman.Core.Events;
 /// <summary>
 /// Durable, append-only event log on disk (JSONL — one polymorphic <see cref="ForemanEvent"/> per
 /// line) so the Event Log survives restarts. Append is best-effort and never throws into the publish
-/// path; Load tolerates corrupt lines and trims to the most recent <c>maxEntries</c>, rewriting the
-/// file when it does. This feeds the Log VIEW only — it is deliberately separate from the in-memory
+/// path. Append enforces entry/byte ceilings in batches; Load also trims legacy oversized logs to the
+/// most recent <c>maxEntries</c>. This feeds the Log VIEW only — it is deliberately separate from the in-memory
 /// EventBus history, so reloading persisted events never resurrects stale alerts as "active".
 ///
 /// TAMPER-EVIDENCE (P1): when <see cref="LogIntegritySettings.HashChainEnabled"/> is on, each written record
@@ -26,6 +26,7 @@ public sealed class EventLogStore
 
     private readonly string _file;
     private readonly int _maxEntries;
+    private readonly long _maxBytes;
     private readonly object _lock = new();
     private readonly bool _chain;
     private readonly ILogHeadSigner _signer;
@@ -34,6 +35,7 @@ public sealed class EventLogStore
 
     private string? _headHash;   // last chained record's Hash; null until seeded, then "" (genesis) or a hash
     private long _count;         // number of chained records (bound into the head seal)
+    private long _recordCount;   // all persisted records, including a legacy un-chained prefix
     private long? _lastSequence;
     private DateTimeOffset? _lastRecordedAtUtc;
     private long? _lastMonotonicTicks;
@@ -42,12 +44,14 @@ public sealed class EventLogStore
 
     public EventLogStore(string? baseDir = null, int maxEntries = 5000,
                          LogIntegritySettings? integrity = null, ILogHeadSigner? signer = null,
-                         ITemporalClock? clock = null, ILogTimeAnchor? timeAnchor = null)
+                         ITemporalClock? clock = null, ILogTimeAnchor? timeAnchor = null,
+                         long maxBytes = 32L * 1024 * 1024)
     {
         var dir = baseDir ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Foreman");
         _file = Path.Combine(dir, "events.log.jsonl");
         _maxEntries = Math.Max(1, maxEntries);
+        _maxBytes = Math.Max(4096, maxBytes);
         _chain = (integrity ?? new LogIntegritySettings()).HashChainEnabled;
         _signer = signer ?? new NullHeadSigner();
         _clock = clock ?? new SystemTemporalClock();
@@ -60,8 +64,8 @@ public sealed class EventLogStore
     public Exception? LastAppendError { get; private set; }
 
     /// <summary>
-    /// Raised after the on-disk chain was REWRITTEN under a new genesis (the load-time trim to the entry cap, or
-    /// the one-time canonicalization migration): every retained record's hash changed, so any external anchor
+    /// Raised after the on-disk chain was REWRITTEN under a new genesis (append/load retention compaction, or the
+    /// one-time canonicalization migration): every retained record's hash changed, so any external anchor
     /// witnessed before the rewrite no longer exists in the file. The subscriber must publish a SUPERSEDING
     /// external anchor (the same pattern as the rotate path) — otherwise the very next launch compares the stale
     /// witness against the rewritten chain and falsely reports a rollback. Raised while the store lock is held;
@@ -90,7 +94,7 @@ public sealed class EventLogStore
         }
     }
 
-    private void AppendCore(ForemanEvent evt)
+    private void AppendCore(ForemanEvent evt, bool enforceRetention = true)
     {
         // Disk is an egress boundary: mask secret-shaped text before it lands at rest.
         var redacted = SecretRedactor.RedactEvent(evt);
@@ -100,6 +104,8 @@ public sealed class EventLogStore
 
             if (_headHash is null || _lastSequence is null)
                 SeedState();   // continue chain + sequence across store instances/restarts
+
+            if (enforceRetention) CompactBeforeAppendIfNeeded();
 
             var recordedAt = _clock.UtcNow;
             var monotonicTicks = _clock.MonotonicTicks;
@@ -114,26 +120,75 @@ public sealed class EventLogStore
                 TemporalAnomalies = DetectTemporalAnomalies(recordedAt, monotonicTicks),
             };
 
+            var nextHeadHash = _headHash;
+            var nextCount = _count;
             if (_chain)
             {
                 var canonical = LogChain.Canonicalize(redacted, _json);
                 var hash = LogChain.ComputeHash(_headHash, canonical);
                 redacted = redacted with { PrevHash = _headHash ?? LogChain.Genesis, Hash = hash };
-                _headHash = hash;
-                _count++;
+                nextHeadHash = hash;
+                nextCount++;
             }
 
+            File.AppendAllText(_file, JsonSerializer.Serialize(redacted, _json) + "\n");
+
+            // Advance in-memory state only AFTER the append succeeds. Otherwise a transient write failure would
+            // make the next record chain onto a hash that never reached disk, permanently breaking the log.
+            _headHash = nextHeadHash;
+            _count = nextCount;
+            _recordCount++;
             _lastSequence = sequence;
             _lastRecordedAtUtc = recordedAt;
             _lastMonotonicTicks = monotonicTicks;
             _lastTemporalSessionId = _clock.SessionId;
             _lastMonotonicFrequency = _clock.MonotonicFrequency;
 
-            File.AppendAllText(_file, JsonSerializer.Serialize(redacted, _json) + "\n");
-
             if (_chain)
                 WriteHeadSeal(_signer.SealHead(_headHash!, _count));   // no-op file under NullHeadSigner
         }
+    }
+
+    // Append-time retention is batched. Keeping 90% of the entry/byte budget means production's 5,000-entry
+    // log rewrites at most once per roughly 500 new events, instead of an O(n) rewrite on every append.
+    private void CompactBeforeAppendIfNeeded()
+    {
+        var fileBytes = File.Exists(_file) ? new FileInfo(_file).Length : 0;
+        if (_recordCount < _maxEntries && fileBytes < _maxBytes) return;
+
+        var targetEntries = Math.Max(1, _maxEntries - Math.Max(1, _maxEntries / 10));
+        var targetBytes = Math.Max(1, _maxBytes - Math.Max(1, _maxBytes / 10));
+        var tail = ReadTailForCompaction(targetEntries, targetBytes);
+        Rewrite(tail, throwOnFailure: true);
+    }
+
+    // Stream the source instead of File.ReadAllLines: even an oversized log from an older build stays bounded in
+    // memory during its first repair. A malformed line aborts compaction rather than silently erasing evidence.
+    private IReadOnlyList<ForemanEvent> ReadTailForCompaction(int targetEntries, long targetBytes)
+    {
+        var tail = new Queue<(ForemanEvent Event, int Bytes)>();
+        long bytes = 0;
+        foreach (var raw in File.ReadLines(_file))
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            ForemanEvent evt;
+            try
+            {
+                evt = JsonSerializer.Deserialize<ForemanEvent>(raw, _json)
+                      ?? throw new InvalidDataException("Event log contains a null record.");
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException)
+            {
+                throw new InvalidDataException("Event log compaction refused a malformed record.", ex);
+            }
+
+            var lineBytes = Encoding.UTF8.GetByteCount(raw) + 1;
+            tail.Enqueue((evt, lineBytes));
+            bytes += lineBytes;
+            while (tail.Count > targetEntries || (bytes > targetBytes && tail.Count > 1))
+                bytes -= tail.Dequeue().Bytes;
+        }
+        return tail.Select(static item => item.Event).ToArray();
     }
 
     /// <summary>The outcome of a rotate: where the prior chain was archived, how many records it held, and the
@@ -163,7 +218,8 @@ public sealed class EventLogStore
             {
                 // 1. Close the OLD chain with a final, in-chain record of the rotation (kept in the archive).
                 AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
-                    $"Event log rotated + re-sealed: {reason}. This is the final record of the prior chain."));
+                    $"Event log rotated + re-sealed: {reason}. This is the final record of the prior chain."),
+                    enforceRetention: false);
                 var priorCount = _count;
 
                 // 2. Archive the JSONL + its head seal to a UNIQUE sibling (move, never delete or overwrite — the
@@ -181,7 +237,8 @@ public sealed class EventLogStore
 
                 // 4. Open the NEW chain with its first record (writes a fresh file + fresh head seal).
                 AppendCore(new MonitoringNoticeEvent(now, ForemanSeverity.Medium, "Foreman.LogRotate",
-                    $"Fresh event-log chain established (prior chain of {priorCount} record(s) archived). Baseline re-sealed."));
+                    $"Fresh event-log chain established (prior chain of {priorCount} record(s) archived). Baseline re-sealed."),
+                    enforceRetention: false);
 
                 return new RotateResult(archive, priorCount, new LogAnchor(_headHash ?? LogChain.Genesis, _count));
             }
@@ -205,6 +262,7 @@ public sealed class EventLogStore
     {
         _headHash = null;
         _count = 0;
+        _recordCount = 0;
         _lastSequence = null;
         _lastRecordedAtUtc = null;
         _lastMonotonicTicks = null;
@@ -220,6 +278,16 @@ public sealed class EventLogStore
             try
             {
                 if (!File.Exists(_file)) return [];
+
+                // An oversized legacy log must not be materialized wholesale just because the operator opened the
+                // Log view before a new event triggered append-time compaction. Stream its bounded tail instead.
+                if (new FileInfo(_file).Length >= _maxBytes)
+                {
+                    var targetBytes = Math.Max(1, _maxBytes - Math.Max(1, _maxBytes / 10));
+                    var bounded = ReadTailForCompaction(_maxEntries, targetBytes);
+                    Rewrite(bounded);
+                    return bounded;
+                }
 
                 var lines = File.ReadAllLines(_file);
                 var events = new List<ForemanEvent>();
@@ -400,11 +468,13 @@ public sealed class EventLogStore
 
     // Seed the in-memory head from the file so a new store instance continues the existing chain. Counts only
     // CHAINED records (those with a Hash); a legacy prefix leaves the head at genesis (a fresh chain appends
-    // after it). Tolerates a torn last line.
+    // after it). A crash-torn tail (a newline-less final record) is REPAIRED so a later append can still proceed;
+    // any malformed newline-terminated line fails closed so damage can't be turned into a hidden middle gap.
     private void SeedState()
     {
         _headHash = LogChain.Genesis;
         _count = 0;
+        _recordCount = 0;
         _lastSequence = 0;
         _lastRecordedAtUtc = null;
         _lastMonotonicTicks = null;
@@ -413,6 +483,7 @@ public sealed class EventLogStore
         try
         {
             if (!File.Exists(_file)) return;
+            RepairUncommittedTail();   // drop a crash-torn final record so this append can't merge onto it
             foreach (var raw in File.ReadLines(_file))
             {
                 if (string.IsNullOrWhiteSpace(raw)) continue;
@@ -420,6 +491,7 @@ public sealed class EventLogStore
                 {
                     var e = JsonSerializer.Deserialize<ForemanEvent>(raw, _json);
                     if (e is null) continue;
+                    _recordCount++;
                     if (!string.IsNullOrEmpty(e.Hash)) { _headHash = e.Hash; _count++; }
                     if (e.Sequence is { } seq && seq > _lastSequence) _lastSequence = seq;
                     if (e.RecordedAtUtc is { } rec) _lastRecordedAtUtc = rec;
@@ -427,18 +499,53 @@ public sealed class EventLogStore
                     if (e.TemporalSessionId is { } session) _lastTemporalSessionId = session;
                     if (e.MonotonicFrequency is { } freq) _lastMonotonicFrequency = freq;
                 }
-                catch { /* torn line — skip */ }
+                catch (Exception ex)
+                {
+                    throw new InvalidDataException(
+                        "Cannot append to a malformed event log; refusing to hide the damaged evidence.", ex);
+                }
             }
         }
         catch
         {
-            _headHash = LogChain.Genesis;
-            _count = 0;
-            _lastSequence = 0;
-            _lastRecordedAtUtc = null;
-            _lastMonotonicTicks = null;
-            _lastTemporalSessionId = null;
-            _lastMonotonicFrequency = 0;
+            ResetChainState();
+            throw;
+        }
+    }
+
+    // A committed record is always persisted as "<json>\n". A log that does not end in a newline therefore
+    // carries a crash-torn tail — the partial bytes of an append that never finished. Those bytes were never a
+    // durable chain record; left in place, the NEXT append would concatenate onto them and turn recoverable
+    // crash debris into a permanent malformed MIDDLE line (which then fails closed forever, permanently stalling
+    // persistence). Truncate back to the last complete record so the append path stays available after a crash.
+    // Read paths (Load/Verify) already tolerate the torn tail without mutating; only the append path must
+    // physically repair it. Middle corruption is deliberately NOT repaired here — the reader above still fails
+    // closed on any parse error among the surviving newline-terminated lines, so this cannot mask a tampered
+    // interior record (which the head seal would in any case catch as a HeadMismatch).
+    private void RepairUncommittedTail()
+    {
+        try
+        {
+            using var fs = new FileStream(_file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            if (fs.Length == 0) return;
+            fs.Position = fs.Length - 1;
+            if (fs.ReadByte() == '\n') return;   // last append committed cleanly — nothing to repair
+
+            // Serialized records contain no literal newline (WriteIndented=false escapes '\n' as "\\n"), so the
+            // last '\n' in the file is always the terminator of the previous complete record. Scan back to it and
+            // drop everything after it. The scan is bounded by one record's length regardless of file size.
+            for (var pos = fs.Length - 2; pos >= 0; pos--)
+            {
+                fs.Position = pos;
+                if (fs.ReadByte() == '\n') { fs.SetLength(pos + 1); return; }
+            }
+            fs.SetLength(0);   // no complete record at all — the very first append was torn
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Could not repair (file locked, transient IO). Leave the file untouched: the reader above then fails
+            // closed on the unparseable tail, surfacing the failure to the caller (and retrying on the next
+            // append) rather than risking a merged, silently-corrupt line.
         }
     }
 
@@ -446,7 +553,7 @@ public sealed class EventLogStore
     // record becomes the new genesis and the chain is recomputed forward, then the head is re-sealed. A
     // re-anchored trim is byte-indistinguishable from a malicious truncate — acceptable only because re-sealing
     // requires the signer (the TPM key in P3); Verify reports a trimmed file as valid from the new anchor.
-    private void Rewrite(IReadOnlyList<ForemanEvent> events)
+    private void Rewrite(IReadOnlyList<ForemanEvent> events, bool throwOnFailure = false)
     {
         try
         {
@@ -468,16 +575,27 @@ public sealed class EventLogStore
                 sb.Append(JsonSerializer.Serialize(rec, _json)).Append('\n');
                 last = rec;
             }
-            File.WriteAllText(_file, sb.ToString());
+            var tmp = _file + ".rewrite.tmp";
+            try
+            {
+                File.WriteAllText(tmp, sb.ToString());
+                if (File.Exists(_file)) File.Replace(tmp, _file, destinationBackupFileName: null);
+                else File.Move(tmp, _file);
+            }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best-effort temp cleanup */ }
+            }
+            _recordCount = events.Count;
+            _lastSequence = last?.Sequence ?? events.Count;
+            _lastRecordedAtUtc = last?.RecordedAtUtc;
+            _lastMonotonicTicks = last?.MonotonicTicks;
+            _lastTemporalSessionId = last?.TemporalSessionId;
+            _lastMonotonicFrequency = last?.MonotonicFrequency ?? 0;
             if (_chain)
             {
                 _headHash = prev;
                 _count = n;
-                _lastSequence = last?.Sequence ?? n;
-                _lastRecordedAtUtc = last?.RecordedAtUtc;
-                _lastMonotonicTicks = last?.MonotonicTicks;
-                _lastTemporalSessionId = last?.TemporalSessionId;
-                _lastMonotonicFrequency = last?.MonotonicFrequency ?? 0;
                 WriteHeadSeal(_signer.SealHead(prev!, n));
                 // The rewrite invalidated every previously-witnessed head — let the host publish a superseding
                 // external anchor NOW, not at the next clean stop (a kill in between would leave the stale witness
@@ -485,7 +603,7 @@ public sealed class EventLogStore
                 if (n > 0) ChainRewritten?.Invoke(new LogAnchor(prev!, n));
             }
         }
-        catch { /* best-effort */ }
+        catch when (!throwOnFailure) { /* load-time repair remains best-effort */ }
     }
 
     // The head seal lives in a sibling events.log.head file (small JSON), written atomically, so routine

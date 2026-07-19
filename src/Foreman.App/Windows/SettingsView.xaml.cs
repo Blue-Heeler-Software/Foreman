@@ -33,8 +33,15 @@ public partial class SettingsView : UserControl
     private void RefreshGuardian()
     {
         var on = GuardianControl.IsInstalled;
+        var mode = on ? GuardianTrust.ProbeInstalledMode() : string.Empty;
         GuardianButton.Content = on ? "Disable hardened guardian..." : "Enable hardened guardian...";
-        GuardianStatus.Text = on ? "Active (LocalSystem)." : "Off (per-user, tamper-evident).";
+        GuardianStatus.Text = mode switch
+        {
+            GuardianTrust.PublisherSigned => "Active (LocalSystem, publisher authenticated).",
+            GuardianTrust.PathHashPinned => "Active (LocalSystem, unsigned development path + hash pin).",
+            "legacy_or_unavailable" => "Installed, but unavailable or legacy; Foreman is ignoring it.",
+            _ => "Off (per-user, tamper-evident).",
+        };
     }
 
     // Install / remove the opt-in guardian service. Immediate action (one UAC), independent of the Save button —
@@ -57,11 +64,16 @@ public partial class SettingsView : UserControl
             return;
         }
 
+        var signed = SidecarIntegrity.SelfIsSigned();
+        var posture = signed
+            ? "This signed build will authenticate future Foreman versions from the same verified publisher."
+            : "This unsigned build will use a development-only Foreman.exe path + SHA-256 pin. It prevents arbitrary " +
+              "local callers, but is NOT publisher-authenticated or a commercial tamper-proof boundary. Re-enable the " +
+              "guardian after a certificate is added to upgrade automatically to publisher trust.";
         if (MessageBox.Show(
                 "Install the hardened guardian?\n\n" +
-                "Registers a small LocalSystem Windows service that holds Foreman's tamper-seal key out of reach of " +
-                "any process running as you — making the audit-log seal tamper-PROOF, not just tamper-evident. One " +
-                "UAC prompt. The default app is otherwise unchanged, and you can disable it here later.",
+                "Registers a small LocalSystem Windows service that holds Foreman's tamper-seal key outside the normal " +
+                $"user process. {posture}\n\nOne UAC prompt; you can disable it here later.",
                 "Foreman Agent Safety — Enable hardened guardian", MessageBoxButton.OKCancel, MessageBoxImage.Question)
             != MessageBoxResult.OK)
             return;
@@ -199,6 +211,11 @@ public partial class SettingsView : UserControl
         EmergencyAuditCheck.IsChecked   = ar.OnEmergency.HasFlag(EscalationAction.AdversarialAudit);
         EmergencyCleanupCheck.IsChecked = ar.OnEmergency.HasFlag(EscalationAction.RequestSelfCleanup);
         AutoResponseCooldownBox.Text   = ar.CooldownMinutes.ToString();
+        var scheduled = _settings.ScheduledAudit;
+        ScheduledAuditCheck.IsChecked = scheduled.Enabled;
+        ScheduledAuditEveryBox.Text = scheduled.EveryNEvents.ToString();
+        ScheduledAuditIntervalBox.Text = scheduled.IntervalMinutes.ToString();
+        ScheduledAuditCooldownBox.Text = scheduled.CooldownMinutes.ToString();
     }
 
     private static EscalationAction Compose(CheckBox? ask, CheckBox? audit, CheckBox? cleanup)
@@ -247,6 +264,15 @@ public partial class SettingsView : UserControl
 
         if (!int.TryParse(AutoResponseCooldownBox.Text, out var arCooldown) || arCooldown < 0)
         { MessageBox.Show("Auto-response re-fire cooldown must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+        if (!int.TryParse(ScheduledAuditEveryBox.Text, out var auditEvery) || auditEvery < 0)
+        { MessageBox.Show("Scheduled-audit alert count must be ≥ 0.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        if (!int.TryParse(ScheduledAuditIntervalBox.Text, out var auditInterval) || auditInterval < 0)
+        { MessageBox.Show("Scheduled-audit interval must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        if (!int.TryParse(ScheduledAuditCooldownBox.Text, out var auditCooldown) || auditCooldown < 0)
+        { MessageBox.Show("Scheduled-audit cooldown must be ≥ 0 minutes.", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        if (ScheduledAuditCheck.IsChecked == true && auditEvery == 0 && auditInterval == 0)
+        { MessageBox.Show("Enable at least one scheduled-audit trigger (alert count or interval).", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         var emergencyRules = EmergencyRulesBox.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -306,6 +332,10 @@ public partial class SettingsView : UserControl
         _settings.AlertResponses.OnAlarm     = Compose(AlarmAskCheck, AlarmAuditCheck, AlarmCleanupCheck);
         _settings.AlertResponses.OnEmergency = Compose(EmergencyAskCheck, EmergencyAuditCheck, EmergencyCleanupCheck);
         _settings.AlertResponses.CooldownMinutes = arCooldown;
+        _settings.ScheduledAudit.Enabled = ScheduledAuditCheck.IsChecked == true;
+        _settings.ScheduledAudit.EveryNEvents = auditEvery;
+        _settings.ScheduledAudit.IntervalMinutes = auditInterval;
+        _settings.ScheduledAudit.CooldownMinutes = auditCooldown;
 
         // Game mode (live: the tray watcher reads this same settings instance).
         _settings.GameMode.Enabled                   = GameModeCheck.IsChecked == true;

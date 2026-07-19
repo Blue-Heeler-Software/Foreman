@@ -3,6 +3,13 @@ export const MAX_SOURCE_READ_CHARS = 48 * 1024;
 export const MAX_SCAN_INLINE_CHARS = 40 * 1024;
 const MAX_SCAN_RESULT_TARGET = 52 * 1024;
 
+export function canvasCsp(nonce) {
+    const value = String(nonce || '');
+    if (!/^[a-f0-9]{32,128}$/i.test(value)) throw new Error('A strong hexadecimal preview nonce is required.');
+    return "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; " +
+        `script-src 'nonce-${value}'; base-uri 'none'; form-action 'none'; object-src 'none'`;
+}
+
 function nowIso() {
     return new Date().toISOString();
 }

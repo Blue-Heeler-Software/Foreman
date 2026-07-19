@@ -42,6 +42,8 @@ public sealed record SetupHealthSnapshot
 
     // Hardening / blackbox
     public bool GuardianInstalled { get; init; }
+    /// <summary>"publisher_signed", "path_hash_pinned", or "legacy_or_unavailable".</summary>
+    public string GuardianTrustMode { get; init; } = string.Empty;
     public bool OsEventLogAvailable { get; init; }
 }
 
@@ -136,10 +138,20 @@ public static class SetupHealth
                 "Enable \"audit READS of decoys\" in Settings (needs the elevated sidecar; one UAC)."));
 
         // 8. Hardened guardian (optional prevention tier).
-        items.Add(s.GuardianInstalled
-            ? new("Hardened guardian", SetupHealthStatus.Ok, "SYSTEM key-holder service installed — seals are unforgeable by same-user processes.")
-            : new("Hardened guardian", SetupHealthStatus.Off, "Not installed — tamper-evidence seals rest on per-user keys (detection, not prevention).",
-                "Optional: Settings → Enable hardened guardian (one UAC)."));
+        items.Add(!s.GuardianInstalled
+            ? new("Hardened guardian", SetupHealthStatus.Off,
+                "Not installed — tamper-evidence seals rest on per-user keys (detection, not prevention).",
+                "Optional: Settings → Enable hardened guardian (one UAC).")
+            : s.GuardianTrustMode == "publisher_signed"
+                ? new("Hardened guardian", SetupHealthStatus.Ok,
+                    "SYSTEM key-holder is active and callers are authenticated to the verified Foreman publisher.")
+                : s.GuardianTrustMode == "path_hash_pinned"
+                    ? new("Hardened guardian", SetupHealthStatus.Attention,
+                        "Unsigned development mode: SYSTEM key-holder callers are pinned by Foreman.exe path and SHA-256, not by publisher.",
+                        "This is stronger than broad local-user trust, but not a commercial hardening boundary. Re-enable after signing to upgrade automatically to publisher trust.")
+                    : new("Hardened guardian", SetupHealthStatus.Attention,
+                        "The installed service is legacy, unavailable, or does not report an authenticated client policy. Foreman is ignoring it.",
+                        "Disable and re-enable the guardian to install the current authenticated protocol."));
 
         // 9. OS event log blackbox.
         items.Add(s.OsEventLogAvailable

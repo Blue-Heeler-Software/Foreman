@@ -10,6 +10,7 @@ public sealed class LiveWeaveBrokerTests
         var broker = new LiveWeaveBroker();
         broker.SetDriver("codex");
         var id = broker.Enqueue("apply_page", new Dictionary<string, object?> { ["html"] = "<main>x</main>" }, "codex");
+        Assert.Equal(32, id.Length);
 
         var batch = broker.Poll(5);
         Assert.Single(batch);

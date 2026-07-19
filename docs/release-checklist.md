@@ -6,6 +6,8 @@ Use this before publishing a public binary release.
 
 - Run `dotnet test .\Foreman.slnx -c Release --verbosity minimal`.
 - Run `dotnet build .\src\Foreman.App\Foreman.App.csproj -c Release`.
+- Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleasePayload.ps1` against the
+  release-equivalent `publish` directory and confirm all five payload executables carry the intended release version.
 - Verify a clean install on a fresh Windows 10/11 x64 VM.
 - Verify uninstall removes app files and run-at-login registration.
 - Verify first run opens the Connect Agent path and supports Claude Code and Codex.
@@ -26,7 +28,7 @@ Use this before publishing a public binary release.
 - Test `RunElevated` sidecar opt-in and opt-out.
 - Test `ScanMcpTools` with a harmless HTTP MCP server.
 - Confirm all screenshots avoid exposing user paths, tokens, project names, or private terminal output.
-- Confirm release notes mention `.NET 10 preview` until the target moves to a stable SDK.
+- Confirm release notes state the supported stable .NET 10 SDK/runtime and Windows versions accurately.
 - Review SECURITY.md and README.md for claims that drifted since the last release.
 
 ## Code Signing (SignPath Foundation)
@@ -49,8 +51,10 @@ the only $0 path that produces a real signature whose reputation transfers acros
    timestamping in the policy** — signatures must outlive the (short-lived) cert.
 3. Create **two artifact configurations**:
    - **App** (`SIGNPATH_APP_ARTIFACT_CONFIG_SLUG`): input is the uploaded `publish` folder (a zip). Sign
-     `Foreman.exe` **and** `sidecar/Foreman.EtwSidecar.exe`; pass everything else through. Both inner PEs
-     must be signed before the installer is built around them.
+     `Foreman.exe`, `sidecar/Foreman.EtwSidecar.exe`, `guardian/Foreman.Guardian.exe`,
+     `cu-sidecar/Foreman.CuSidecar.exe`, and `cu-pilot/Foreman.CuPilot.exe`; pass everything else through.
+     Every inner PE must be signed before the installer is built around it. The workflow verifies this and fails
+     before packaging if the external SignPath configuration omitted one.
    - **Installer** (`SIGNPATH_INSTALLER_ARTIFACT_CONFIG_SLUG`): input is the single
      `Foreman-Agent-Safety-Setup-*.exe`; sign it.
 4. Generate a SignPath **API token**.
@@ -70,7 +74,7 @@ Settings → Secrets and variables → Actions:
 
 ### How the workflow signs (nested order)
 
-`publish` → **sign app payload** (Foreman.exe + sidecar) → build Inno installer from the signed payload →
+`publish` → **sign all five app-payload executables** → build Inno installer from the signed payload →
 **sign installer** → checksums (over the signed installer) → attach to release. Signing only the installer
 would leave the inner exes untrusted at runtime, so the order matters. The workflow uses
 `signpath/github-action-submit-signing-request@v2`: it `actions/upload-artifact`s each stage, submits the
@@ -93,9 +97,8 @@ which code signing (which answers "who published this?") does not.
 
 - **No setup.** It has no secrets or variables to configure and runs on every release, signed or unsigned. It
   runs after the SignPath steps, so when signing is on it attests the final signed bytes.
-- **What is attested:** the installer plus the payload binaries (`Foreman.exe`,
-  `sidecar/Foreman.EtwSidecar.exe`, `guardian/Foreman.Guardian.exe`), so a user can verify either the
-  download or an installed file.
+- **What is attested:** the installer plus all five payload binaries (`Foreman.exe`, ETW sidecar, Guardian,
+  desktop-CU sidecar, and Local Agent Host pilot), so a user can verify either the download or an installed file.
 - **Nothing is attached to the Release.** GitHub stores the attestation; verification fetches it by digest.
 - **Verify a download or an installed file:**
 

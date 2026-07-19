@@ -4,32 +4,32 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Tray icon -->
-    <PackageVersion Include="H.NotifyIcon.Wpf" Version="2.2.0" />
+    <PackageVersion Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <!-- MCP server SDK -->
-    <PackageVersion Include="ModelContextProtocol" Version="1.4.0" />
-    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
+    <PackageVersion Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.1" />
     <!-- WMI process events -->
-    <PackageVersion Include="System.Management" Version="9.0.5" />
+    <PackageVersion Include="System.Management" Version="10.0.10" />
     <!-- Per-process GPU utilization (GPU Engine perf counters) -->
-    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="9.0.5" />
+    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="10.0.10" />
     <!-- ETW (Phase 2) -->
-    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.13" />
+    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
     <!-- Security log reader (EventLogWatcher) for decoy SACL read-auditing -->
-    <PackageVersion Include="System.Diagnostics.EventLog" Version="9.0.5" />
+    <PackageVersion Include="System.Diagnostics.EventLog" Version="10.0.10" />
     <!-- Windows Service host + control (opt-in guardian, circle-back Phase A) -->
-    <PackageVersion Include="System.ServiceProcess.ServiceController" Version="9.0.5" />
+    <PackageVersion Include="System.ServiceProcess.ServiceController" Version="10.0.10" />
     <!-- Windows toast notifications -->
     <PackageVersion Include="Microsoft.Toolkit.Uwp.Notifications" Version="7.1.3" />
     <!-- RFC-6238 TOTP for the credential vault (MIT) -->
-    <PackageVersion Include="Otp.NET" Version="1.4.0" />
+    <PackageVersion Include="Otp.NET" Version="1.4.1" />
     <!-- Argon2id KDF for the native AEAD vault (MIT) -->
     <PackageVersion Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
     <!-- DPAPI for binding the vault key component to this user+machine at rest -->
-    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="9.0.5" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
     <!-- xUnit -->
     <PackageVersion Include="xunit" Version="2.9.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
   </ItemGroup>
 </Project>

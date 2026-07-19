@@ -27,12 +27,19 @@ for qualifying open-source projects. Key properties of this model:
 
 Signing is nested so the installer ships already-signed binaries:
 
-1. **`Foreman.exe`** and the embedded **`sidecar/Foreman.EtwSidecar.exe`** are signed first (the app payload).
+1. Every executable in the app payload is signed first: **`Foreman.exe`**,
+   **`sidecar/Foreman.EtwSidecar.exe`**, **`guardian/Foreman.Guardian.exe`**,
+   **`cu-sidecar/Foreman.CuSidecar.exe`**, and **`cu-pilot/Foreman.CuPilot.exe`**.
 2. The **Inno Setup installer** (`Foreman-Agent-Safety-Setup-*.exe`) is built from those signed binaries and
    then signed last.
 3. SHA-256 checksums are generated over the final, signed installer.
 
 All signatures are **timestamped**, so they remain valid after the (short-lived) certificate expires.
+
+The optional Guardian uses the same verified Authenticode identity as its long-lived client policy. A signed
+installation pins the publisher, so later releases signed by that publisher continue to work without a binary hash
+re-pin. Unsigned development installations instead pin the exact Foreman.exe path and SHA-256 and are explicitly
+reported as development-only protection; re-enabling the Guardian after signing upgrades that policy.
 
 ## Attribution
 

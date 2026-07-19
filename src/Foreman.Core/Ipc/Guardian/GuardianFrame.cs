@@ -53,6 +53,10 @@ public sealed class HelloResult
 {
     public string GuardianVersion { get; set; } = string.Empty;
     public bool HeadKeyAvailable { get; set; }
+    /// <summary>"publisher_signed" or "path_hash_pinned". Empty identifies a legacy guardian.</summary>
+    public string TrustMode { get; set; } = string.Empty;
+    /// <summary>True only when a valid Authenticode publisher is pinned.</summary>
+    public bool PublisherAuthenticated { get; set; }
 }
 
 public sealed class SealHeadArgs

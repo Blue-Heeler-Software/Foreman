@@ -14,7 +14,7 @@ public sealed class SetupHealthTests
         PresenceEnrolled = true,
         VaultEnrolled = true, VaultUnlocked = true,
         DecoysEnabled = true, DecoysPlanted = 14, ReadAuditingEnabled = true, SidecarConnected = true,
-        GuardianInstalled = true, OsEventLogAvailable = true,
+        GuardianInstalled = true, GuardianTrustMode = "publisher_signed", OsEventLogAvailable = true,
     };
 
     private static SetupHealthItem Row(IReadOnlyList<SetupHealthItem> items, string title) =>
@@ -106,5 +106,23 @@ public sealed class SetupHealthTests
         var row = Row(SetupHealth.Evaluate(Healthy() with { ConnectedMcpClients = 0, ConnectedClientNames = [] }),
             "Connected agents");
         Assert.Equal(SetupHealthStatus.Info, row.Status);
+    }
+
+    [Fact]
+    public void UnsignedGuardian_IsExplicitlyDevelopmentAttention()
+    {
+        var row = Row(SetupHealth.Evaluate(Healthy() with { GuardianTrustMode = "path_hash_pinned" }),
+            "Hardened guardian");
+        Assert.Equal(SetupHealthStatus.Attention, row.Status);
+        Assert.Contains("not by publisher", row.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LegacyGuardian_IsIgnoredAndNeedsReinstall()
+    {
+        var row = Row(SetupHealth.Evaluate(Healthy() with { GuardianTrustMode = "legacy_or_unavailable" }),
+            "Hardened guardian");
+        Assert.Equal(SetupHealthStatus.Attention, row.Status);
+        Assert.Contains("ignoring", row.Detail, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -37,6 +37,7 @@ internal sealed class GuardianSettingsSealer : ISettingsSealer
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             if (!client.IsServerSystemOwnedAsync(cts.Token).GetAwaiter().GetResult()) return null;
+            if (!GuardianTrust.IsAccepted(client.HelloAsync(cts.Token).GetAwaiter().GetResult())) return null;
         }
         catch
         {

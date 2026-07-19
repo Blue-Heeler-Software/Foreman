@@ -10,7 +10,7 @@ namespace Foreman.Guardian.Tests;
 public sealed class GuardianIntegrityTests
 {
     [Fact]
-    public void ReferenceUnsigned_Allows() // dev build: no trust anchor → not enforced
+    public void InstallReferenceUnsigned_AllowsDevelopmentInstall()
         => Assert.True(GuardianIntegrity.Decide(referenceSigner: null, subjectSigner: "ABC").Trusted);
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.IO;
 using Microsoft.Win32;
 
 namespace Foreman.App;
@@ -10,6 +11,9 @@ namespace Foreman.App;
 internal static class GuardianDiscovery
 {
     public const string ServiceName = "Foreman.Guardian";
+    public static string InstalledExePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        "Foreman", "guardian", "Foreman.Guardian.exe");
 
     public static bool IsGuardianInstalled()
     {

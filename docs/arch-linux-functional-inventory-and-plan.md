@@ -114,7 +114,7 @@ The first Arch target should be a headless per-user service:
 | --- | --- | --- | --- |
 | Windows installer | Inno Setup | Separate | Keep Windows installer untouched. |
 | Arch install | none | New | Start with `PKGBUILD` and optional AUR-compatible packaging. |
-| Runtime dependency | .NET 10 preview today | Decide early | For Arch, self-contained `linux-x64` publish avoids waiting on distro packaging for preview SDK/runtime. |
+| Runtime dependency | Stable .NET 10 SDK/runtime | Low | A self-contained `linux-x64` publish still avoids relying on distro runtime packaging. |
 | Service unit | none | New | User service for normal monitoring. Optional system service/helper only for privileged audit modes. |
 | Uninstall hygiene | Windows installer scripts | New | Must remove services, helper policy, state only on explicit purge. |
 
@@ -132,7 +132,7 @@ The first Arch target should be a headless per-user service:
 
 6. The current pattern library already includes shell/Linux rules, but the product docs still describe Foreman as Windows-only. That is fine today; the Linux branch should not update public positioning until the agent can pass an end-to-end demo.
 
-7. Arch packaging around .NET 10 preview may be annoying. A self-contained binary is the pragmatic first package artifact.
+7. Arch runtime packaging can lag the current .NET feature band. A self-contained binary remains the pragmatic first package artifact.
 
 ## Proposed architecture
 

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
 namespace Foreman.Guardian;
@@ -14,8 +15,9 @@ namespace Foreman.Guardian;
 ///    confirms its OWN binary carries the same signer as the installed Foreman.exe — so an agent that overwrote
 ///    the user-writable staged guardian binary can't get its code registered as SYSTEM.
 ///
-/// Auto-adapts to dev vs release exactly like the sidecar: when the reference binary is UNSIGNED (dev build) no
-/// trust anchor exists, so it allows; the LPE/forgery targets the signed, branded release, where it enforces.
+/// Install verification auto-adapts to dev vs release. Runtime pipe authentication does not use this permissive
+/// decision directly: <see cref="GuardianClientPolicy"/> pins an unsigned development build by canonical path and
+/// SHA-256, or pins the verified publisher for signed builds.
 ///
 /// Deliberately duplicated from SidecarIntegrity (App is WPF the guardian must not reference; Core is
 /// cross-platform so Windows-only WinVerifyTrust can't live there). CONSOLIDATE into a shared Windows platform
@@ -35,10 +37,6 @@ public static class GuardianIntegrity
             return (false, "the subject binary is signed by a different publisher than the reference.");
         return (true, "Authenticode signer matches the reference publisher.");
     }
-
-    /// <summary>Client auth: is <paramref name="clientPath"/> signed by the SAME publisher as this guardian? Never throws.</summary>
-    public static (bool Trusted, string Reason) VerifyClient(string? clientPath) =>
-        SafeVerify(reference: Environment.ProcessPath, subject: clientPath);
 
     /// <summary>Install self-verify: is THIS guardian binary signed by the same publisher as Foreman.exe? Never throws.</summary>
     public static (bool Trusted, string Reason) VerifyForInstall(string? foremanPath) =>
@@ -63,7 +61,7 @@ public static class GuardianIntegrity
     private static string? SafeVerifiedSigner(string? p) { try { return VerifiedSignerThumbprint(p); } catch { return null; } }
 
     /// <summary>Authenticode signer thumbprint IF the file's embedded signature is valid (chains to a trusted root); else null.</summary>
-    private static string? VerifiedSignerThumbprint(string? path)
+    public static string? VerifiedSignerThumbprint(string? path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
         if (!IsAuthenticodeValid(path)) return null;
@@ -75,6 +73,13 @@ public static class GuardianIntegrity
             return cert.Thumbprint;
         }
         catch { return null; }
+    }
+
+    /// <summary>Uppercase SHA-256 for an existing file. Throws when the path cannot be read.</summary>
+    public static string Sha256File(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Convert.ToHexString(SHA256.HashData(stream));
     }
 
     // ── WinVerifyTrust interop (mirrors SidecarIntegrity) ──────────────────────────────────────────────

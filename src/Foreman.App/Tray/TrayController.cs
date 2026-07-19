@@ -41,6 +41,7 @@ public sealed class TrayController : IEventSink, IDisposable
     // Cadence governor: caps repeated incident popups per class. Governs the popup only — events are always logged.
     private readonly AlertCadenceGovernor _cadence;
     private DispatcherTimer? _cadenceFlushTimer;
+    private DispatcherTimer? _trayRecoveryTimer;
 
     /// <summary>Injected from App so the Harnesses window can show live running status.</summary>
     public Func<IEnumerable<Foreman.Core.Models.ProcessRecord>>? GetProcessSnapshot { get; set; }
@@ -197,7 +198,27 @@ public sealed class TrayController : IEventSink, IDisposable
 
         // ForceCreate() initialises the native Shell_NotifyIcon for code-behind
         // TaskbarIcon instances that are not part of the XAML visual tree.
-        _tray.ForceCreate();
+        TryEnsureTrayCreated();
+    }
+
+    private void TryEnsureTrayCreated()
+    {
+        if (_tray is null) return;
+        try
+        {
+            _tray.ForceCreate();
+            _trayRecoveryTimer?.Stop();
+            _trayRecoveryTimer = null;
+            RefreshMenu();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Note("TrayController.ForceCreate", ex);
+            if (_trayRecoveryTimer is not null) return;
+            _trayRecoveryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _trayRecoveryTimer.Tick += (_, _) => TryEnsureTrayCreated();
+            _trayRecoveryTimer.Start();
+        }
     }
 
     // ── Game mode ─────────────────────────────────────────────────────────────
@@ -832,6 +853,7 @@ public sealed class TrayController : IEventSink, IDisposable
 
     public void Dispose()
     {
+        _trayRecoveryTimer?.Stop();
         _cadenceFlushTimer?.Stop();
         _gameMode?.Dispose();
         _dashboardWindow?.Close();   // disposes its hosted Process/Harness/Behavior/Log views (incl. Settings/Connect)

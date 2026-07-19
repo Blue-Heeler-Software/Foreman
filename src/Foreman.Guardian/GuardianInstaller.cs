@@ -42,24 +42,80 @@ internal static class GuardianInstaller
         if (!trusted) { log($"install REFUSED (integrity): {reason}"); return 2; }
         log($"integrity ok: {reason}");
 
-        var srcDir = Path.GetDirectoryName(Environment.ProcessPath)!;
+        GuardianClientPolicy policy;
         try
         {
-            CopyTree(srcDir, ProgramFilesDir, log);          // 2
-            HardenDir(ProgramFilesDir, allowUsersReadExecute: true);   // 3
-            HardenDir(ProgramDataDir, allowUsersReadExecute: false);   // 4 (SYSTEM/Admins only)
+            policy = GuardianClientPolicy.CreateForInstall(foremanPath);
+            log(policy.PublisherAuthenticated
+                ? "client policy: verified publisher pin."
+                : "client policy: unsigned development path + SHA-256 pin (not publisher authenticated).");
+        }
+        catch (Exception ex)
+        {
+            log($"install REFUSED (client policy): {ex.Message}");
+            return 2;
+        }
 
+        var srcDir = Path.GetDirectoryName(Environment.ProcessPath)!;
+        var parent = Directory.GetParent(ProgramFilesDir)?.FullName
+                     ?? throw new InvalidOperationException("Guardian install parent is unavailable.");
+        var stageDir = Path.Combine(parent, $"guardian.stage.{Guid.NewGuid():N}");
+        var backupDir = Path.Combine(parent, $"guardian.backup.{Guid.NewGuid():N}");
+        var hadPayload = Directory.Exists(ProgramFilesDir);
+        var serviceExisted = ServiceExists();
+        try
+        {
+            CopyTree(srcDir, stageDir, log);                 // stage before interrupting a working service
+            HardenDir(stageDir, allowUsersReadExecute: true);
+            HardenDir(ProgramDataDir, allowUsersReadExecute: false);   // 4 (SYSTEM/Admins only)
+            policy.Save(ProgramDataDir);
+
+            if (serviceExisted) StopService(log);
+            if (hadPayload) Directory.Move(ProgramFilesDir, backupDir);
+            Directory.Move(stageDir, ProgramFilesDir);
             CreateService(InstalledExePath, log);            // 5
             TryRegisterEventSource(log);                     // 6
             StartService(log);                               // 7
+            TryDeleteDir(backupDir, log);
 
             log("guardian installed and started.");
             return 0;
         }
         catch (Exception ex)
         {
-            log($"install FAILED: {ex.Message} — rolling back.");
-            Rollback(log);
+            log($"install FAILED: {ex.Message} — restoring the previous installation.");
+            TryDeleteDir(stageDir, log);
+            if (serviceExisted)
+            {
+                try { StopService(log); } catch { /* it may never have restarted */ }
+            }
+            else
+            {
+                try { StopAndDeleteService(log); } catch { }
+            }
+
+            try
+            {
+                if (Directory.Exists(backupDir))
+                {
+                    TryDeleteDir(ProgramFilesDir, log);
+                    if (Directory.Exists(ProgramFilesDir))
+                        throw new IOException("Could not remove the failed replacement payload.");
+                    Directory.Move(backupDir, ProgramFilesDir);
+                    log("previous guardian payload restored.");
+                }
+                else if (!hadPayload)
+                {
+                    TryDeleteDir(ProgramFilesDir, log);
+                }
+            }
+            catch (Exception restoreEx)
+            {
+                log($"previous payload restore failed: {restoreEx.Message}; backup remains at {backupDir}");
+            }
+
+            if (serviceExisted)
+                try { StartService(log); } catch (Exception restartEx) { log($"previous service restart failed: {restartEx.Message}"); }
             return 4;
         }
     }
@@ -81,22 +137,53 @@ internal static class GuardianInstaller
         }
     }
 
-    private static void Rollback(Action<string> log)
-    {
-        try { StopAndDeleteService(log); } catch { }
-        TryDeleteDir(ProgramFilesDir, log);
-        TryDeleteDir(ProgramDataDir, log);
-    }
-
     // ── filesystem ───────────────────────────────────────────────────────────────────────────────────
     private static void CopyTree(string src, string dst, Action<string> log)
     {
+        src = Path.GetFullPath(src);
+        dst = Path.GetFullPath(dst);
+        if ((File.GetAttributes(src) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Guardian source directory cannot be a reparse point.");
+
         Directory.CreateDirectory(dst);
-        foreach (var dir in Directory.GetDirectories(src, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(dir.Replace(src, dst));
-        foreach (var file in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
-            File.Copy(file, file.Replace(src, dst), overwrite: true);
+        var pending = new Queue<string>();
+        pending.Enqueue(src);
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(current))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException($"Guardian payload contains a reparse point: {entry}");
+
+                var target = SafeTargetPath(src, dst, entry);
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    Directory.CreateDirectory(target);
+                    pending.Enqueue(entry);
+                }
+                else
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    File.Copy(entry, target, overwrite: false);
+                }
+            }
+        }
         log($"copied guardian payload → {dst}");
+    }
+
+    internal static string SafeTargetPath(string sourceRoot, string destinationRoot, string sourceEntry)
+    {
+        var relative = Path.GetRelativePath(Path.GetFullPath(sourceRoot), Path.GetFullPath(sourceEntry));
+        if (relative == ".." || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            throw new InvalidDataException("Guardian payload entry escapes its source root.");
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationRoot)) + Path.DirectorySeparatorChar;
+        var target = Path.GetFullPath(Path.Combine(root, relative));
+        if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Guardian payload entry escapes its destination root.");
+        return target;
     }
 
     private static void HardenDir(string dir, bool allowUsersReadExecute)
@@ -145,7 +232,16 @@ internal static class GuardianInstaller
     private const uint SERVICE_CONTROL_STOP = 0x1;
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct SERVICE_STATUS { public uint a, b, c, d, e, f, g; }
+    private struct SERVICE_STATUS
+    {
+        public uint ServiceType;
+        public uint CurrentState;
+        public uint ControlsAccepted;
+        public uint Win32ExitCode;
+        public uint ServiceSpecificExitCode;
+        public uint CheckPoint;
+        public uint WaitHint;
+    }
 
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr OpenSCManager(string? machine, string? db, uint access);
@@ -159,11 +255,27 @@ internal static class GuardianInstaller
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool ControlService(IntPtr svc, uint control, ref SERVICE_STATUS status);
     [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool QueryServiceStatus(IntPtr svc, ref SERVICE_STATUS status);
+    [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool DeleteService(IntPtr svc);
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool CloseServiceHandle(IntPtr h);
 
     private const int ERROR_SERVICE_EXISTS = 1073;
+
+    private static bool ServiceExists()
+    {
+        var scm = OpenSCManager(null, null, SC_MANAGER_ALL_ACCESS);
+        if (scm == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenSCManager failed");
+        try
+        {
+            var svc = OpenService(scm, ServiceName, SERVICE_ALL_ACCESS);
+            if (svc == IntPtr.Zero) return false;
+            CloseServiceHandle(svc);
+            return true;
+        }
+        finally { CloseServiceHandle(scm); }
+    }
 
     private static void CreateService(string exePath, Action<string> log)
     {
@@ -200,8 +312,8 @@ internal static class GuardianInstaller
                 if (!StartService(svc, 0, null))
                 {
                     var err = Marshal.GetLastWin32Error();
-                    if (err != 1056) log($"start returned {err} (1056 = already running).");  // ERROR_SERVICE_ALREADY_RUNNING
-                    else log("service already running.");
+                    if (err == 1056) log("service already running."); // ERROR_SERVICE_ALREADY_RUNNING
+                    else throw new Win32Exception(err, "Starting the guardian service failed");
                 }
                 else log("service started.");
             }
@@ -210,8 +322,42 @@ internal static class GuardianInstaller
         finally { CloseServiceHandle(scm); }
     }
 
+    private static void StopService(Action<string> log)
+    {
+        var scm = OpenSCManager(null, null, SC_MANAGER_ALL_ACCESS);
+        if (scm == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenSCManager failed");
+        try
+        {
+            var svc = OpenService(scm, ServiceName, SERVICE_ALL_ACCESS);
+            if (svc == IntPtr.Zero) return;
+            try
+            {
+                var status = new SERVICE_STATUS();
+                if (!ControlService(svc, SERVICE_CONTROL_STOP, ref status))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error != 1062) throw new Win32Exception(error, "Stopping the existing guardian failed");
+                }
+                var deadline = DateTime.UtcNow.AddSeconds(15);
+                while (DateTime.UtcNow < deadline)
+                {
+                    if (!QueryServiceStatus(svc, ref status))
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "QueryServiceStatus failed");
+                    if (status.CurrentState == 1) break; // SERVICE_STOPPED
+                    Thread.Sleep(200);
+                }
+                if (status.CurrentState != 1)
+                    throw new TimeoutException("The existing guardian did not stop within 15 seconds.");
+                log("existing service stopped for upgrade.");
+            }
+            finally { CloseServiceHandle(svc); }
+        }
+        finally { CloseServiceHandle(scm); }
+    }
+
     private static void StopAndDeleteService(Action<string> log)
     {
+        if (ServiceExists()) StopService(log);
         var scm = OpenSCManager(null, null, SC_MANAGER_ALL_ACCESS);
         if (scm == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenSCManager failed");
         try
@@ -220,9 +366,6 @@ internal static class GuardianInstaller
             if (svc == IntPtr.Zero) { log("service not present."); return; }
             try
             {
-                var status = new SERVICE_STATUS();
-                ControlService(svc, SERVICE_CONTROL_STOP, ref status);   // best-effort stop
-                System.Threading.Thread.Sleep(500);
                 if (!DeleteService(svc)) log($"DeleteService returned {Marshal.GetLastWin32Error()}.");
                 else log("service deleted.");
             }

@@ -17,10 +17,21 @@ jobs:
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.x'
-          dotnet-quality: 'preview'
 
       - name: Restore
         run: dotnet restore Foreman.slnx
+
+      - name: Validate browser extensions
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem extension, extension-liveweave -Recurse -File |
+            Where-Object { $_.Extension -in '.js', '.mjs' -and $_.FullName -notmatch '[\\/]tests[\\/]fixtures[\\/]' }
+          foreach ($file in $files) {
+            node --check $file.FullName
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $($file.FullName)" }
+          }
+          node --test extension-liveweave/tests/project-model.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw "LiveWeave tests failed." }
 
       - name: Build
         run: dotnet build Foreman.slnx -c Release --no-restore

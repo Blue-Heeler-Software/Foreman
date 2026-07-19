@@ -34,9 +34,19 @@ using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
 using var authority = GuardianAuthority.CreateWithTpmKey();
-Console.WriteLine($"Foreman Guardian {GuardianAuthority.Version} — pipe '{GuardianPipeServer.PipeName}', headKey={(authority.HeadKeyAvailable ? "available" : "unavailable (no TPM)")} (Ctrl+C to stop).");
+GuardianClientPolicy consolePolicy;
+try
+{
+    consolePolicy = GuardianClientPolicy.CreateForInstall(ArgValue("--foreman") ?? Environment.ProcessPath);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"Cannot create console client policy: {ex.Message}");
+    return 2;
+}
+Console.WriteLine($"Foreman Guardian {GuardianAuthority.Version} — pipe '{GuardianPipeServer.PipeName}', trustMode={consolePolicy.Mode}, headKey={(authority.HeadKeyAvailable ? "available" : "unavailable (no TPM)")} (Ctrl+C to stop).");
 
-var server = new GuardianPipeServer(authority, Console.WriteLine);
+var server = new GuardianPipeServer(authority, consolePolicy, Console.WriteLine);
 try { await server.RunAsync(cts.Token); }
 catch (OperationCanceledException) { /* clean shutdown */ }
 return 0;

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     boundedScan,
+    canvasCsp,
     createProject,
     exportDocument,
     readProjectSource,
@@ -81,4 +82,14 @@ test('canvas runtime requires matching toolbar and sandbox handshakes', () => {
     assert.equal(canvasNeedsReload({ ...ready, previewVersion: '' }), true);
     assert.equal(canvasNeedsReload({ ...ready, canvasVersion: '0.4.0' }), true);
     assert.equal(canvasNeedsReload({ ...ready, hasPort: false }), true);
+});
+
+test('preview CSP authorizes only its random inspector nonce', () => {
+    const nonce = '0123456789abcdef0123456789abcdef';
+    const csp = canvasCsp(nonce);
+    assert.match(csp, new RegExp(`script-src 'nonce-${nonce}'`));
+    assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);
+    assert.match(csp, /base-uri 'none'/);
+    assert.match(csp, /form-action 'none'/);
+    assert.throws(() => canvasCsp('predictable'));
 });

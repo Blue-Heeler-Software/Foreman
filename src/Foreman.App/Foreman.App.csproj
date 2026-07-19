@@ -72,9 +72,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="H.NotifyIcon.Wpf" />
     <PackageReference Include="Microsoft.Toolkit.Uwp.Notifications" />
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" />
-    <PackageReference Include="System.Diagnostics.EventLog" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
 
   <ItemGroup>

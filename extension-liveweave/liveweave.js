@@ -1,4 +1,4 @@
-import { exportDocument, slugify } from './project-model.mjs';
+import { canvasCsp, exportDocument, slugify } from './project-model.mjs';
 
 const DEFAULT_CANVAS = {
     title: 'LiveWeave Canvas',
@@ -12,9 +12,6 @@ const DEFAULT_CANVAS = {
 };
 
 const $ = (id) => document.getElementById(id);
-const CANVAS_CSP =
-    "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
-    "base-uri 'none'; form-action 'none'";
 const INSPECTOR_CSS =
     'html[data-liveweave-picking],html[data-liveweave-picking] body,html[data-liveweave-picking] body *{cursor:crosshair !important}' +
     '[data-liveweave-hover]{outline:2px solid #5b8cff !important;outline-offset:2px !important;cursor:crosshair !important}' +
@@ -24,6 +21,7 @@ let current = DEFAULT_CANVAS;
 let selectionMode = false;
 let workerPort = null;
 let previewLoaded = false;
+let previewToken = '';
 
 async function loadCanvas() {
     const state = await chrome.storage.local.get({ liveweaveCanvas: DEFAULT_CANVAS });
@@ -31,17 +29,20 @@ async function loadCanvas() {
 }
 
 function inspectorBridge(enabled) {
+    const token = arguments.length > 1 ? String(arguments[1]) : 'fixture-token';
     return `(() => {
       let enabled = ${enabled ? 'true' : 'false'};
+      const token = ${JSON.stringify(token)};
       let hovered = null;
       let selected = null;
+      const post = (kind, detail = {}) => parent.postMessage({ source: 'liveweave-preview', token, kind, ...detail }, '*');
       const esc = (value) => globalThis.CSS && CSS.escape ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\\\' + c);
       const clearHover = () => { if (hovered) hovered.removeAttribute('data-liveweave-hover'); hovered = null; };
       const setEnabled = (value) => {
         enabled = !!value;
         document.documentElement.toggleAttribute('data-liveweave-picking', enabled);
         if (!enabled) clearHover();
-        parent.postMessage({ source: 'liveweave-preview', kind: 'selection-ready', enabled }, '*');
+        post('selection-ready', { enabled });
       };
       const count = (selector) => {
         try { return document.querySelectorAll(selector).length; }
@@ -102,10 +103,14 @@ function inspectorBridge(enabled) {
         };
       };
       addEventListener('message', (event) => {
-        if (event.data && event.data.source === 'liveweave-parent' && event.data.kind === 'selection-mode') {
+        if (event.data && event.data.source === 'liveweave-parent' && event.data.token === token && event.data.kind === 'selection-mode') {
           setEnabled(event.data.enabled);
         }
       });
+      document.addEventListener('submit', (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
       document.addEventListener('pointermove', (event) => {
         if (!enabled) return;
         const target = targetFor(event.target);
@@ -117,42 +122,71 @@ function inspectorBridge(enabled) {
       }, true);
       document.addEventListener('pointerleave', () => { if (enabled) clearHover(); }, true);
       document.addEventListener('click', (event) => {
+        const clicked = targetFor(event.target);
+        if (clicked?.closest?.('a[href],area[href]')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (!enabled) return;
+        }
         if (!enabled) return;
-        const target = targetFor(event.target);
+        const target = clicked;
         if (!target || target === document.documentElement || target === document.body) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         if (selected) selected.removeAttribute('data-liveweave-selected');
         selected = target;
         selected.setAttribute('data-liveweave-selected', '');
-        parent.postMessage({ source: 'liveweave-preview', kind: 'selection', selection: describe(selected) }, '*');
+        post('selection', { selection: describe(selected) });
         setEnabled(false);
-        parent.postMessage({ source: 'liveweave-preview', kind: 'selection-complete' }, '*');
+        post('selection-complete');
       }, true);
       document.addEventListener('keydown', (event) => {
         if (enabled && event.key === 'Escape') {
           event.preventDefault();
           setEnabled(false);
-          parent.postMessage({ source: 'liveweave-preview', kind: 'selection-complete' }, '*');
+          post('selection-complete');
         }
       }, true);
       setEnabled(enabled);
+      post('runtime-ready');
     })();`;
+}
+
+function randomPreviewToken() {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function previewBody(html) {
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    template.content.querySelectorAll('base,meta[http-equiv]').forEach((node) => {
+        if (node.tagName === 'BASE' || String(node.getAttribute('http-equiv') || '').toLowerCase() === 'refresh')
+            node.remove();
+    });
+    return template.innerHTML;
+}
+
+function previewCss(css) {
+    return String(css || '').replace(/<\/style/gi, '<\\/style');
 }
 
 function render(canvas) {
     current = canvas;
     previewLoaded = false;
+    previewToken = randomPreviewToken();
+    const nonce = previewToken;
     workerPort?.postMessage({ kind: 'preview-loading', version: chrome.runtime.getManifest().version });
     $('title').textContent = canvas.title || DEFAULT_CANVAS.title;
     $('source').textContent = canvas.sourceUrl ? safeHost(canvas.sourceUrl) : 'Local project';
     $('originalBtn').disabled = !canvas.sourceUrl;
     $('dirty').textContent = canvas.dirty ? '| unsaved' : '';
     $('meta').firstChild.textContent = canvas.updatedAt ? `Updated ${new Date(canvas.updatedAt).toLocaleTimeString()} ` : 'Ready ';
-    $('preview').srcdoc = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${CANVAS_CSP}">` +
-        `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${canvas.css || ''}</style>` +
-        `<style>${INSPECTOR_CSS}</style><script>${inspectorBridge(selectionMode)}<\/script>` +
-        `</head><body>${canvas.html || ''}</body></html>`;
+    $('preview').srcdoc = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${canvasCsp(nonce)}">` +
+        `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${previewCss(canvas.css)}</style>` +
+        `<style>${INSPECTOR_CSS}</style><script nonce="${nonce}">${inspectorBridge(selectionMode, previewToken)}<\/script>` +
+        `</head><body>${previewBody(canvas.html)}</body></html>`;
 }
 
 function safeHost(url) {
@@ -193,7 +227,7 @@ function setSelectionMode(enabled) {
     $('selectBtn').textContent = selectionMode ? 'Selecting' : 'Select';
     $('selectBtn').setAttribute('aria-pressed', String(selectionMode));
     $('stage').classList.toggle('selecting', selectionMode);
-    $('preview').contentWindow?.postMessage({ source: 'liveweave-parent', kind: 'selection-mode', enabled: selectionMode }, '*');
+    $('preview').contentWindow?.postMessage({ source: 'liveweave-parent', token: previewToken, kind: 'selection-mode', enabled: selectionMode }, '*');
 }
 
 async function copyHtml() {
@@ -240,8 +274,16 @@ document.querySelectorAll('[data-width]').forEach((button) => button.addEventLis
 }));
 
 window.addEventListener('message', (event) => {
-    if (event.source !== $('preview').contentWindow || event.data?.source !== 'liveweave-preview') return;
-    if (event.data.kind === 'selection') {
+    if (event.source !== $('preview').contentWindow ||
+        event.data?.source !== 'liveweave-preview' ||
+        event.data?.token !== previewToken) return;
+    if (event.data.kind === 'runtime-ready') {
+        previewLoaded = true;
+        $('preview').contentWindow?.postMessage({
+            source: 'liveweave-parent', token: previewToken, kind: 'selection-mode', enabled: selectionMode,
+        }, '*');
+        workerPort?.postMessage({ kind: 'preview-ready', version: chrome.runtime.getManifest().version });
+    } else if (event.data.kind === 'selection') {
         const selection = sanitizeSelection(event.data.selection);
         if (selection.path) workerPort?.postMessage({ kind: 'preview-selection', selection });
     } else if (event.data.kind === 'selection-complete') {
@@ -251,9 +293,9 @@ window.addEventListener('message', (event) => {
 });
 
 $('preview').addEventListener('load', () => {
-    previewLoaded = true;
-    $('preview').contentWindow?.postMessage({ source: 'liveweave-parent', kind: 'selection-mode', enabled: selectionMode }, '*');
-    workerPort?.postMessage({ kind: 'preview-ready', version: chrome.runtime.getManifest().version });
+    $('preview').contentWindow?.postMessage({
+        source: 'liveweave-parent', token: previewToken, kind: 'selection-mode', enabled: selectionMode,
+    }, '*');
 });
 
 document.addEventListener('keydown', (event) => {

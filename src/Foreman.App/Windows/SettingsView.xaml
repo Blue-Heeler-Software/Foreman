@@ -380,6 +380,26 @@
                                 <TextBox x:Name="AutoResponseCooldownBox" Width="70"
                                          ToolTip="Per harness and action, do not repeat the same automatic response within this window." />
                             </StackPanel>
+                            <Separator Margin="0,14,0,12" />
+                            <CheckBox x:Name="ScheduledAuditCheck"
+                                      Content="Schedule independent cross-harness audits"
+                                      FontWeight="SemiBold" Margin="0,0,0,8"
+                                      ToolTip="A different active harness reviews recent redacted events. Requires LLM triage and an eligible auditor." />
+                            <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,0,0,8"
+                                       TextWrapping="Wrap"
+                                       Text="Audits are queued in the auditor mailbox and delivered live when possible. The audited harness can never audit itself." />
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Every N alerts (0 = off):" Width="190" VerticalAlignment="Center" />
+                                <TextBox x:Name="ScheduledAuditEveryBox" Width="70" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Interval min (0 = off):" Width="190" VerticalAlignment="Center" />
+                                <TextBox x:Name="ScheduledAuditIntervalBox" Width="70" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource FieldRowStyle}">
+                                <Label Content="Per-harness cooldown:" Width="190" VerticalAlignment="Center" />
+                                <TextBox x:Name="ScheduledAuditCooldownBox" Width="70" />
+                            </StackPanel>
                         </StackPanel>
                     </Grid>
                 </ScrollViewer>

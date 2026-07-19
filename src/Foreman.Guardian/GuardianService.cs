@@ -22,8 +22,18 @@ public sealed class GuardianService : ServiceBase
     {
         _cts = new CancellationTokenSource();
         _authority = GuardianAuthority.CreateWithTpmKey();
-        GuardianLog.Write($"started; headKey={(_authority.HeadKeyAvailable ? "available" : "unavailable (no TPM)")}");
-        var server = new GuardianPipeServer(_authority, m => GuardianLog.Write(m));
+        GuardianClientPolicy policy;
+        try
+        {
+            policy = GuardianClientPolicy.Load(GuardianInstaller.ProgramDataDir);
+        }
+        catch (Exception ex)
+        {
+            GuardianLog.Write($"startup refused: client policy unavailable or invalid: {ex.Message}");
+            throw;
+        }
+        GuardianLog.Write($"started; trustMode={policy.Mode}; headKey={(_authority.HeadKeyAvailable ? "available" : "unavailable (no TPM)")}");
+        var server = new GuardianPipeServer(_authority, policy, m => GuardianLog.Write(m));
         _loop = Task.Run(() => server.RunAsync(_cts.Token));
     }
 

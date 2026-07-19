@@ -199,13 +199,26 @@ function summarizeProject(project) {
     };
 }
 
+// Single-flight the first-run project creation. getActiveProject → (create + put + setActiveProjectId) is a
+// check-then-act sequence that yields at every await, so two concurrent callers on a fresh install (e.g. an
+// SSE-brokered apply racing an operator-side saveCanvas) would BOTH see no active project and BOTH mint a
+// fresh UUID — leaving an orphan project and a canvas whose revision no longer matches activeProjectId, which
+// then surfaces as spurious revision_conflict on the next patch. Share one creation across concurrent callers.
+let _ensureActiveInflight = null;
 async function ensureActiveProject(canvas) {
-    let project = await getActiveProject();
-    if (project) return project;
-    project = createProject({ title: canvas.title, html: canvas.html, css: canvas.css, kind: 'blank' });
-    await putProject(project);
-    await setActiveProjectId(project.id);
-    return project;
+    const existing = await getActiveProject();
+    if (existing) return existing;
+    if (_ensureActiveInflight) return _ensureActiveInflight;   // another caller is already creating it — join them
+    _ensureActiveInflight = (async () => {
+        // Re-check inside the critical section: a prior in-flight creation may have landed while we awaited above.
+        const raced = await getActiveProject();
+        if (raced) return raced;
+        const project = createProject({ title: canvas.title, html: canvas.html, css: canvas.css, kind: 'blank' });
+        await putProject(project);
+        await setActiveProjectId(project.id);
+        return project;
+    })().finally(() => { _ensureActiveInflight = null; });
+    return _ensureActiveInflight;
 }
 
 async function publishProject(project, { resetHistory = false, open = true } = {}) {

@@ -28,9 +28,11 @@ the new page before importing it.
   state, and save timestamps.
 - The active project is mirrored into `chrome.storage.local` so the preview and service worker receive prompt,
   durable updates.
-- The preview is a `sandbox="allow-scripts"` iframe with a strict CSP: no network, forms, storage, or top navigation.
-  Imported scripts are removed before they reach it. External assets remain visible in source but are blocked in
-  preview and called out as import warnings.
+- The preview is a `sandbox="allow-scripts"` iframe with a strict per-render nonce CSP: only LiveWeave's inspector
+  bridge may execute; project scripts and inline handlers do not. Forms, anchors, refresh directives, base changes,
+  storage, network, and top navigation are blocked in the preview copy. Stored project source and single-file
+  exports are not destructively rewritten, so intentionally authored site behavior remains available outside the
+  confined preview. Imported scripts are still removed during capture.
 - The preview toolbar provides one-shot element selection, desktop/tablet/mobile frames, Original, Copy, and
   Download. Picking uses a crosshair and proves selector uniqueness, including on pages with duplicate IDs.
 - Tablet and Mobile are honest viewport simulations of the imported snapshot. They exercise captured responsive
@@ -60,6 +62,9 @@ rest. `replace_source` refuses stale revisions so side-panel and agent edits can
 
 Page import and filesystem save remain operator-only extension actions. Selecting an MCP driver lets that harness
 edit the active project after import; it does not let the harness capture arbitrary tabs or choose files.
+Changing the selected driver is intentionally seamless: already-issued command result IDs act as 128-bit
+capability receipts so the next driver can finish a handoff, while delivery of new commands remains gated to the
+currently selected driver.
 
 The extension uses `liveweave_request_edit` and `liveweave_edit_request_result` to originate and track visual edit
 requests. Imported markup and computed selection context are explicitly marked as untrusted in both Foreman and
@@ -82,6 +87,8 @@ Nano prompts.
 - The capture result is capped at 2 MB. Foreman command parameters are separately bounded by the broker.
 - Imported page content is untrusted. Capture sanitization, preview sandboxing, CSP, source chunking, and
   revision checks remain independent controls.
+- Preview-to-toolbar messages carry a fresh random token and readiness is reported only after the nonce-authorized
+  inspector runtime completes its handshake; an iframe load or attempted navigation cannot impersonate readiness.
 
 ## Files
 

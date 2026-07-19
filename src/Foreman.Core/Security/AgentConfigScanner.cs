@@ -17,6 +17,8 @@ public enum AgentConfigSignal
     HiddenUnicode,          // zero-width / bidi-override characters hiding directives
     IocString,              // a Miasma / Shai-Hulud IOC marker or C2 string
     FetchAndExec,           // download-and-run cradle in an agent-readable file
+    LinkedPath,             // symlink/junction inside the repo; reported but never followed by the scanner
+    ScanIncomplete,         // traversal hit its safety budget; a clean result must not imply a complete scan
 }
 
 public sealed record AgentConfigFinding(string FilePath, ForemanSeverity Severity, AgentConfigSignal Signal, string Detail);
@@ -53,8 +55,9 @@ public static class AgentConfigScanner
     }
 
     // ── compiled signatures ──────────────────────────────────────────────────────────────────────────
-    private static readonly RegexOptions O = RegexOptions.Compiled | RegexOptions.IgnoreCase;
-    private static readonly TimeSpan TO = TimeSpan.FromMilliseconds(100);
+    private static readonly RegexOptions O =
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
+    private static readonly TimeSpan TO = TimeSpan.FromMilliseconds(500);
 
     // A hook/command that fetches or executes EXTERNAL code (the Miasma trigger) — NOT a benign local script.
     private static readonly Regex _hookFetchExec = new(
@@ -97,25 +100,25 @@ public static class AgentConfigScanner
         // .claude / .gemini settings.json — auto-run hook that fetches or executes external code.
         if (_settingsHooks.Any(s => p.EndsWith(s, StringComparison.OrdinalIgnoreCase))
             && content.Contains("\"hooks\"", StringComparison.OrdinalIgnoreCase)
-            && _hookFetchExec.IsMatch(content))
+            && Matches(_hookFetchExec, content))
         {
             Add(ForemanSeverity.Critical, AgentConfigSignal.AutoRunHook,
                 "Agent session hook fetches or executes external code (the Miasma 'open a repo = run code' trigger).");
         }
 
         // .vscode/tasks.json — runs on folder open with no prompt.
-        if (p.EndsWith(".vscode/tasks.json", StringComparison.OrdinalIgnoreCase) && _folderOpen.IsMatch(content))
+        if (p.EndsWith(".vscode/tasks.json", StringComparison.OrdinalIgnoreCase) && Matches(_folderOpen, content))
             Add(ForemanSeverity.Critical, AgentConfigSignal.FolderOpenTask,
                 "VS Code task is configured to run automatically on folder open (runOn: folderOpen).");
 
         // .cursor rule that is always applied AND tells the agent to run a script.
         if ((name.EndsWith(".mdc") && p.Contains(".cursor/rules/")) || name == ".cursorrules")
-            if (_alwaysApply.IsMatch(content) && _ruleRunsScript.IsMatch(content))
+            if (Matches(_alwaysApply, content) && Matches(_ruleRunsScript, content))
                 Add(ForemanSeverity.High, AgentConfigSignal.AlwaysApplyRuleExec,
                     "Always-applied Cursor rule instructs the agent to run a script — a prompt-injection auto-run.");
 
         // package.json lifecycle/test script that runs a dropper.
-        if (name == "package.json" && _pkgScriptDropper.IsMatch(content))
+        if (name == "package.json" && Matches(_pkgScriptDropper, content))
             Add(ForemanSeverity.High, AgentConfigSignal.SuspiciousPackageScript,
                 "package.json lifecycle/test script runs a setup/dropper script or fetches remote code.");
 
@@ -129,39 +132,43 @@ public static class AgentConfigScanner
                     $"Single line of {MaxLineLength(content)} chars — obfuscated/minified script shaped like the Miasma dropper.");
 
         // Prompt-injection text in any agent-readable file.
-        if (_promptInjection.IsMatch(content))
+        if (Matches(_promptInjection, content))
             Add(ForemanSeverity.High, AgentConfigSignal.PromptInjection,
                 "Instruction-override / prompt-injection text in an agent-readable file.");
 
         // Shared signatures on every agent-config file.
-        if (_ioc.IsMatch(content))
+        if (Matches(_ioc, content))
             Add(ForemanSeverity.Critical, AgentConfigSignal.IocString, "Contains a Miasma / Shai-Hulud IOC or C2 string.");
-        if (_fetchExec.IsMatch(content))
+        if (Matches(_fetchExec, content))
             Add(ForemanSeverity.High, AgentConfigSignal.FetchAndExec, "Contains a download-and-execute cradle.");
-        if (_b64Injection.IsMatch(content) && (name.EndsWith(".md") || name == ".cursorrules" || name.EndsWith(".mdc")))
+        if (Matches(_b64Injection, content) && (name.EndsWith(".md") || name == ".cursorrules" || name.EndsWith(".mdc")))
             Add(ForemanSeverity.Medium, AgentConfigSignal.PromptInjection, "Long base64 blob embedded in an instruction file (possible encoded directive).");
-        if (_hiddenUnicode.IsMatch(content))
+        if (Matches(_hiddenUnicode, content))
             Add(ForemanSeverity.Medium, AgentConfigSignal.HiddenUnicode, "Hidden zero-width / bidirectional-override characters that can conceal instructions.");
 
         return findings;
     }
 
+    private static bool Matches(Regex regex, string content)
+    {
+        try { return regex.IsMatch(content); }
+        catch (RegexMatchTimeoutException) { return false; }
+    }
+
     /// <summary>
     /// Walk a directory, scanning the agent-config files in it. Bounded (skips node_modules/.git/bin/obj,
-    /// caps file count + per-file size) so it is safe to run on a large tree.
+    /// caps filesystem entries + per-file size) so it is safe to run on a large or adversarial tree.
     /// </summary>
     public static IReadOnlyList<AgentConfigFinding> ScanDirectory(string root, int maxFiles = 4000, long maxFileBytes = 8L * 1024 * 1024)
     {
         var findings = new List<AgentConfigFinding>();
         if (!Directory.Exists(root)) return findings;
 
-        var scanned = 0;
-        foreach (var path in EnumerateSafe(root))
+        var budget = new ScanBudget(Math.Max(0, maxFiles));
+        foreach (var path in EnumerateSafe(root, findings, budget))
         {
-            if (scanned >= maxFiles) break;
             var rel = Path.GetRelativePath(root, path);
             if (!IsAgentConfigFile(rel)) continue;
-            scanned++;
             try
             {
                 var info = new FileInfo(path);
@@ -175,10 +182,16 @@ public static class AgentConfigScanner
             }
             catch { /* unreadable file — skip, never let the scan throw */ }
         }
+        if (budget.Exhausted)
+        {
+            findings.Add(new AgentConfigFinding(".", ForemanSeverity.Medium, AgentConfigSignal.ScanIncomplete,
+                $"Scan stopped after {budget.Visited} filesystem entries; increase the scan budget or inspect the remaining tree manually."));
+        }
         return findings;
     }
 
-    private static IEnumerable<string> EnumerateSafe(string root)
+    private static IEnumerable<string> EnumerateSafe(
+        string root, List<AgentConfigFinding> findings, ScanBudget budget)
     {
         var stack = new Stack<string>();
         stack.Push(root);
@@ -188,14 +201,61 @@ public static class AgentConfigScanner
             string[] subdirs, files;
             try { subdirs = Directory.GetDirectories(dir); files = Directory.GetFiles(dir); }
             catch { continue; }
-            foreach (var f in files) yield return f;
+            // Reparse-point files can resolve outside the requested repository. Scanning their target would let a
+            // repository author pull unrelated local files into the result set, so treat them as an untrusted
+            // boundary just like directory links/junctions.
+            foreach (var f in files)
+            {
+                if (!budget.TryVisit()) yield break;
+                if (IsReparsePoint(f))
+                {
+                    findings.Add(new AgentConfigFinding(Path.GetRelativePath(root, f), ForemanSeverity.Medium,
+                        AgentConfigSignal.LinkedPath,
+                        "Linked file was not scanned because its target may be outside the requested repository."));
+                    continue;
+                }
+                yield return f;
+            }
             foreach (var d in subdirs)
             {
+                if (!budget.TryVisit()) yield break;
                 var n = Path.GetFileName(d).ToLowerInvariant();
                 if (n is "node_modules" or ".git" or "bin" or "obj" or "dist" or ".next" or "target") continue;
+                // Never follow directory symlinks/junctions: they can escape the scan root or create traversal
+                // cycles. The linked directory can be scanned explicitly by the operator if it is in scope.
+                if (IsReparsePoint(d))
+                {
+                    findings.Add(new AgentConfigFinding(Path.GetRelativePath(root, d), ForemanSeverity.Medium,
+                        AgentConfigSignal.LinkedPath,
+                        "Linked directory was not traversed because its target may escape the requested repository or form a cycle."));
+                    continue;
+                }
                 stack.Push(d);
             }
         }
+    }
+
+    private sealed class ScanBudget(int limit)
+    {
+        public int Visited { get; private set; }
+        public bool Exhausted { get; private set; }
+
+        public bool TryVisit()
+        {
+            if (Visited >= limit)
+            {
+                Exhausted = true;
+                return false;
+            }
+            Visited++;
+            return true;
+        }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+        catch { return true; } // unreadable/unstable entry: fail closed at the filesystem boundary
     }
 
     private static string Norm(string p) => p.Replace('\\', '/');

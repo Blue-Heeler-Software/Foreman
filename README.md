@@ -19,7 +19,7 @@
   <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-E8B23C">
 </p>
 
-> **Status:** alpha. Foreman Agent Safety currently targets a .NET 10 preview SDK and runs on Windows 10/11 x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
+> **Status:** alpha. Foreman Agent Safety targets the stable .NET 10 SDK and runs on Windows 10/11 x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
 
 ## Why Foreman Agent Safety Exists
 
@@ -110,21 +110,42 @@ dotnet run --project .\src\Foreman.App\Foreman.App.csproj
 Prerequisites:
 
 - Windows 10/11 x64
-- .NET 10 SDK preview
+- .NET 10 SDK
 
 To produce the same self-contained installer payload used by the release workflow:
 
 ```powershell
+$version = '0.1.0'
 dotnet publish .\src\Foreman.App\Foreman.App.csproj `
   -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:Version=$version `
   -o publish
-# The elevated ETW sidecar is published separately (the single-file app can't share its runtime)
-# into the sidecar\ subfolder the app launches it from:
+# Every helper process is published separately: a self-contained single-file app cannot share its runtime.
 dotnet publish .\src\Foreman.EtwSidecar\Foreman.EtwSidecar.csproj `
   -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:Version=$version `
   -o publish\sidecar
+dotnet publish .\src\Foreman.Guardian\Foreman.Guardian.csproj `
+  -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:Version=$version `
+  -o publish\guardian
+dotnet publish .\src\Foreman.CuSidecar\Foreman.CuSidecar.csproj `
+  -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:Version=$version `
+  -o publish\cu-sidecar
+dotnet publish .\src\Foreman.CuPilot\Foreman.CuPilot.csproj `
+  -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:Version=$version `
+  -o publish\cu-pilot
+Remove-Item publish\Foreman.EtwSidecar.*,publish\Foreman.Guardian.*,publish\Foreman.CuSidecar.*,publish\Foreman.CuPilot.* `
+  -ErrorAction SilentlyContinue
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleasePayload.ps1 `
+  -PayloadPath publish -ExpectedVersion $version
 ```
 
 ### Start With Windows
@@ -208,7 +229,7 @@ harness answer it. Useful flags: `--harness <id>` (codex, cursor, opencode, …)
 - Process command lines can contain secrets. Foreman Agent Safety displays and logs command lines locally, and masks obvious secrets before putting alert prompts on the clipboard.
 - Foreman Agent Safety is not a sandbox. A same-user local process can still do anything your user account can do.
 - The optional ETW network sidecar runs elevated only if you enable **Run elevated for per-process Network**.
-- The optional **Hardened Guardian** is the only other component that can run elevated (a LocalSystem service). It is opt-in, off by default, and only signs Foreman Agent Safety's own integrity seal — it does not sandbox or enforce policy on agents.
+- The optional **Hardened Guardian** is the only other component that can run elevated (a LocalSystem service). It is opt-in, off by default, and only signs Foreman Agent Safety's own integrity seal — it does not sandbox or enforce policy on agents. Signed builds authenticate callers by verified publisher. Until commercial signing is available, unsigned development builds use an exact Foreman.exe path + SHA-256 pin and are labeled development protection rather than a publisher-authenticated boundary.
 - The optional MCP tool-description scan can make outbound HTTP/SSE connections to configured third-party MCP servers. It is off by default.
 
 ## How It Works
@@ -219,7 +240,7 @@ The Foreman Agent Safety codebase is split into these main pieces:
 - **Foreman.Monitor:** WMI process create/terminate watcher, process tree tracker, I/O polling, hang/orphan detection, MCP inventory monitor.
 - **Foreman.Core:** platform-agnostic models, event bus, heuristic rules, settings, profiles, escalation logic.
 - **Foreman.McpServer:** local MCP host, tool registry, bearer-token auth, connected-session tracking.
-- **Foreman.Guardian (optional, off by default):** an opt-in LocalSystem Windows service that holds a SYSTEM-scoped key to sign Foreman Agent Safety's own tamper-evident event-log/settings seal, so a same-user agent can't forge it. Enable/disable from Settings → Hardened Guardian (one UAC prompt); uninstalling Foreman prompts to remove it. This is self-protection for Foreman, not agent sandboxing.
+- **Foreman.Guardian (optional, off by default):** an opt-in LocalSystem Windows service that holds a SYSTEM-scoped key to sign Foreman Agent Safety's own tamper-evident event-log/settings seal. Its pipe accepts only the client identity pinned during elevated installation: verified Authenticode publisher for signed builds, or exact path + SHA-256 for explicitly labeled unsigned development builds. Enable/disable from Settings → Hardened Guardian (one UAC prompt); uninstalling Foreman runs the administrator-owned copy from Program Files. Re-enabling after signing upgrades the policy to publisher trust, after which same-publisher updates work without re-pinning. This is self-protection for Foreman, not agent sandboxing.
 
 The embedded MCP server exposes tools including:
 
@@ -268,14 +289,14 @@ Settings live at `%LocalAppData%\Foreman\settings.json` and are editable from th
 | `RunElevated` | `false` | Opt-in elevated ETW sidecar for the Network column |
 | `ScanMcpTools` | `false` | Opt-in MCP tool-description injection scan |
 | `LlmTriage` | enabled | Cross-agent auditor preference routing |
+| `ScheduledAudit` | disabled | Optional count/time-based independent cross-harness review with per-harness cooldown |
 
 ## Release Trust
 
-The installer is per-user and requires no admin prompt. Both `Foreman.exe` (and its `Foreman.EtwSidecar.exe`) and the installer are Authenticode-signed via **SignPath Foundation** (free OV signing for open source) when the release workflow is configured for it; signing is opt-in and gated on a repo variable, so until it's wired up, alpha installers ship **unsigned** and the release notes say so. Either way the release attaches **SHA-256 checksums**. Note that even when signed, a freshly-published build can still show a SmartScreen "unrecognized app" prompt until Microsoft's reputation system catches up — this is expected for a low-volume tool, which is why the checksums matter. See [CODE_SIGNING.md](CODE_SIGNING.md) for how signing works and how to verify a download, and [docs/release-checklist.md](docs/release-checklist.md) for the maintainer signing setup.
+The installer is per-user and requires no admin prompt. `Foreman.exe`, its four helper executables, and the installer are Authenticode-signed via **SignPath Foundation** (free OV signing for open source) when the release workflow is configured for it; signing is opt-in and gated on a repo variable, so until it's wired up, alpha installers ship **unsigned** and the release notes say so. Either way the release attaches **SHA-256 checksums** and GitHub build-provenance attestations. Note that even when signed, a freshly-published build can still show a SmartScreen "unrecognized app" prompt until Microsoft's reputation system catches up — this is expected for a low-volume tool, which is why the checksums matter. See [CODE_SIGNING.md](CODE_SIGNING.md) for how signing works and how to verify a download, and [docs/release-checklist.md](docs/release-checklist.md) for the maintainer signing setup.
 
 ## Roadmap
 
-- Move from .NET 10 preview to a stable SDK when practical.
 - Add a full settings UI for LLM triage preferences.
 - Add first-class OpenCode/T3 MCP config adapters after more field testing.
 - Explore an Android/ADB computer-use bridge as a mediated CU modality: start with observe-only device inventory,

@@ -29,6 +29,10 @@ internal static class GuardianSignerFactory
             if (!client.IsServerSystemOwnedAsync(cts.Token).GetAwaiter().GetResult())
                 return HeadSealFactory.Build(settings, saveSettings);
 
+            var hello = client.HelloAsync(cts.Token).GetAwaiter().GetResult();
+            if (!GuardianTrust.IsAccepted(hello))
+                return HeadSealFactory.Build(settings, saveSettings);
+
             var keyB64 = client.GetPinnedHeadKeyAsync(cts.Token).GetAwaiter().GetResult();
             if (string.IsNullOrEmpty(keyB64))
                 return HeadSealFactory.Build(settings, saveSettings);   // guardian has no usable TPM key

@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using Foreman.Core.Ipc.Guardian;
 
 namespace Foreman.Guardian;
@@ -25,11 +26,14 @@ public sealed class GuardianPipeServer
     public const string PipeName = GuardianPipe.Name;
 
     private readonly GuardianAuthority _authority;
+    private readonly GuardianClientPolicy _clientPolicy;
     private readonly Action<string>? _log;
+    private const int MaxRequestChars = 128 * 1024;
 
-    public GuardianPipeServer(GuardianAuthority authority, Action<string>? log = null)
+    public GuardianPipeServer(GuardianAuthority authority, GuardianClientPolicy clientPolicy, Action<string>? log = null)
     {
         _authority = authority;
+        _clientPolicy = clientPolicy;
         _log = log;
     }
 
@@ -69,7 +73,7 @@ public sealed class GuardianPipeServer
     {
         // Client auth FIRST: only sign for a caller signed by the same publisher as this guardian.
         var clientPath = PipeClientIdentity.GetClientImagePath(server);
-        var (trusted, reason) = GuardianIntegrity.VerifyClient(clientPath);
+        var (trusted, reason) = _clientPolicy.VerifyClient(clientPath);
         if (!trusted)
         {
             _log?.Invoke($"guardian: rejected pipe client '{clientPath ?? "<unknown>"}' — {reason}");
@@ -79,11 +83,12 @@ public sealed class GuardianPipeServer
         using var reader = new StreamReader(server, leaveOpen: true);
         using var writer = new StreamWriter(server, leaveOpen: true) { AutoFlush = true };
 
-        var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+        var line = await ReadBoundedLineAsync(reader, MaxRequestChars, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(line)) return;
 
         var req = GuardianFrameJson.Decode<GuardianRequest>(line);
-        if (req is null) return;
+        if (req is null || req.RequestId.Length is < 1 or > 64 || req.Kind.Length is < 1 or > 64)
+            return;
 
         var res = Dispatch(req);
         await writer.WriteLineAsync(GuardianFrameJson.Line(res).AsMemory(), ct).ConfigureAwait(false);
@@ -94,12 +99,19 @@ public sealed class GuardianPipeServer
         switch (req.Kind)
         {
             case GuardianRpc.Hello:
-                return Ok(req, GuardianFrameJson.Encode(_authority.Hello()));
+            {
+                var hello = _authority.Hello();
+                hello.TrustMode = _clientPolicy.Mode;
+                hello.PublisherAuthenticated = _clientPolicy.PublisherAuthenticated;
+                return Ok(req, GuardianFrameJson.Encode(hello));
+            }
 
             case GuardianRpc.SealHead:
             {
                 var args = GuardianFrameJson.Decode<SealHeadArgs>(req.Payload);
                 if (args is null) return Bad(req, "missing SealHead args");
+                if (args.HeadHash.Length is < 1 or > 256 || args.RecordCount < 0)
+                    return Bad(req, "invalid SealHead args");
                 var seal = _authority.SealHead(args.HeadHash, args.RecordCount);
                 return Ok(req, GuardianFrameJson.Encode(new SealHeadResult { Seal = seal }));
             }
@@ -111,6 +123,8 @@ public sealed class GuardianPipeServer
             {
                 var args = GuardianFrameJson.Decode<VerifySettingsArgs>(req.Payload);
                 if (args is null) return Bad(req, "missing VerifySettings args");
+                if (args.SecurityProjection.Length > 64 * 1024 || args.StoredSeal?.Length > 4 * 1024)
+                    return Bad(req, "VerifySettings args exceed limits");
                 var verdict = _authority.VerifySettings(args.SecurityProjection, args.StoredSeal);
                 return Ok(req, GuardianFrameJson.Encode(new VerifySettingsResult { Verdict = verdict.ToString() }));
             }
@@ -119,6 +133,10 @@ public sealed class GuardianPipeServer
             {
                 var args = GuardianFrameJson.Decode<SealSettingsArgs>(req.Payload);
                 if (args is null) return Bad(req, "missing SealSettings args");
+                if (args.SecurityProjection.Length > 64 * 1024 ||
+                    args.Action.Length > 256 || args.Detail.Length > 4 * 1024 ||
+                    args.PresenceToken?.Length > 4 * 1024)
+                    return Bad(req, "SealSettings args exceed limits");
                 // Client auth already proved this is the genuine Foreman; server-side presence enforcement of a
                 // weakening action is a noted future refinement. Seal the supplied projection.
                 return Ok(req, GuardianFrameJson.Encode(new SealSettingsResult { Seal = _authority.SealSettings(args.SecurityProjection) }));
@@ -134,4 +152,25 @@ public sealed class GuardianPipeServer
 
     private static GuardianResponse Bad(GuardianRequest req, string error) =>
         new() { RequestId = req.RequestId, Kind = req.Kind, Ok = false, Error = error };
+
+    internal static async Task<string?> ReadBoundedLineAsync(StreamReader reader, int maxChars, CancellationToken ct)
+    {
+        var result = new StringBuilder(Math.Min(maxChars, 4096));
+        var buffer = new char[4096];
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
+            if (read == 0) return result.Length == 0 ? null : result.ToString();
+            var newline = Array.IndexOf(buffer, '\n', 0, read);
+            var count = newline >= 0 ? newline : read;
+            if (result.Length + count > maxChars)
+                throw new InvalidDataException("Guardian request exceeded the maximum frame size.");
+            result.Append(buffer, 0, count);
+            if (newline >= 0)
+            {
+                if (result.Length > 0 && result[^1] == '\r') result.Length--;
+                return result.ToString();
+            }
+        }
+    }
 }

@@ -69,7 +69,7 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    GuardianExe := ExpandConstant('{app}\guardian\Foreman.Guardian.exe');
+    GuardianExe := ExpandConstant('{commonpf}\Foreman\guardian\Foreman.Guardian.exe');
     if FileExists(GuardianExe) then
       ShellExec('runas', GuardianExe, '--uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;

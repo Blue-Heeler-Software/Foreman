@@ -34,8 +34,9 @@ internal static class GuardianControl
 
     public static (bool Ok, string Message) Uninstall()
     {
-        var exe = GuardianExePath;
-        if (!File.Exists(exe)) return (false, "Guardian component not found.");
+        // Weakening/removal executes the administrator-owned installed copy, never the per-user staged helper.
+        var exe = GuardianDiscovery.InstalledExePath;
+        if (!File.Exists(exe)) return (false, "Installed Guardian component not found in Program Files.");
         return Run(exe, "--uninstall", "uninstall");
     }
 

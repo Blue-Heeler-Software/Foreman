@@ -20,7 +20,7 @@ public sealed record LiveWeaveCommand(
     object? Result = null,
     string? Error = null,
     DateTimeOffset? CompletedAt = null,
-    string? ByHarness = null);   // which harness enqueued it — gated against the chosen driver
+    string? ByHarness = null);   // delivery gate only; opaque command IDs intentionally support driver handoff
 
 public sealed class LiveWeavePresence
 {
@@ -112,7 +112,9 @@ public sealed class LiveWeaveBroker
     public string Enqueue(string action, IReadOnlyDictionary<string, object?>? parameters = null, string? byHarness = null)
     {
         ExpireStale();
-        var id = Guid.NewGuid().ToString("N")[..12];
+        // The result receipt is intentionally shareable across a seamless driver handoff. Treat the full
+        // unpredictable ID as a capability instead of binding retrieval to whichever harness is active later.
+        var id = Guid.NewGuid().ToString("N");
         var harness = string.IsNullOrWhiteSpace(byHarness) ? null : byHarness.Trim().ToLowerInvariant();
         var reject = RejectReason(parameters, harness);   // oversized payload / per-harness flood → terminal Failed
         var now = _now();

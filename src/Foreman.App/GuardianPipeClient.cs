@@ -88,7 +88,11 @@ internal sealed class GuardianPipeClient : IGuardianClient
 
             var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
             var resp = GuardianFrameJson.Decode<GuardianResponse>(line);
-            return resp is { Ok: true } ? resp.Payload : null;
+            return resp is { Ok: true } &&
+                   string.Equals(resp.RequestId, req.RequestId, StringComparison.Ordinal) &&
+                   string.Equals(resp.Kind, req.Kind, StringComparison.Ordinal)
+                ? resp.Payload
+                : null;
         }
         catch
         {
