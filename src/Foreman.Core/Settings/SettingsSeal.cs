@@ -67,6 +67,16 @@ public static class SettingsSeal
             cuAgentCommand  = s.CuAgentCommand ?? "",
             cuAgentArgs     = s.CuAgentArguments ?? "",
             cuAgentWorkDir  = s.CuAgentWorkingDir ?? "",
+            // ADB activation grants an external-device control path and the executable path is process-launch
+            // authority. Seal enablement, binary identity, and the enrolled device set.
+            adbEnabled      = s.AdbBridge.Enabled,
+            adbExecutable   = s.AdbBridge.ExecutablePath ?? "",
+            adbExecutableSha256 = s.AdbBridge.ExecutableSha256 ?? "",
+            adbDevices      = s.AdbBridge.EnrolledDeviceSerials
+                                .Select(static x => (x ?? string.Empty).Trim().ToLowerInvariant())
+                                .Where(static x => x.Length > 0)
+                                .Order(StringComparer.Ordinal)
+                                .ToArray(),
             disabled        = s.DisabledHarnesses.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
             emergency       = s.EmergencyRuleIds.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
             trust           = s.HarnessTrust.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)

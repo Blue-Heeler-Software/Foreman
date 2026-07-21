@@ -65,16 +65,16 @@ public partial class HarnessSettingsWindow : Window
             ModalityPanel.Children.Add(cb);
         }
 
-        // Foreman's shared browser-use DRIVER set (global, operator-only). Distinct from the Allow/Ask/Block capability
-        // above: the policy says what THIS harness may request; the driver set says which harnesses Foreman currently
-        // accepts cu_* submissions from. Hidden when the host didn't wire the hook (e.g. headless).
+        // Foreman's shared browser/Android DRIVER set (global, operator-only). Distinct from the Allow/Ask/Block
+        // capabilities above: policy says what THIS harness may request; the driver set says which harnesses Foreman
+        // currently accepts cu_* submissions from. Hidden when the host didn't wire the hook (e.g. headless).
         if (_setCuDriver is null)
         {
             CuDriverPanel.Visibility = Visibility.Collapsed;
         }
         else
         {
-            ForemanDriverCombo.SelectedIndex = 0;   // safe default: saving policy/trust edits does not reroute BU.
+            ForemanDriverCombo.SelectedIndex = 0;   // safe default: saving policy/trust edits does not reroute CU.
             var driver = _getCuDriver?.Invoke();
             var included = IsCurrentDriver(driver);
             CuDriverNote.Text =
@@ -240,7 +240,7 @@ public partial class HarnessSettingsWindow : Window
                 $"{_harnessId}: high-risk tool restrictions relaxed"))
             return;
 
-        // Foreman's shared browser-use driver set (global, operator-only, persisted via the CuBroker's own persister)
+        // Foreman's shared browser/Android driver set (global, operator-only, persisted via the CuBroker's own persister)
         // is separate from the per-harness policy dicts below. Edits preserve the existing set unless the operator
         // explicitly chooses "only", "any", or "operator only"; changing it does not clear the shared attention tab.
         if (_setCuDriver is not null && DriverEditSelected())

@@ -18,6 +18,7 @@ public enum WeakeningAction
     ResumeComputerUse,      // un-halt Foreman-mediated computer/browser use after a panic STOP
     BindCuWindow,           // bind the desktop CU target window (operator gesture; spec INV-10/INV-17)
     EnrollLocalAgentHost,   // authorize a local AI agent to drive desktop CU (spec INV-16)
+    EnrollAdbBridge,        // authorize an adb executable + external Android device set
     ApproveCuDesktopAction, // approve a HELD desktop CU action - a fresh tap, not just the operator token (INV-16)
     ResolveVaultCredential, // release a stored credential/2FA into agent-driven CU/BU - a fresh tap per resolution
     SelfSignupVaultCredential, // agent self-signup: CREATE + store a NEW credential for the live origin (a vault WRITE)
@@ -83,6 +84,7 @@ public static class PresenceLockPolicy
         WeakeningAction.ResumeComputerUse,
         WeakeningAction.BindCuWindow,
         WeakeningAction.EnrollLocalAgentHost,
+        WeakeningAction.EnrollAdbBridge,
         WeakeningAction.ApproveCuDesktopAction,
         WeakeningAction.ResolveVaultCredential,
         WeakeningAction.SelfSignupVaultCredential,
@@ -105,6 +107,7 @@ public static class PresenceLockPolicy
         WeakeningAction.ResumeComputerUse,
         WeakeningAction.BindCuWindow,
         WeakeningAction.EnrollLocalAgentHost,
+        WeakeningAction.EnrollAdbBridge,
         WeakeningAction.ApproveCuDesktopAction,
         WeakeningAction.SelfSignupVaultCredential, // a vault WRITE that mints a new credential - the highest-stakes vault op
     ];

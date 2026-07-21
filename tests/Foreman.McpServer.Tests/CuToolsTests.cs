@@ -12,12 +12,35 @@ public sealed class CuToolsTests
         public Task<CuVerdict> JudgeAsync(CuAction a, CuContext c, CancellationToken ct = default) => Task.FromResult(verdict);
     }
 
+    private sealed class AvailableAdbRunner : IAdbCommandRunner
+    {
+        public bool IsAvailable => true;
+        public Task<AdbCommandResult> RunAsync(
+            IReadOnlyList<string> arguments,
+            int maxOutputBytes,
+            TimeSpan timeout,
+            CancellationToken ct = default) =>
+            Task.FromResult(new AdbCommandResult(0, System.Text.Encoding.UTF8.GetBytes("device\n"), string.Empty));
+        public void CancelCurrent() { }
+    }
+
     private static JsonDocument Json(object o) => JsonDocument.Parse(JsonSerializer.Serialize(o));
 
     private static ForemanState StateWith(CuVerdict verdict)
     {
         var state = new ForemanState { Cu = new CuBroker(new FixedAuditor(verdict)) };
         ForemanMcpTools.SetState(state);
+        return state;
+    }
+
+    private static ForemanState StateWithAndroid(params string[] drivers)
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.Cu!.SetDrivers(drivers);
+        state.Cu.SetAndroidDevices(["device-1"]);
+        state.Adb = new AdbBridgeExecutor(
+            AdbBridgeOptions.Create(@"C:\Android\platform-tools\adb.exe", ["device-1"]),
+            new AvailableAdbRunner());
         return state;
     }
 
@@ -61,12 +84,119 @@ public sealed class CuToolsTests
     }
 
     [Fact]
+    public async Task CuSubmit_OversizedArgs_AreRejectedBeforeBroker()
+    {
+        StateWith(CuVerdict.Allow("test"));
+        var oversized = "{\"text\":\"" + new string('a', 70 * 1024) + "\"}";
+        using var doc = Json(await ForemanMcpTools.CuSubmit("browser", "type", oversized));
+        Assert.False(doc.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.Contains("64 KiB", doc.RootElement.GetProperty("reason").GetString());
+    }
+
+    [Fact]
     public async Task CuSubmit_DesktopOverMcp_Rejected()
     {
         // Desktop CU is operator-driven in-process only (INV-7 / Codex review #2) — never over MCP.
         StateWith(CuVerdict.Allow("test"));
         using var doc = Json(await ForemanMcpTools.CuSubmit("desktop", "click", "{}"));
         Assert.False(doc.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CuSubmit_Android_EverySelectedHarnessUsesUnifiedBroker()
+    {
+        StateWithAndroid("codex", "claude-code");
+
+        using var codex = Json(await ForemanMcpTools.CuSubmit(
+            "android", "screenshot", "{\"serial\":\"device-1\"}", AsHarness("codex")));
+        using var claude = Json(await ForemanMcpTools.CuSubmit(
+            "android", "ui_dump", "{\"serial\":\"device-1\"}", AsHarness("claude-code")));
+        using var cursor = Json(await ForemanMcpTools.CuSubmit(
+            "android", "logcat", "{\"serial\":\"device-1\"}", AsHarness("cursor")));
+
+        Assert.True(codex.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.True(claude.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.False(cursor.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CuSubmit_Android_ComputerUsePolicyIsEnforced()
+    {
+        var state = StateWithAndroid("codex");
+        state.HarnessCapabilityRestrictions["codex"] = new Foreman.Core.Mcp.HarnessCapabilityRestrictions
+        {
+            ComputerUse = Foreman.Core.Mcp.HarnessCapabilityAccess.Block,
+        };
+
+        using var result = Json(await ForemanMcpTools.CuSubmit(
+            "android", "devices", "{}", AsHarness("codex")));
+
+        Assert.False(result.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.Equal("blocked", result.RootElement.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task CuSubmit_AndroidMutatingAction_IsHeldAndRawShellIsBlocked()
+    {
+        StateWithAndroid("codex");
+
+        using var tap = Json(await ForemanMcpTools.CuSubmit(
+            "android", "tap", "{\"serial\":\"device-1\",\"x\":\"10\",\"y\":\"20\"}", AsHarness("codex")));
+        using var shell = Json(await ForemanMcpTools.CuSubmit(
+            "android", "shell", "{\"serial\":\"device-1\",\"command\":\"id\"}", AsHarness("codex")));
+
+        Assert.True(tap.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.Equal("held", tap.RootElement.GetProperty("state").GetString());
+        Assert.False(shell.RootElement.GetProperty("accepted").GetBoolean());
+        Assert.Equal("blocked", shell.RootElement.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task CuPollActions_BrowserExecutorCannotDrainAndroidQueue()
+    {
+        var state = StateWithAndroid("codex");
+        using var submit = Json(await ForemanMcpTools.CuSubmit(
+            "android", "screenshot", "{\"serial\":\"device-1\"}", AsHarness("codex")));
+        var actionId = submit.RootElement.GetProperty("actionId").GetString()!;
+
+        using var poll = Json(ForemanMcpTools.CuPollActions(10, AsHarness("browser-extension")));
+
+        Assert.Equal(0, poll.RootElement.GetProperty("actions").GetArrayLength());
+        Assert.Equal(CuActionState.Approved, state.Cu!.Get(actionId)!.State);
+    }
+
+    [Fact]
+    public async Task CuSubmit_AndroidBridgeDisabled_IsRefused()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        state.Cu!.SetDriver("codex");
+        state.Cu.SetAndroidDevices(["device-1"]);
+
+        using var result = Json(await ForemanMcpTools.CuSubmit(
+            "android", "screenshot", "{\"serial\":\"device-1\"}", AsHarness("codex")));
+
+        Assert.False(result.RootElement.GetProperty("accepted").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CuAndroid_StatusAndHeldQueue_AreScopedToSubmittingHarness()
+    {
+        StateWithAndroid("codex", "claude-code");
+        using var read = Json(await ForemanMcpTools.CuSubmit(
+            "android", "screenshot", "{\"serial\":\"device-1\"}", AsHarness("codex")));
+        var readId = read.RootElement.GetProperty("actionId").GetString()!;
+        _ = await ForemanMcpTools.CuSubmit(
+            "android", "tap", "{\"serial\":\"device-1\",\"x\":\"1\",\"y\":\"2\"}", AsHarness("codex"));
+
+        using var ownerStatus = Json(ForemanMcpTools.CuActionStatus(readId, AsHarness("codex")));
+        using var siblingStatus = Json(ForemanMcpTools.CuActionStatus(readId, AsHarness("claude-code")));
+        using var ownerQueue = Json(ForemanMcpTools.CuStatus(AsHarness("codex")));
+        using var siblingQueue = Json(ForemanMcpTools.CuStatus(AsHarness("claude-code")));
+
+        Assert.True(ownerStatus.RootElement.GetProperty("found").GetBoolean());
+        Assert.False(siblingStatus.RootElement.GetProperty("found").GetBoolean());
+        Assert.Equal(1, ownerQueue.RootElement.GetProperty("heldCount").GetInt32());
+        Assert.Equal(0, siblingQueue.RootElement.GetProperty("heldCount").GetInt32());
     }
 
     [Fact]

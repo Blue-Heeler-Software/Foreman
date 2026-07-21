@@ -74,23 +74,23 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel>
 
-                <!-- Foreman browser extension + browser-use driver. Hoisted to the top: the driver gate is the
-                     primary browser-use control, so it sits directly under "Connect all agents" instead of last. -->
+                <!-- Foreman browser extension + shared computer-use driver. Hoisted to the top: the driver gate is the
+                     primary broker control, so it sits directly under "Connect all agents" instead of last. -->
                 <Border CornerRadius="8" Padding="14" Margin="0,0,0,12"
                         Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="🔒 Foreman browser extension (on-device)" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="🔒 Unified computer-use broker (on-device)" Style="{StaticResource CardTitle}" />
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
-                                   Text="Links your browser to THIS machine only — nothing leaves the box. Click Pair, then enter the shown code in the extension's Options within 2 minutes. The code never crosses the wire; the extension proves it over a loopback challenge/response." />
+                                   Text="The same audited cu_* plugin routes approved harnesses to browser use and the optional Android/ADB bridge. Browser execution uses the paired extension below; Android executes locally in Foreman. Click Pair, then enter the shown code in the extension's Options within 2 minutes." />
                         <Button Content="Pair…" Click="PairExtensionClick" HorizontalAlignment="Left"
                                 Background="{StaticResource AccentBrush}" Foreground="#FF0D0F12" FontWeight="Bold" />
 
                         <Border Background="#FF15181D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="6" Padding="10" Margin="0,12,0,0">
                             <StackPanel>
-                                <TextBlock Text="Browser-use driver(s)" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBlock Text="Computer-use driver(s)" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
                                 <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,7"
-                                           Text="Tick which harness(es) may submit browser-use (cu_*) actions. None ticked = operator only; tick 'any' for every connected harness. Tick a specific set (e.g. claude-code + codex) to allow just those. Actions are still audited, held when risky, and panic-haltable." />
+                                           Text="Tick which harness(es) may submit browser and Android/ADB (cu_*) actions through Foreman's unified plugin. None = operator only; 'any' = every connected harness. Per-harness Browser use / Computer use policies still apply. Actions remain audited, approval-gated when risky, and panic-haltable." />
                                 <ItemsControl x:Name="CuDriverList">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>

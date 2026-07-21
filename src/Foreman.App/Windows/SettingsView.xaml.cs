@@ -1,6 +1,7 @@
 using Foreman.Core.Alerts;
 using Foreman.Core.Security;
 using Foreman.Core.Settings;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -178,6 +179,9 @@ public partial class SettingsView : UserControl
         MonitorAllCheck.IsChecked    = _settings.MonitorAllProcesses;
         RunElevatedCheck.IsChecked   = _settings.RunElevated;
         ScanMcpToolsCheck.IsChecked  = _settings.ScanMcpTools;
+        AdbEnabledCheck.IsChecked    = _settings.AdbBridge.Enabled;
+        AdbPathBox.Text              = _settings.AdbBridge.ExecutablePath ?? DiscoverAdbPath() ?? string.Empty;
+        AdbDevicesBox.Text           = string.Join(", ", _settings.AdbBridge.EnrolledDeviceSerials);
         IdleCleanupCheck.IsChecked   = _settings.IdleCleanupEnabled;
         IdleCleanupAfterBox.Text     = _settings.IdleCleanupAfterMinutes.ToString();
 
@@ -274,6 +278,37 @@ public partial class SettingsView : UserControl
         if (ScheduledAuditCheck.IsChecked == true && auditEvery == 0 && auditInterval == 0)
         { MessageBox.Show("Enable at least one scheduled-audit trigger (alert count or interval).", "Foreman Agent Safety", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
+        var adbEnabled = AdbEnabledCheck.IsChecked == true;
+        var adbPath = AdbPathBox.Text.Trim();
+        var adbDevices = AdbDevicesBox.Text
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (adbEnabled && (!Path.IsPathFullyQualified(adbPath) || !File.Exists(adbPath)))
+        {
+            MessageBox.Show("Choose an existing adb executable using its absolute path.",
+                "Foreman Agent Safety — Android bridge", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        string? adbHash = null;
+        if (Path.IsPathFullyQualified(adbPath) && File.Exists(adbPath))
+        {
+            try { adbHash = Foreman.Core.ComputerUse.AdbProcessRunner.ComputeSha256(adbPath); }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not hash-pin adb.exe: {ex.Message}",
+                    "Foreman Agent Safety — Android bridge", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+        }
+        var invalidSerial = adbDevices.FirstOrDefault(s => !Foreman.Core.ComputerUse.AdbBridgeExecutor.IsSafeSerial(s));
+        if (invalidSerial is not null)
+        {
+            MessageBox.Show($"'{invalidSerial}' is not a valid ADB device serial.",
+                "Foreman Agent Safety — Android bridge", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         var emergencyRules = EmergencyRulesBox.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(r => r.ToLowerInvariant())
@@ -298,6 +333,23 @@ public partial class SettingsView : UserControl
             return;
         }
 
+        var oldAdb = _settings.AdbBridge;
+        var addedAdbDevice = adbDevices.Except(oldAdb.EnrolledDeviceSerials, StringComparer.OrdinalIgnoreCase).Any();
+        var adbAuthorityExpanded = (!oldAdb.Enabled && adbEnabled)
+            || (adbEnabled && !string.Equals(oldAdb.ExecutablePath ?? string.Empty, adbPath, StringComparison.OrdinalIgnoreCase))
+            || (adbEnabled && !string.Equals(oldAdb.ExecutableSha256 ?? string.Empty, adbHash ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            || addedAdbDevice;
+        if (adbAuthorityExpanded && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.EnrollAdbBridge,
+                $"ADB bridge {(adbEnabled ? "enabled" : "configured")}; executable '{adbPath}'; devices [{string.Join(", ", adbDevices)}]",
+                forcePresence: true, freshTap: true))
+        {
+            MessageBox.Show(
+                "The Android bridge was not changed. Enrol and enable Foreman's presence lock, then approve the fresh verification prompt.",
+                "Foreman Agent Safety — Android bridge", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         // ── Commit ───────────────────────────────────────────────────────────
         var portChanged         = port != _settings.McpPort;
         var runElevatedChanged  = (RunElevatedCheck.IsChecked == true) != _settings.RunElevated;
@@ -319,6 +371,10 @@ public partial class SettingsView : UserControl
         _settings.MonitorAllProcesses        = MonitorAllCheck.IsChecked == true;
         _settings.IdleCleanupEnabled         = IdleCleanupCheck.IsChecked == true;
         _settings.IdleCleanupAfterMinutes    = idleAfter;
+        _settings.AdbBridge.Enabled          = adbEnabled;
+        _settings.AdbBridge.ExecutablePath   = string.IsNullOrWhiteSpace(adbPath) ? null : Path.GetFullPath(adbPath);
+        _settings.AdbBridge.ExecutableSha256 = adbHash;
+        _settings.AdbBridge.EnrolledDeviceSerials = adbDevices;
 
         _settings.AlertLevelMediumCount      = alertMed;
         _settings.AlarmLevelHighCount        = alarmHigh;
@@ -378,6 +434,86 @@ public partial class SettingsView : UserControl
 
         // Hosted as a tab (no window to close) — confirm in place instead.
         SavedStatus.Text = "Saved.";
+    }
+
+    private void BrowseAdbClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose Android SDK adb.exe",
+            Filter = "Android Debug Bridge (adb.exe)|adb.exe|Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+        if (Path.IsPathFullyQualified(AdbPathBox.Text) && File.Exists(AdbPathBox.Text))
+            dialog.InitialDirectory = Path.GetDirectoryName(AdbPathBox.Text);
+        if (dialog.ShowDialog() == true)
+        {
+            AdbPathBox.Text = dialog.FileName;
+            AdbStatusText.Text = "Path selected. Save to enrol it, or use Test and list devices.";
+        }
+    }
+
+    private async void ProbeAdbClick(object sender, RoutedEventArgs e)
+    {
+        var path = AdbPathBox.Text.Trim();
+        if (!Path.IsPathFullyQualified(path) || !File.Exists(path))
+        {
+            AdbStatusText.Text = "Choose an existing adb executable first.";
+            return;
+        }
+        string hash;
+        try { hash = Foreman.Core.ComputerUse.AdbProcessRunner.ComputeSha256(path); }
+        catch (Exception ex)
+        {
+            AdbStatusText.Text = $"Could not hash-pin adb.exe: {ex.Message}";
+            return;
+        }
+        var alreadyEnrolled =
+            string.Equals(_settings.AdbBridge.ExecutablePath, path, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_settings.AdbBridge.ExecutableSha256, hash, StringComparison.OrdinalIgnoreCase);
+        if (!alreadyEnrolled
+            && !await Foreman.App.Security.PresenceGuard.AuthorizeAsync(
+                Foreman.Core.Security.WeakeningAction.EnrollAdbBridge,
+                $"probe ADB executable '{path}'",
+                forcePresence: true, freshTap: true))
+        {
+            AdbStatusText.Text = "Probe cancelled: presence was not verified.";
+            return;
+        }
+
+        AdbStatusText.Text = "Checking...";
+        using var runner = new Foreman.Core.ComputerUse.AdbProcessRunner(path, hash);
+        var result = await runner.RunAsync(["devices", "-l"], 256 * 1024, TimeSpan.FromSeconds(15));
+        if (result.ExitCode != 0)
+        {
+            AdbStatusText.Text = string.IsNullOrWhiteSpace(result.StandardError)
+                ? $"adb exited with code {result.ExitCode}."
+                : result.StandardError.Trim();
+            return;
+        }
+        var lines = System.Text.Encoding.UTF8.GetString(result.StandardOutput)
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Where(line => !line.TrimStart().StartsWith("*", StringComparison.Ordinal))
+            .ToArray();
+        AdbStatusText.Text = lines.Length == 0
+            ? "adb is available; no devices are connected."
+            : $"{lines.Length} device(s): {string.Join(" | ", lines.Select(line => line.Trim()))}";
+    }
+
+    private static string? DiscoverAdbPath()
+    {
+        var roots = new[]
+        {
+            Environment.GetEnvironmentVariable("ANDROID_SDK_ROOT"),
+            Environment.GetEnvironmentVariable("ANDROID_HOME"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Android", "Sdk"),
+        };
+        return roots
+            .Where(static root => !string.IsNullOrWhiteSpace(root))
+            .Select(static root => Path.Combine(root!, "platform-tools", "adb.exe"))
+            .FirstOrDefault(File.Exists);
     }
 
     /// <summary>

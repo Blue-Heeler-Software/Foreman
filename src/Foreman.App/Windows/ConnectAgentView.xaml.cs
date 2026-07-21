@@ -46,7 +46,7 @@ public partial class ConnectAgentView : UserControl
         Loaded += (_, _) => RefreshCuDriver();
     }
 
-    // One row in the Browser-use driver checklist. Plain mutable CLR object: the CheckBox TwoWay binding writes
+    // One row in the shared computer-use driver checklist. Plain mutable CLR object: the CheckBox TwoWay binding writes
     // IsChecked back on toggle; to reflect changes made in code we rebuild the list (reassign ItemsSource).
     private sealed class DriverChoice
     {
@@ -102,9 +102,9 @@ public partial class ConnectAgentView : UserControl
             .ToList();
 
         CuDriverStatus.Text = string.IsNullOrEmpty(d)
-            ? "Current: operator only — no harness can drive browser use yet."
-            : d == "*" ? "Current: ANY connected harness may drive browser use."
-            : $"Current: {d.Replace(",", ", ")} may drive browser use.";
+            ? "Current: operator only — no harness can drive browser or Android use yet."
+            : d == "*" ? "Current: ANY connected harness may drive browser and Android use."
+            : $"Current: {d.Replace(",", ", ")} may drive browser and Android use.";
     }
 
     // Each agent gets a scoped, per-harness token so it can only see/act on itself.

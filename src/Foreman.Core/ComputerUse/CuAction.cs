@@ -1,7 +1,7 @@
 namespace Foreman.Core.ComputerUse;
 
 /// <summary>Which computer-use surface an action targets.</summary>
-public enum CuModality { Browser, Desktop }
+public enum CuModality { Browser, Desktop, Android }
 
 /// <summary>How a DESKTOP CU action is isolated from the operator's own input/screen (spec Slice 7).
 /// SharedMonopilot = the one real desktop, time-shared (re-skinned cursor); IsolatedDesktop = the AI's own Win32
@@ -36,6 +36,7 @@ public static class CuVerbs
     private static readonly HashSet<string> ReadOnly = new(StringComparer.OrdinalIgnoreCase)
     {
         "read", "screenshot", "scroll", "move", "status", "snapshot", "get_text", "list_tabs", "tabs",
+        "devices", "ui_dump", "logcat",
     };
 
     // Trim + case-insensitive so the classification is correct regardless of which path constructs the action
@@ -67,5 +68,20 @@ public static class CuVerbs
     {
         var v = (verb ?? string.Empty).Trim();
         return v.Length is > 0 and <= 40 && DesktopVerbs.Contains(v);
+    }
+
+    // Deliberately bounded ADB surface. There is no raw shell/exec verb: every Android operation is rebuilt by
+    // Foreman from typed arguments before it reaches adb. Observe-only inventory/capture is the safe fast path;
+    // tap/type/swipe/key are state-changing and the broker holds them for explicit operator approval.
+    private static readonly HashSet<string> AndroidVerbs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "devices", "screenshot", "ui_dump", "logcat",
+        "tap", "type", "swipe", "key",
+    };
+
+    public static bool IsKnownAndroid(string? verb)
+    {
+        var v = (verb ?? string.Empty).Trim();
+        return v.Length is > 0 and <= 40 && AndroidVerbs.Contains(v);
     }
 }

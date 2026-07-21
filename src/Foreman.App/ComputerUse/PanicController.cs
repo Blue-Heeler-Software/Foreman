@@ -39,7 +39,7 @@ public sealed class PanicController
         if (!_panic.Halt()) return;   // already halted — don't double-log
         _bus.Publish(new MonitoringNoticeEvent(
             DateTimeOffset.UtcNow, ForemanSeverity.Critical, "Foreman.ComputerUse",
-            $"PANIC: computer use HALTED ({trigger}). All Foreman-mediated browser/desktop actions are stopped. " +
+            $"PANIC: computer use HALTED ({trigger}). All Foreman-mediated browser/desktop/Android actions are stopped. " +
             "Resume requires operator presence."));
         if (_osLogEnabled())
             _osLog.Write(OsEventIds.ProtectiveAction, OsEventCategory.Security, ForemanSeverity.Critical,

@@ -82,6 +82,12 @@ public sealed class ForemanState : IEventSink
     /// (unless a test sets it), in which case the cu_* tools report the capability as unavailable.</summary>
     public Foreman.Core.ComputerUse.CuBroker? Cu { get; set; }
 
+    /// <summary>
+    /// Local bounded ADB executor/status. Null when the operator has not enabled the Android bridge. Android actions
+    /// are submitted through <see cref="Cu"/> like every other modality and claimed only by the in-process pump.
+    /// </summary>
+    public Foreman.Core.ComputerUse.AdbBridgeExecutor? Adb { get; set; }
+
     /// <summary>App-wired presence gate for approving a HELD DESKTOP computer-use action (INV-16): returns true only on a
     /// fresh Hello/FIDO2 tap, so an operator BEARER TOKEN alone cannot approve desktop input. Null in tests/headless ->
     /// desktop approvals are then refused (fail closed). Browser approvals do not use this.</summary>
