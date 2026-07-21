@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using System.Xml.Linq;
 using Foreman.Core.Ipc;
 using Foreman.Core.Security;
@@ -33,6 +34,9 @@ internal sealed class DecoyAudit : IDisposable
     private readonly List<string> _sacled = [];
     private EventLogWatcher? _watcher;
     private bool _weEnabledAuditPol;
+    private readonly string _auditPolInstanceId = Guid.NewGuid().ToString("N");
+    private DateTimeOffset _lastMarkerRefresh = DateTimeOffset.MinValue;
+    private static readonly TimeSpan MarkerRefreshInterval = TimeSpan.FromMinutes(1);
 
     public DecoyAudit(IEnumerable<string> decoyPaths, IEnumerable<int> excludedPids)
     {
@@ -58,8 +62,7 @@ internal sealed class DecoyAudit : IDisposable
             // subcategory and then crashed/was killed before Cleanup, its in-memory ownership flag was lost and
             // the policy would sit orphaned-on with no one to revert it. A machine-wide marker lets this run
             // reclaim that ownership and revert it on clean teardown.
-            _weEnabledAuditPol = EnableFileSystemAuditingIfNeeded() || AuditPolMarkerExists();
-            if (_weEnabledAuditPol) WriteAuditPolMarker();
+            AcquireAuditPolicyOwnership();
             StartWatcher();
             return true;
         }
@@ -69,6 +72,7 @@ internal sealed class DecoyAudit : IDisposable
     /// <summary>Pulls any decoy reads observed since the last call (the pipe-writer loop drains this).</summary>
     public IReadOnlyList<DecoyReadMessage> Drain()
     {
+        RefreshAuditPolicyLeaseIfDue();
         var list = new List<DecoyReadMessage>();
         while (_hits.TryDequeue(out var m)) list.Add(m);
         return list;
@@ -181,17 +185,48 @@ internal sealed class DecoyAudit : IDisposable
         catch { }
     }
 
+    private void AcquireAuditPolicyOwnership()
+    {
+        var inheritedLease = TryReadAuditPolMarker(out var priorLease) && priorLease is not null;
+        var enabledNow = EnableFileSystemAuditingIfNeeded();
+
+        if (enabledNow)
+        {
+            // Durability is part of the state transition. If the ownership marker cannot be committed, immediately
+            // roll back the policy rather than leaving an unowned machine-wide change after the next crash.
+            if (!TryWriteAuditPolMarker())
+            {
+                DeleteAuditPolMarkerIfOwned();
+                TryDisableFileSystemAuditing();
+                throw new IOException("Could not persist Foreman's audit-policy ownership lease.");
+            }
+            _weEnabledAuditPol = true;
+            return;
+        }
+
+        // The policy was already enabled. Reclaim it only from a fresh, ACL-authenticated Foreman lease. An absent,
+        // malformed, or stale marker means another tool or administrator may own the policy, so leave it untouched.
+        _weEnabledAuditPol = inheritedLease && TryWriteAuditPolMarker();
+    }
+
+    private void RefreshAuditPolicyLeaseIfDue()
+    {
+        if (!_weEnabledAuditPol || DateTimeOffset.UtcNow - _lastMarkerRefresh < MarkerRefreshInterval) return;
+        TryWriteAuditPolMarker(); // keep retrying on later Drain calls if this transiently fails
+    }
+
     // Returns true only if WE flipped it on (so we revert exactly what we changed).
     private static bool EnableFileSystemAuditingIfNeeded()
     {
-        try
-        {
-            if (RunAuditpol("/get /subcategory:\"File System\"").Contains("Success", StringComparison.OrdinalIgnoreCase))
-                return false;
-            RunAuditpol("/set /subcategory:\"File System\" /success:enable");
-            return true;
-        }
-        catch { return false; }
+        if (RunAuditpol("/get /subcategory:\"File System\"").Contains("Success", StringComparison.OrdinalIgnoreCase))
+            return false;
+        RunAuditpol("/set /subcategory:\"File System\" /success:enable");
+        return true;
+    }
+
+    private static void TryDisableFileSystemAuditing()
+    {
+        try { RunAuditpol("/set /subcategory:\"File System\" /success:disable"); } catch { }
     }
 
     private static string RunAuditpol(string args)
@@ -199,12 +234,23 @@ internal sealed class DecoyAudit : IDisposable
         var psi = new ProcessStartInfo("auditpol", args)
         {
             RedirectStandardOutput = true,
+            RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        using var p = Process.Start(psi)!;
-        var o = p.StandardOutput.ReadToEnd();
-        p.WaitForExit(5000);
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("auditpol did not start.");
+        var outputTask = p.StandardOutput.ReadToEndAsync();
+        var errorTask = p.StandardError.ReadToEndAsync();
+        if (!p.WaitForExit(5000))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException("auditpol timed out.");
+        }
+        Task.WaitAll([outputTask, errorTask], 1000);
+        var o = outputTask.GetAwaiter().GetResult();
+        var error = errorTask.GetAwaiter().GetResult();
+        if (p.ExitCode != 0)
+            throw new InvalidOperationException($"auditpol failed ({p.ExitCode}): {error.Trim()}");
         return o;
     }
 
@@ -215,8 +261,13 @@ internal sealed class DecoyAudit : IDisposable
         _sacled.Clear();
         if (_weEnabledAuditPol)
         {
-            try { RunAuditpol("/set /subcategory:\"File System\" /success:disable"); } catch { }
-            DeleteAuditPolMarker();
+            // Disable only while the durable lease still names this instance. If ownership was replaced, deleted,
+            // or corrupted, another elevated actor may now depend on the policy; fail open rather than claim it.
+            if (AuditPolMarkerOwnedByThisInstance())
+            {
+                TryDisableFileSystemAuditing();
+                DeleteAuditPolMarkerIfOwned();
+            }
             _weEnabledAuditPol = false;
         }
     }
@@ -225,28 +276,131 @@ internal sealed class DecoyAudit : IDisposable
     // survives a crash/kill that skips Cleanup: the next elevated run reads it, reclaims ownership, and reverts
     // the policy on clean teardown instead of leaving it orphaned-on. Kept in ProgramData (not per-user
     // LocalAppData) so it is stable no matter which admin account approved the UAC elevation.
-    private static string AuditPolMarkerPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Foreman", "decoy-auditpol.owned");
+    private static string AuditPolMarkerDirectory() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Foreman", "ElevatedState");
 
-    private static bool AuditPolMarkerExists()
+    private static string AuditPolMarkerPath() => Path.Combine(AuditPolMarkerDirectory(), "decoy-auditpol.owned");
+
+    private bool TryReadAuditPolMarker(out DecoyAuditOwnershipLease? lease)
     {
-        try { return File.Exists(AuditPolMarkerPath()); } catch { return false; }
+        lease = null;
+        try
+        {
+            var marker = AuditPolMarkerPath();
+            if (!File.Exists(marker) || !MarkerHasTrustedAcl(marker)) return false;
+            if (!DecoyAuditOwnershipLeaseCodec.TryParse(File.ReadAllText(marker), out lease)
+                || lease is null
+                || !DecoyAuditOwnershipLeaseCodec.IsFresh(lease, DateTimeOffset.UtcNow))
+            {
+                lease = null;
+                return false;
+            }
+            return true;
+        }
+        catch { lease = null; return false; }
     }
 
-    private static void WriteAuditPolMarker()
+    private bool TryWriteAuditPolMarker()
+    {
+        string? temp = null;
+        try
+        {
+            var directory = AuditPolMarkerDirectory();
+            HardenMarkerDirectory(directory);
+            var marker = AuditPolMarkerPath();
+            temp = Path.Combine(directory, $"decoy-auditpol.{Guid.NewGuid():N}.tmp");
+            var payload = Encoding.UTF8.GetBytes(
+                DecoyAuditOwnershipLeaseCodec.Create(_auditPolInstanceId, DateTimeOffset.UtcNow));
+            using (var stream = new FileStream(
+                       temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                stream.Write(payload);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temp, marker, overwrite: true);
+            temp = null;
+            HardenMarkerFile(marker);
+
+            if (!MarkerHasTrustedAcl(marker)
+                || !DecoyAuditOwnershipLeaseCodec.TryParse(File.ReadAllText(marker), out var saved)
+                || saved?.InstanceId != _auditPolInstanceId)
+                return false;
+
+            _lastMarkerRefresh = DateTimeOffset.UtcNow;
+            return true;
+        }
+        catch { return false; }
+        finally { if (temp is not null) TryDeleteMarker(temp); }
+    }
+
+    private bool AuditPolMarkerOwnedByThisInstance()
     {
         try
         {
-            var m = AuditPolMarkerPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(m)!);
-            if (!File.Exists(m)) File.WriteAllText(m, DateTimeOffset.UtcNow.ToString("o"));
+            var marker = AuditPolMarkerPath();
+            return File.Exists(marker)
+                && MarkerHasTrustedAcl(marker)
+                && DecoyAuditOwnershipLeaseCodec.TryParse(File.ReadAllText(marker), out var lease)
+                && lease?.InstanceId == _auditPolInstanceId;
         }
-        catch { }
+        catch { return false; }
     }
 
-    private static void DeleteAuditPolMarker()
+    private void DeleteAuditPolMarkerIfOwned()
     {
-        try { var m = AuditPolMarkerPath(); if (File.Exists(m)) File.Delete(m); } catch { }
+        if (AuditPolMarkerOwnedByThisInstance()) TryDeleteMarker(AuditPolMarkerPath());
+    }
+
+    private static void HardenMarkerDirectory(string path)
+    {
+        var directory = Directory.CreateDirectory(path);
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(admins);
+        const InheritanceFlags inheritance = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        security.AddAccessRule(new FileSystemAccessRule(
+            admins, FileSystemRights.FullControl, inheritance, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            system, FileSystemRights.FullControl, inheritance, PropagationFlags.None, AccessControlType.Allow));
+        directory.SetAccessControl(security);
+    }
+
+    private static void HardenMarkerFile(string path)
+    {
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(admins);
+        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
+    }
+
+    private static bool MarkerHasTrustedAcl(string path)
+    {
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var security = new FileInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
+        var owner = security.GetOwner(typeof(SecurityIdentifier));
+        if (!Equals(owner, admins) && !Equals(owner, system)) return false;
+
+        const FileSystemRights writeRights = FileSystemRights.WriteData | FileSystemRights.AppendData
+            | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes | FileSystemRights.Delete
+            | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow || (rule.FileSystemRights & writeRights) == 0) continue;
+            if (!Equals(rule.IdentityReference, admins) && !Equals(rule.IdentityReference, system)) return false;
+        }
+        return true;
+    }
+
+    private static void TryDeleteMarker(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     public void Dispose() => Cleanup();

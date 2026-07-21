@@ -11,6 +11,8 @@ public sealed class SidecarSupervisorTests
         public bool ExpectedUp = true;
         public bool Connected;
         public bool LaunchDeclined;
+        public bool LaunchInProgress;
+        public bool ThrowOnNotify;
         public int Relaunches;
         public readonly List<(ForemanSeverity Sev, string Msg)> Notices = [];
         public SidecarSupervisor Make(int maxRelaunch = 2, int graceTicks = 1) => new(
@@ -18,8 +20,13 @@ public sealed class SidecarSupervisorTests
             () => Connected,
             () => LaunchDeclined,
             () => Relaunches++,
-            (sev, msg) => Notices.Add((sev, msg)),
-            maxRelaunch, graceTicks);
+            (sev, msg) =>
+            {
+                if (ThrowOnNotify) throw new InvalidOperationException("notice sink failed");
+                Notices.Add((sev, msg));
+            },
+            maxRelaunch, graceTicks,
+            () => LaunchInProgress);
     }
 
     [Fact]
@@ -152,6 +159,53 @@ public sealed class SidecarSupervisorTests
         // Re-enable, still down → a fresh episode alerts again (not suppressed by the old _downNotified).
         rig.ExpectedUp = true;
         sup.Tick(); sup.Tick();
+        Assert.Equal(2, rig.Notices.Count);
+    }
+
+    [Fact]
+    public void PendingUacLaunch_DoesNotStackAnotherRelaunch()
+    {
+        var rig = new Rig { Connected = true };
+        var sup = rig.Make(graceTicks: 0);
+
+        sup.Tick();
+        rig.Connected = false;
+        rig.LaunchInProgress = true;
+        for (var i = 0; i < 5; i++) sup.Tick();
+
+        Assert.Equal(0, rig.Relaunches);
+        Assert.Empty(rig.Notices);
+
+        rig.LaunchInProgress = false;
+        sup.Tick();
+        Assert.Equal(1, rig.Relaunches);
+    }
+
+    [Fact]
+    public void ThrowingNotice_DoesNotBurnRelaunchWithoutRecovery()
+    {
+        var rig = new Rig { Connected = true, ThrowOnNotify = true };
+        var sup = rig.Make(maxRelaunch: 1, graceTicks: 0);
+
+        sup.Tick();
+        rig.Connected = false;
+        sup.Tick();
+
+        Assert.Equal(1, rig.Relaunches);
+    }
+
+    [Fact]
+    public void ExplicitReset_ClearsStateForFastOffOnBetweenTicks()
+    {
+        var rig = new Rig { Connected = false };
+        var sup = rig.Make(graceTicks: 0);
+        sup.Tick();
+        Assert.Single(rig.Notices);
+
+        // Settings callbacks observe off-to-on even though the periodic Tick never sees ExpectedUp=false.
+        sup.ResetEpisode();
+        sup.Tick();
+
         Assert.Equal(2, rig.Notices.Count);
     }
 }

@@ -4,6 +4,17 @@
  */
 
 const PROTOCOL = '2024-11-05';
+const REQUEST_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error(`Loopback MCP request timed out after ${timeoutMs} ms.`)), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 // Tag 401/403 distinctly so the caller can tell a REVOKED/rotated token (needs re-pair) from a transient network
 // or 5xx error (keep the token, retry). Otherwise a dead token loops failing polls forever with no signal.
@@ -13,14 +24,14 @@ function httpError(status, message) {
     return e;
 }
 
-export async function openMcpSession(baseUrl, token, clientInfo = { name: 'foreman-liveweave', version: '0.4.1' }) {
+export async function openMcpSession(baseUrl, token, clientInfo = { name: 'foreman-liveweave', version: '0.4.2' }) {
     const headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
         'Authorization': `Bearer ${token}`,
     };
 
-    const initRes = await fetch(`${baseUrl}/mcp`, {
+    const initRes = await fetchWithTimeout(`${baseUrl}/mcp`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -47,7 +58,7 @@ export async function openMcpSession(baseUrl, token, clientInfo = { name: 'forem
 
     const sessionHeaders = { ...headers, 'Mcp-Session-Id': sessionId };
 
-    const initializedRes = await fetch(`${baseUrl}/mcp`, {
+    const initializedRes = await fetchWithTimeout(`${baseUrl}/mcp`, {
         method: 'POST',
         headers: sessionHeaders,
         body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }),
@@ -64,7 +75,7 @@ let nextRpcId = 1;   // monotonic request ids so a response can be correlated to
 
 export async function callMcpTool(session, name, args = {}) {
     const id = nextRpcId++;
-    const res = await fetch(`${session.baseUrl}/mcp`, {
+    const res = await fetchWithTimeout(`${session.baseUrl}/mcp`, {
         method: 'POST',
         headers: session.headers,
         body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),

@@ -14,7 +14,12 @@ public sealed class SettingsStoreTests : IDisposable
         _path = Path.Combine(_dir, "settings.json");
     }
 
-    public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
+    public void Dispose()
+    {
+        SettingsStore.IntegritySecret = null;
+        SettingsStore.Sealer = null;
+        try { Directory.Delete(_dir, true); } catch { }
+    }
 
     [Fact]
     public void Save_ThenLoad_RoundTrips()
@@ -76,5 +81,49 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal(33333, SettingsStore.Load(_path).McpPort);
         Assert.Null(SettingsStore.LastLoadFault);                    // a clean load clears the prior fault
+    }
+
+    [Fact]
+    public void TamperedSecuritySettings_AreRevertedBeforeLoadReturns()
+    {
+        SettingsStore.IntegritySecret = () => "test-install-secret";
+        var approved = new ForemanSettings { CuDriver = "codex" };
+        approved.PresenceLock.Enabled = true;
+        approved.AdbBridge.Enabled = false;
+        SettingsStore.Save(approved, _path);
+
+        var attackerJson = File.ReadAllText(_path)
+            .Replace("\"Enabled\": true", "\"Enabled\": false", StringComparison.Ordinal)
+            .Replace("\"CuDriver\": \"codex\"", "\"CuDriver\": \"any\"", StringComparison.Ordinal);
+        File.WriteAllText(_path, attackerJson);
+
+        var loaded = SettingsStore.Load(_path);
+
+        Assert.Equal(SettingsSealVerdict.Tampered, SettingsStore.LastSealVerdict);
+        Assert.True(loaded.PresenceLock.Enabled);
+        Assert.Equal("codex", loaded.CuDriver);
+        Assert.False(loaded.AdbBridge.Enabled);
+        Assert.Contains("last-known-good", SettingsStore.LastLoadFault!);
+        Assert.NotEmpty(Directory.GetFiles(_dir, "settings.json.*.tampered"));
+    }
+
+    [Fact]
+    public void TamperedSecuritySettings_WithoutRecovery_LoadSafeDefaults()
+    {
+        const string secret = "test-install-secret";
+        SettingsStore.IntegritySecret = () => secret;
+        var attackerSettings = new ForemanSettings { CuDriver = "any", RunElevated = true };
+        attackerSettings.AdbBridge.Enabled = true;
+        attackerSettings.AdbBridge.ExecutablePath = @"C:\attacker.exe";
+        File.WriteAllText(_path, System.Text.Json.JsonSerializer.Serialize(attackerSettings));
+        File.WriteAllText(_path + ".seal", SettingsSeal.Compute(new ForemanSettings(), secret));
+
+        var loaded = SettingsStore.Load(_path);
+
+        Assert.Equal(SettingsSealVerdict.Tampered, SettingsStore.LastSealVerdict);
+        Assert.Null(loaded.CuDriver);
+        Assert.False(loaded.RunElevated);
+        Assert.False(loaded.AdbBridge.Enabled);
+        Assert.Contains("safe defaults", SettingsStore.LastLoadFault!);
     }
 }

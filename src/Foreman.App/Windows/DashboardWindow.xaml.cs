@@ -242,7 +242,10 @@ public partial class DashboardWindow : Window, IEventSink
                                   or HangDetectedEvent
                                   or OrphanDetectedEvent
                                   or MonitoringNoticeEvent)
-            .OrderByDescending(e => e.Timestamp)
+            // Pin unresolved High/Critical items ahead of ordinary recency so a noise flood cannot push the
+            // operator's most important outstanding evidence out of the 50-card overview.
+            .OrderBy(e => !e.Acknowledged && e.Severity >= ForemanSeverity.High ? 0 : 1)
+            .ThenByDescending(e => e.Timestamp)
             .Take(50)
             .ToList();
 

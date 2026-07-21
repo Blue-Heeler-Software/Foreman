@@ -406,6 +406,31 @@ public sealed class CuBroker
         return (true, ok ? "Completed." : "Failed.");
     }
 
+    /// <summary>
+    /// Reject every non-terminal action for a modality when its live executor authority is revoked or replaced.
+    /// Previously-approved work must never survive an Android device/binary re-enrolment and execute later.
+    /// </summary>
+    public int RevokeModality(CuModality modality, string reason)
+    {
+        var revoked = 0;
+        foreach (var pair in _items)
+        {
+            var item = pair.Value;
+            if (item.Action.Modality != modality || item.State is
+                CuActionState.Completed or CuActionState.Failed or CuActionState.Rejected or CuActionState.Blocked)
+                continue;
+
+            var rejected = item with
+            {
+                State = CuActionState.Rejected,
+                Error = string.IsNullOrWhiteSpace(reason) ? "Modality authority was revoked." : reason.Trim(),
+                UpdatedAt = DateTimeOffset.UtcNow,
+            };
+            if (_items.TryUpdate(pair.Key, rejected, item)) revoked++;
+        }
+        return revoked;
+    }
+
     // ── Queries ──────────────────────────────────────────────────────────────────
 
     public CuBrokerItem? Get(string actionId) => _items.TryGetValue(actionId, out var i) ? i : null;

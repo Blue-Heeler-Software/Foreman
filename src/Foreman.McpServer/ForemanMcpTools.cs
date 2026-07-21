@@ -311,6 +311,10 @@ public static class ForemanMcpTools
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
+        commandLine ??= string.Empty;
+        context ??= string.Empty;
+        if (commandLine.Length > 8_192 || context.Length > 2_048)
+            return new { decision = "error", reason = "commandLine/context exceeds the accepted pre-flight size limit." };
         // A per-harness token pre-checks against ITS OWN profile only. Pin harness/profile to the caller's
         // token identity (mirroring GetMyPermissions) so it can't (a) probe a sibling's enforcement posture
         // through the echoed profileName/profileBlocked/reason, nor (b) publish a sibling-attributed
@@ -352,26 +356,43 @@ public static class ForemanMcpTools
         // event deliberately carries no kill PID (0).
         const string source = "MCP.ReportSuspiciousCommand";
 
-        // Log the check through the normal event bus so tray state, behavior metrics,
-        // MCP state, and connected clients all see the same alert stream.
-        EventBus.Instance.Publish(new CommandAlertEvent(
-            DateTimeOffset.UtcNow,
-            match.Severity,
-            source,
-            $"Harness pre-checked command [{match.RuleId}]: {commandLine[..Math.Min(80, commandLine.Length)]}"
-                + (string.IsNullOrWhiteSpace(context) ? "" : $" — context: {context[..Math.Min(200, context.Length)]}"),
-            commandLine,
-            match.RuleId,
-            match.RuleName,
-            match.Description,
-            match.Guidance,
-            0
-        ));
+        // The verdict is always returned, but only a correctly peer-bound caller may mint operator-visible evidence,
+        // and each caller has a bounded alert budget. This prevents a fabricated pre-flight flood from displacing
+        // genuine host detections while retaining the tool's safety-check function.
+        var alertPublished = false;
+        var rateLimited = false;
+        var retryAfterSeconds = 0;
+        if (caller.CanMutate)
+        {
+            var callerKey = caller.IsOperator ? "operator" : caller.HarnessId ?? "unattributed";
+            if (state.TryAdmitSuspiciousCommandAlert(callerKey, DateTimeOffset.UtcNow, out var retryAfter))
+            {
+                EventBus.Instance.Publish(new CommandAlertEvent(
+                    DateTimeOffset.UtcNow,
+                    match.Severity,
+                    source,
+                    $"Harness pre-checked command [{match.RuleId}]: {commandLine[..Math.Min(80, commandLine.Length)]}"
+                        + (string.IsNullOrWhiteSpace(context) ? "" : $" — context: {context[..Math.Min(200, context.Length)]}"),
+                    commandLine,
+                    match.RuleId,
+                    match.RuleName,
+                    match.Description,
+                    match.Guidance,
+                    0
+                ));
+                alertPublished = true;
+            }
+            else
+            {
+                rateLimited = true;
+                retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+            }
+        }
 
         // The block decision above is always returned to the caller. But minting a durable, hash-chained,
         // operator-visible PermissionViolationEvent is a mutation of the security record — gate it on
         // CanMutate so a stolen (PeerMismatch) token can't forge violation noise to muddy the log.
-        if (profileBlocked && caller.CanMutate)
+        if (profileBlocked && caller.CanMutate && alertPublished)
         {
             EventBus.Instance.Publish(new PermissionViolationEvent(
                 DateTimeOffset.UtcNow,
@@ -394,6 +415,9 @@ public static class ForemanMcpTools
             harnessId = resolvedHarness,
             profileName = profile?.Name,
             profileBlocked,
+            alertPublished,
+            rateLimited,
+            retryAfterSeconds,
             context = string.IsNullOrWhiteSpace(context) ? null : context,   // echoed back so the harness sees its intent was recorded
         };
     }
@@ -1344,6 +1368,8 @@ public static class ForemanMcpTools
             commandId = cmd.CommandId,
             action = cmd.Action,
             status = cmd.Status.ToString().ToLowerInvariant(),
+            terminal = cmd.Status is LiveWeaveCommandStatus.Completed or LiveWeaveCommandStatus.Failed,
+            outcomeUncertain = cmd.Status == LiveWeaveCommandStatus.TimedOut,
             result = cmd.Result,
             error = cmd.Error,
             createdAt = cmd.CreatedAt,
@@ -1726,18 +1752,18 @@ public static class ForemanMcpTools
         if (string.IsNullOrWhiteSpace(actionId)) return new { ok = false, reason = "actionId is required." };
         var id = actionId.Trim();
 
-        // INV-16: approving a HELD DESKTOP action requires a FRESH presence tap, not merely the operator bearer token -
+        // INV-16: approving a HELD DESKTOP or ANDROID action requires a FRESH presence tap, not merely the operator bearer token -
         // the human-in-the-loop the default-Held design rests on must be a live person, not a token holder (the same-user
-        // adversary who minted an operator token must still face the Hello/FIDO2 prompt). Fail closed if no gate is wired
-        // (desktop CU only arms when presence is enrolled). Browser approvals keep the token-only path.
+        // adversary who minted an operator token must still face the Hello/FIDO2 prompt). Browser approvals retain the
+        // token-only path because the extension independently confines them to the pinned attention tab.
         var item = state.Cu.Get(id);
-        if (item?.Action.Modality == Foreman.Core.ComputerUse.CuModality.Desktop)
+        if (item?.Action.Modality is Foreman.Core.ComputerUse.CuModality.Desktop or Foreman.Core.ComputerUse.CuModality.Android)
         {
-            var gate = state.CuDesktopApprovalGate;
+            var gate = state.CuPresenceApprovalGate;
             var authed = false;
-            if (gate is not null) { try { authed = await gate().ConfigureAwait(false); } catch { authed = false; } }
+            if (gate is not null) { try { authed = await gate(item.Action.Modality).ConfigureAwait(false); } catch { authed = false; } }
             if (!authed)
-                return new { ok = false, reason = "A presence tap (Windows Hello / FIDO2) is required to approve a desktop computer-use action and was not provided." };
+                return new { ok = false, reason = $"A presence tap (Windows Hello / FIDO2) is required to approve a {item.Action.Modality.ToString().ToLowerInvariant()} computer-use action and was not provided." };
         }
 
         var (ok, reason) = state.Cu.ApproveHeld(id);

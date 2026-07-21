@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -54,6 +55,7 @@ public interface IAdbCommandRunner
 public sealed class AdbProcessRunner : IAdbCommandRunner, IDisposable
 {
     private readonly string _executablePath;
+    private readonly string _launchPath;
     private readonly FileStream? _binaryPin;
     private readonly string? _unavailableReason;
     private readonly object _gate = new();
@@ -62,6 +64,7 @@ public sealed class AdbProcessRunner : IAdbCommandRunner, IDisposable
     public AdbProcessRunner(string executablePath, string? expectedSha256 = null)
     {
         _executablePath = executablePath ?? string.Empty;
+        _launchPath = _executablePath;
         try
         {
             if (!Path.IsPathFullyQualified(_executablePath) || !File.Exists(_executablePath))
@@ -73,6 +76,7 @@ public sealed class AdbProcessRunner : IAdbCommandRunner, IDisposable
             // Pin the enrolled binary against write/delete for Foreman's lifetime. This closes the hash-check→launch
             // replacement window and deliberately makes an SDK update require closing Foreman + re-enrolling the hash.
             _binaryPin = new FileStream(_executablePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            _launchPath = ResolveFinalPath(_binaryPin) ?? Path.GetFullPath(_executablePath);
             var actual = ComputeSha256(_binaryPin);
             var expected = (expectedSha256 ?? string.Empty).Trim();
             if (expected.Length > 0 && !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
@@ -105,7 +109,9 @@ public sealed class AdbProcessRunner : IAdbCommandRunner, IDisposable
 
         var psi = new ProcessStartInfo
         {
-            FileName = _executablePath,
+            // Launch the final path resolved from the PINNED file handle, not the configurable path text. An NTFS
+            // junction swap of a parent directory can no longer redirect a later Process.Start to different bytes.
+            FileName = _launchPath,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -204,6 +210,28 @@ public sealed class AdbProcessRunner : IAdbCommandRunner, IDisposable
         return Convert.ToHexString(SHA256.HashData(stream));
     }
 
+    private static string? ResolveFinalPath(FileStream stream)
+    {
+        if (!OperatingSystem.IsWindows()) return Path.GetFullPath(stream.Name);
+        var buffer = new StringBuilder(1024);
+        var length = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0) return null;
+        if (length >= buffer.Capacity)
+        {
+            buffer = new StringBuilder(checked((int)length + 1));
+            length = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0 || length >= buffer.Capacity) return null;
+        }
+        return buffer.ToString();
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        Microsoft.Win32.SafeHandles.SafeFileHandle hFile,
+        StringBuilder lpszFilePath,
+        uint cchFilePath,
+        uint dwFlags);
+
     private static async Task<byte[]> ReadBoundedAsync(Stream stream, int cap, CancellationToken ct)
     {
         using var output = new MemoryStream(Math.Min(cap, 64 * 1024));
@@ -237,12 +265,14 @@ public sealed class AdbBridgeExecutor : ICuExecutor, IDisposable
     private readonly AdbBridgeOptions _options;
     private readonly IAdbCommandRunner _runner;
     private readonly HashSet<string> _enrolled;
+    private readonly Func<bool> _isHalted;
 
-    public AdbBridgeExecutor(AdbBridgeOptions options, IAdbCommandRunner? runner = null)
+    public AdbBridgeExecutor(AdbBridgeOptions options, IAdbCommandRunner? runner = null, Func<bool>? isHalted = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _runner = runner ?? new AdbProcessRunner(options.ExecutablePath, options.ExecutableSha256);
         _enrolled = new HashSet<string>(options.EnrolledSerials, StringComparer.OrdinalIgnoreCase);
+        _isHalted = isHalted ?? (() => false);
     }
 
     public CuModality Modality => CuModality.Android;
@@ -252,6 +282,7 @@ public sealed class AdbBridgeExecutor : ICuExecutor, IDisposable
 
     public async Task<CuExecResult> ExecuteAsync(CuBrokerItem item, CancellationToken ct = default)
     {
+        if (_isHalted()) return Fail("Computer use is halted by the operator panic stop.");
         if (item.Action.Modality != CuModality.Android)
             return Fail("The ADB bridge only executes Android actions.");
         if (!CuVerbs.IsKnownAndroid(item.Action.Verb))
@@ -280,6 +311,10 @@ public sealed class AdbBridgeExecutor : ICuExecutor, IDisposable
             ["-s", serial, "get-state"], 16 * 1024, _options.CommandTimeout, ct).ConfigureAwait(false);
         if (state.ExitCode != 0 || !string.Equals(Text(state.StandardOutput).Trim(), "device", StringComparison.Ordinal))
             return Fail($"Enrolled device '{serial}' is not connected and authorised.");
+
+        // Panic may have fired while get-state was running. Re-check at the final boundary before the actual device
+        // operation so a halt cannot lose the gap between the two adb invocations.
+        if (_isHalted()) return Fail("Computer use was halted before the Android action could execute.");
 
         if (!TryBuildArguments(item.Action, serial, out var arguments, out var error))
             return Fail(error);

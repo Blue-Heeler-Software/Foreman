@@ -35,10 +35,16 @@ internal static class GuardianInstaller
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Foreman", "guardian");
     public static string InstalledExePath => Path.Combine(ProgramFilesDir, "Foreman.Guardian.exe");
 
-    public static int Install(string? foremanPath, Action<string> log)
+    public static int Install(int? foremanPid, Action<string> log)
     {
+        if (!GuardianInstallReference.TryResolve(foremanPid, Environment.ProcessPath, out var foremanPath, out var referenceReason))
+        {
+            log($"install REFUSED (launcher): {referenceReason}");
+            return 2;
+        }
+
         // 1. LPE guard — refuse to register a binary that isn't the genuine, same-publisher Foreman as SYSTEM.
-        var (trusted, reason) = GuardianIntegrity.VerifyForInstall(foremanPath);
+        var (trusted, reason) = GuardianIntegrity.VerifyForInstall(foremanPath, trustedDevelopmentLayout: true);
         if (!trusted) { log($"install REFUSED (integrity): {reason}"); return 2; }
         log($"integrity ok: {reason}");
 

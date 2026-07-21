@@ -29,7 +29,9 @@ internal static class GuardianControl
         if (!trusted)
             return (false, $"Refusing to install — the guardian binary failed its integrity check: {reason}");
 
-        return Run(exe, $"--install --foreman \"{Environment.ProcessPath}\"", "install");
+        // Pass only our live PID. The elevated guardian resolves the image path itself and requires its own image
+        // to occupy this process's canonical guardian subdirectory; an attacker-supplied path is never trusted.
+        return Run(exe, $"--install --foreman-pid {Environment.ProcessId}", "install");
     }
 
     public static (bool Ok, string Message) Uninstall()

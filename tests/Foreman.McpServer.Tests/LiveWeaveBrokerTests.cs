@@ -65,7 +65,7 @@ public sealed class LiveWeaveBrokerTests
     }
 
     [Fact]
-    public void StaleCommand_DeliveredButNeverCompleted_ExpiresToFailed()
+    public void StaleDeliveredCommand_BecomesUncertain_AndAcceptsLateCompletion()
     {
         var now = DateTimeOffset.UtcNow;
         var broker = new LiveWeaveBroker(() => now);
@@ -76,7 +76,12 @@ public sealed class LiveWeaveBrokerTests
 
         now = now.AddMinutes(3);
         var cmd = broker.GetCommand(id);
-        Assert.Equal(LiveWeaveCommandStatus.Failed, cmd!.Status);
+        Assert.Equal(LiveWeaveCommandStatus.TimedOut, cmd!.Status);
+        Assert.Contains("do not resubmit", cmd.Error);
+
+        var late = broker.Complete(id, true, new { ok = true }, null);
+        Assert.True(late.Ok);
+        Assert.Equal(LiveWeaveCommandStatus.Completed, broker.GetCommand(id)!.Status);
     }
 
     [Fact]

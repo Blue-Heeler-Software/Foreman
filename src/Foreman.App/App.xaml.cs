@@ -30,9 +30,10 @@ public partial class App : Application
     private Foreman.Core.ComputerUse.CuExecutorPump? _cuPump;
     private Foreman.Core.ComputerUse.AdbBridgeExecutor? _adbBridge;
     private Foreman.Core.ComputerUse.CuExecutorPump? _adbPump;
+    private CancellationTokenSource? _adbPumpCts;
     private System.IO.FileStream? _cuSidecarPin;
     private System.IO.FileStream? _cuPilotPin;
-    private System.IO.FileStream? _etwSidecarPin;
+    private IDisposable? _etwSidecarPin;
     private Foreman.Vault.VaultService? _vaultService;
     // Locked-time deposits drained for the current review session (id -> the real deposit incl. its generated
     // password). Kept App-side so the deposit-review WINDOW only ever sees id/origin/harness/time, never a secret.
@@ -345,11 +346,11 @@ public partial class App : Application
             }));
         };
         _mcpHost.State.Cu = cuBroker;
-        // INV-16: approving a HELD desktop CU action over MCP requires a fresh presence tap, not just the operator
+        // INV-16: approving a HELD desktop/Android CU action requires a fresh presence tap, not just the operator
         // bearer token. PresenceGuard.Configure runs later in startup; this delegate is only INVOKED at approve-time.
-        _mcpHost.State.CuDesktopApprovalGate = () => Security.PresenceGuard.AuthorizeAsync(
-            Foreman.Core.Security.WeakeningAction.ApproveCuDesktopAction,
-            "approve a held desktop computer-use action", forcePresence: true, freshTap: true);
+        _mcpHost.State.CuPresenceApprovalGate = modality => Security.PresenceGuard.AuthorizeAsync(
+            Foreman.Core.Security.WeakeningAction.ApproveCuSensitiveAction,
+            $"approve a held {modality.ToString().ToLowerInvariant()} computer-use action", forcePresence: true, freshTap: true);
         // Connect-Agent window's shared browser/Android driver picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
         _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);
@@ -358,10 +359,25 @@ public partial class App : Application
         // Android/ADB bridge: a third modality on the SAME audited broker and shared harness-driver set. The executor
         // is strictly in-process; harnesses submit structured Android actions through cu_submit, while only this pump
         // can claim them. Device-scoped actions are admitted only for the presence-enrolled serial set.
-        var adbSettings = settings.AdbBridge ?? new Foreman.Core.Settings.AdbBridgeSettings();
-        cuBroker.SetAndroidDevices(adbSettings.EnrolledDeviceSerials);
-        if (adbSettings.Enabled)
+        void ApplyAdbState()
         {
+            // Revoke first, before any slow hash/pin work. An already-approved action from the old binary/device set
+            // must never execute after the operator disables or changes enrolment.
+            cuBroker.RevokeModality(Foreman.Core.ComputerUse.CuModality.Android,
+                "Android bridge settings changed; re-submit under the current enrolment.");
+            cuBroker.SetAndroidDevices([]);
+            _mcpHost.State.Adb = null;
+            _adbPumpCts?.Cancel();
+            _adbPumpCts?.Dispose();
+            _adbPumpCts = null;
+            _adbBridge?.PanicStop();
+            _adbBridge?.Dispose();
+            _adbBridge = null;
+            _adbPump = null;
+
+            var adbSettings = settings.AdbBridge ?? new Foreman.Core.Settings.AdbBridgeSettings();
+            if (!adbSettings.Enabled) return;
+
             var adbPath = adbSettings.ExecutablePath?.Trim() ?? string.Empty;
             var adbHash = adbSettings.ExecutableSha256?.Trim() ?? string.Empty;
             if (!Path.IsPathFullyQualified(adbPath) || !File.Exists(adbPath) || adbHash.Length != 64)
@@ -375,7 +391,8 @@ public partial class App : Application
             {
                 var options = Foreman.Core.ComputerUse.AdbBridgeOptions.Create(
                     Path.GetFullPath(adbPath), adbSettings.EnrolledDeviceSerials, adbHash);
-                _adbBridge = new Foreman.Core.ComputerUse.AdbBridgeExecutor(options);
+                _adbBridge = new Foreman.Core.ComputerUse.AdbBridgeExecutor(
+                    options, isHalted: () => panicState.IsHalted);
                 if (!_adbBridge.IsReady)
                 {
                     _adbBridge.Dispose();
@@ -387,13 +404,11 @@ public partial class App : Application
                 }
                 else
                 {
+                    cuBroker.SetAndroidDevices(options.EnrolledSerials);
                     _mcpHost.State.Adb = _adbBridge;
                     _adbPump = new Foreman.Core.ComputerUse.CuExecutorPump(cuBroker, _adbBridge, batch: 2);
-                    _ = _adbPump.RunAsync(TimeSpan.FromMilliseconds(400), _cts!.Token);
-                    panicState.Changed += halted =>
-                    {
-                        if (halted) _adbBridge?.PanicStop();
-                    };
+                    _adbPumpCts = CancellationTokenSource.CreateLinkedTokenSource(_cts!.Token);
+                    _ = _adbPump.RunAsync(TimeSpan.FromMilliseconds(400), _adbPumpCts.Token);
                     EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Info,
                         "Foreman.Android",
                         $"Android/ADB bridge armed with {options.EnrolledSerials.Count} enrolled device(s). " +
@@ -401,6 +416,8 @@ public partial class App : Application
                 }
             }
         }
+        panicState.Changed += halted => { if (halted) _adbBridge?.PanicStop(); };
+        ApplyAdbState();
 
         // Held-CU operator approve/reject for the tray's approvals window. Mirrors the cu_approve / cu_reject MCP tools
         // (incl. the desktop presence tap) so the operator has an IN-APP way to clear a held action - there was none,
@@ -425,13 +442,14 @@ public partial class App : Application
         {
             var cu = _mcpHost.State.Cu;
             if (cu is null) return (false, "computer use is not available");
-            // INV-16: a held DESKTOP action needs a fresh presence tap, exactly as cu_approve enforces.
-            if (cu.Get(id)?.Action.Modality == Foreman.Core.ComputerUse.CuModality.Desktop)
+            // INV-16: held DESKTOP and ANDROID actions need a fresh presence tap, exactly as cu_approve enforces.
+            if (cu.Get(id)?.Action.Modality is Foreman.Core.ComputerUse.CuModality.Desktop or Foreman.Core.ComputerUse.CuModality.Android)
             {
-                var gate = _mcpHost.State.CuDesktopApprovalGate;
+                var modality = cu.Get(id)!.Action.Modality;
+                var gate = _mcpHost.State.CuPresenceApprovalGate;
                 var authed = false;
-                if (gate is not null) { try { authed = await gate().ConfigureAwait(false); } catch { authed = false; } }
-                if (!authed) return (false, "a presence tap (Windows Hello / FIDO2) is required to approve a desktop action");
+                if (gate is not null) { try { authed = await gate(modality).ConfigureAwait(false); } catch { authed = false; } }
+                if (!authed) return (false, $"a presence tap (Windows Hello / FIDO2) is required to approve a {modality.ToString().ToLowerInvariant()} action");
             }
             var (ok, reason) = cu.ApproveHeld(id);
             if (ok) EventBus.Instance.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.ComputerUse",
@@ -840,9 +858,6 @@ public partial class App : Application
         };
         // SettingsWindow persists the flags; these just re-apply the sidecar state (enabling an elevated
         // feature raises the UAC prompt).
-        _tray.ApplyRunElevated  = _ => ApplySidecarState();
-        _tray.ApplyDecoyAuditing = () => ApplySidecarState();
-
         // Supervise the elevated sidecar. Launch is fire-and-forget, so a canary can go silently inert: if decoy
         // read-auditing / net capture is enabled but the helper isn't connected, surface it, and auto-relaunch a
         // genuine crash a bounded number of times — but never re-prompt UAC on a loop for a declined launch.
@@ -850,9 +865,15 @@ public partial class App : Application
             expectedUp:     () => settings.RunElevated || settings.DecoyCredentials is { Enabled: true, EnableReadAuditing: true },
             isConnected:    () => _sidecar?.IsConnected ?? false,
             launchDeclined: () => _sidecar?.LaunchFailed ?? false,
+            launchInProgress: () => _sidecar?.LaunchInProgress ?? false,
             relaunch:       ApplySidecarState,
             notify:         (sev, msg) => EventBus.Instance.Publish(
                                 new MonitoringNoticeEvent(DateTimeOffset.UtcNow, sev, "Foreman.Sidecar", msg)));
+        // Reset at the settings boundary. A fast off-to-on toggle may otherwise happen entirely between watchdog
+        // ticks and carry _wasConnected/_downNotified into what is logically a new supervision episode.
+        _tray.ApplyRunElevated = _ => { sidecarSupervisor.ResetEpisode(); ApplySidecarState(); };
+        _tray.ApplyDecoyAuditing = () => { sidecarSupervisor.ResetEpisode(); ApplySidecarState(); };
+        _tray.ApplyAdbBridge = ApplyAdbState;
         _sidecarWatchdog = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _sidecarWatchdog.Tick += (_, _) => { try { sidecarSupervisor.Tick(); } catch { /* a bad tick must never crash the app */ } };
         _sidecarWatchdog.Start();
@@ -1434,6 +1455,8 @@ public partial class App : Application
         _sidecarWatchdog?.Stop();
         _alertResolver?.Dispose();
         _toolScan?.Dispose();
+        _adbPumpCts?.Cancel();
+        _adbPumpCts?.Dispose();
         _adbBridge?.Dispose();
         _headSealKey?.Dispose();
         _sidecar?.Dispose();
@@ -1441,6 +1464,9 @@ public partial class App : Application
         _monitor?.Dispose();
         _panicHotkey?.Dispose();
         _cuBindHotkey?.Dispose();
+        _etwSidecarPin?.Dispose();
+        _cuPilotPin?.Dispose();
+        _cuSidecarPin?.Dispose();
         _tray?.Dispose();
         if (_ownsSingleInstance) _singleInstance?.ReleaseMutex();
         base.OnExit(e);

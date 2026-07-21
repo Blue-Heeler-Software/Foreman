@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Foreman LiveWeave",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Visual website workspace for creating, improving, and reworking pages through Foreman harnesses or on-device Nano.",
   "permissions": ["sidePanel", "storage", "alarms", "offscreen", "activeTab", "scripting"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],

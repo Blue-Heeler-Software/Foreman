@@ -18,7 +18,7 @@ public sealed class EventBus
 {
     private readonly ConcurrentDictionary<IEventSink, byte> _sinks = new();
     private readonly ConcurrentDictionary<Action<ForemanEvent>, byte> _handlers = new();
-    private readonly ConcurrentQueue<ForemanEvent> _history = new();
+    private readonly BoundedEventHistory _history = new(MaxHistory);
     private const int MaxHistory = 1000;
 
     /// <summary>The process-wide bus used in production (the App composition root and monitors subscribe to it).</summary>
@@ -37,14 +37,12 @@ public sealed class EventBus
     public void Unsubscribe(Action<ForemanEvent> handler) => _handlers.TryRemove(handler, out _);
 
     /// <summary>Returns a snapshot of all events since startup, oldest first (capped at 1000).</summary>
-    public IReadOnlyList<ForemanEvent> GetHistory() => _history.ToArray();
+    public IReadOnlyList<ForemanEvent> GetHistory() => _history.Snapshot();
 
     public void Publish(ForemanEvent evt)
     {
         // buffer for late subscribers (log window opened after events already fired)
-        _history.Enqueue(evt);
-        while (_history.Count > MaxHistory)
-            _history.TryDequeue(out _);
+        _history.Add(evt);
 
         foreach (var sink in _sinks.Keys)
         {

@@ -7,7 +7,7 @@ using Foreman.Guardian;
 // Verbs:
 //   --version                      print version and exit
 //   --service                      run under the Service Control Manager (LocalSystem) — how it runs in production
-//   --install [--foreman <path>]   ELEVATED self-install: integrity-gate, copy to ProgramFiles, ACL, register, start
+//   --install --foreman-pid <pid>  ELEVATED self-install: resolve live Foreman, integrity-gate, install + start
 //   --uninstall                    ELEVATED: stop + delete the service, remove its dirs
 //   (no verb)                      console host for smoke tests (same authority + authenticated pipe)
 
@@ -24,7 +24,7 @@ if (Has("--service"))
 }
 
 if (Has("--install"))
-    return GuardianInstaller.Install(ArgValue("--foreman"), Console.WriteLine);
+    return GuardianInstaller.Install(ArgInt("--foreman-pid"), Console.WriteLine);
 
 if (Has("--uninstall"))
     return GuardianInstaller.Uninstall(Console.WriteLine);
@@ -60,3 +60,5 @@ string? ArgValue(string flag)
             return args[i + 1];
     return null;
 }
+
+int? ArgInt(string flag) => int.TryParse(ArgValue(flag), out var value) ? value : null;

@@ -15,13 +15,14 @@ namespace Foreman.McpServer;
 /// </summary>
 public sealed class ForemanState : IEventSink
 {
-    private readonly ConcurrentQueue<ForemanEvent> _eventLog = new();
+    private readonly BoundedEventHistory _eventLog = new(MaxEvents);
     private readonly ConcurrentDictionary<string, ForemanEvent> _alertById = new();
     private readonly ConcurrentDictionary<string, AskHarnessRequest> _askRequests = new();
     private readonly ConcurrentDictionary<string, HarnessContextUsage> _contextUsage = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxEvents = 1000;
     private const int MaxAlerts = 1000;
     private const int MaxAskHarnessRequests = 200;
+    private readonly SuspiciousCommandAlertLimiter _suspiciousCommandAlerts = new();
 
     public DateTimeOffset StartTime { get; } = DateTimeOffset.UtcNow;
     public int McpPort { get; set; } = 54321;
@@ -72,6 +73,9 @@ public sealed class ForemanState : IEventSink
     public int McpSessionCount => GetMcpSessionCount?.Invoke() ?? 0;
     public int PendingAskHarnessCount => _askRequests.Values.Count(static r => r.Status == AskHarnessStatus.Pending);
 
+    internal bool TryAdmitSuspiciousCommandAlert(string callerKey, DateTimeOffset now, out TimeSpan retryAfter) =>
+        _suspiciousCommandAlerts.TryAcquire(callerKey, now, out retryAfter);
+
     /// <summary>LiveWeave webpage builder command queue (agent → extension).</summary>
     public LiveWeaveBroker LiveWeave { get; } = new();
 
@@ -88,10 +92,10 @@ public sealed class ForemanState : IEventSink
     /// </summary>
     public Foreman.Core.ComputerUse.AdbBridgeExecutor? Adb { get; set; }
 
-    /// <summary>App-wired presence gate for approving a HELD DESKTOP computer-use action (INV-16): returns true only on a
-    /// fresh Hello/FIDO2 tap, so an operator BEARER TOKEN alone cannot approve desktop input. Null in tests/headless ->
-    /// desktop approvals are then refused (fail closed). Browser approvals do not use this.</summary>
-    public Func<Task<bool>>? CuDesktopApprovalGate { get; set; }
+    /// <summary>App-wired presence gate for approving HELD Desktop or Android actions (INV-16): returns true only on a
+    /// fresh Hello/FIDO2 tap, so an operator bearer token alone cannot approve physical input. Null in tests/headless
+    /// means sensitive approvals fail closed. Browser approvals do not use this gate.</summary>
+    public Func<Foreman.Core.ComputerUse.CuModality, Task<bool>>? CuPresenceApprovalGate { get; set; }
 
     /// <summary>App-wired credential-vault resolver for the browser-extension EXECUTOR (cu_resolve_vault). Inputs:
     /// (text-with-{{vault:}}, live target origin, the action's submitting harness). Applies the per-release presence tap
@@ -114,6 +118,7 @@ public sealed class ForemanState : IEventSink
             {
                 foreach (var stale in _alertById.Values
                     .OrderBy(static a => a.Acknowledged ? 0 : 1)
+                    .ThenBy(static a => a.Severity)
                     .ThenBy(static a => a.Timestamp)
                     .Take(_alertById.Count - MaxAlerts)
                     .ToList())
@@ -122,11 +127,7 @@ public sealed class ForemanState : IEventSink
                 }
             }
         }
-        _eventLog.Enqueue(evt);
-
-        // prune old events
-        while (_eventLog.Count > MaxEvents)
-            _eventLog.TryDequeue(out _);
+        _eventLog.Add(evt);
     }
 
     public void AddEvent(ForemanEvent evt) => ((IEventSink)this).OnEvent(evt);
@@ -239,7 +240,7 @@ public sealed class ForemanState : IEventSink
     public IEnumerable<object> GetEvents(int limit, ForemanSeverity? minSeverity, string? scopeHarness)
     {
         if (scopeHarness is null) return GetEvents(limit, minSeverity);
-        return _eventLog
+        return _eventLog.Snapshot()
             .Where(e => minSeverity is null || e.Severity >= minSeverity)
             .Where(e => string.Equals(ResolveAlertHarness(e), scopeHarness, StringComparison.OrdinalIgnoreCase))
             .TakeLast(limit)
@@ -248,7 +249,7 @@ public sealed class ForemanState : IEventSink
 
     public IEnumerable<object> GetEvents(int limit, ForemanSeverity? minSeverity)
     {
-        return _eventLog
+        return _eventLog.Snapshot()
             .Where(e => minSeverity is null || e.Severity >= minSeverity)
             .TakeLast(limit)
             .Select(ProjectEvent);

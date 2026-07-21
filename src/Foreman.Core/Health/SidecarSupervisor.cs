@@ -23,6 +23,7 @@ public sealed class SidecarSupervisor
     private readonly Func<bool> _expectedUp;
     private readonly Func<bool> _isConnected;
     private readonly Func<bool> _launchDeclined;
+    private readonly Func<bool> _launchInProgress;
     private readonly Action _relaunch;
     private readonly Action<ForemanSeverity, string> _notify;
     private readonly int _maxRelaunch;
@@ -41,11 +42,13 @@ public sealed class SidecarSupervisor
         Action relaunch,
         Action<ForemanSeverity, string> notify,
         int maxRelaunch = 2,
-        int graceTicks = 1)
+        int graceTicks = 1,
+        Func<bool>? launchInProgress = null)
     {
         _expectedUp = expectedUp;
         _isConnected = isConnected;
         _launchDeclined = launchDeclined;   // last launch attempt failed to START (declined UAC / missing helper)
+        _launchInProgress = launchInProgress ?? (() => false);
         _relaunch = relaunch;
         _notify = notify;
         _maxRelaunch = Math.Max(0, maxRelaunch);
@@ -65,13 +68,22 @@ public sealed class SidecarSupervisor
         if (_isConnected())
         {
             if (_downNotified)
-                _notify(ForemanSeverity.Info,
+                TryNotify(ForemanSeverity.Info,
                     "The elevated helper reconnected — decoy read-auditing / network capture is active again.");
             _wasConnected = true;
             _relaunchAttempts = 0;
             _downTicks = 0;
             _downNotified = false;
             _exhaustedNotified = false;
+            return;
+        }
+
+        // Process.Start(... UseShellExecute=true) waits for the operator to answer UAC. The helper is necessarily
+        // disconnected during that wait and its pipe handshake. Do not accumulate down ticks or spend the relaunch
+        // budget while a real launch is already pending, or watchdog ticks can stack UAC prompts.
+        if (_launchInProgress())
+        {
+            _downTicks = 0;
             return;
         }
 
@@ -87,20 +99,20 @@ public sealed class SidecarSupervisor
         {
             if (_relaunchAttempts < _maxRelaunch)
             {
-                _relaunchAttempts++;
                 if (!_downNotified)
                 {
-                    _notify(ForemanSeverity.High,
+                    TryNotify(ForemanSeverity.High,
                         "The elevated helper stopped unexpectedly — decoy read-auditing / network capture is not " +
                         "active. Relaunching it (this may prompt for administrator).");
                     _downNotified = true;
                 }
                 _relaunch();
+                _relaunchAttempts++;
                 return;
             }
             if (!_exhaustedNotified)
             {
-                _notify(ForemanSeverity.High,
+                TryNotify(ForemanSeverity.High,
                     "The elevated helper keeps stopping — decoy read-auditing / network capture is OFF. Re-enable it " +
                     "in Settings to retry (you'll be prompted for administrator).");
                 _exhaustedNotified = true;
@@ -111,19 +123,29 @@ public sealed class SidecarSupervisor
         // Never connected, or the (re)launch was declined / failed to start → state it once, do NOT re-prompt UAC.
         if (!_downNotified)
         {
-            _notify(ForemanSeverity.High,
+            TryNotify(ForemanSeverity.High,
                 "The elevated helper isn't running, so decoy read-auditing / network capture is OFF. If you declined " +
                 "the administrator prompt, re-enable it in Settings to try again.");
             _downNotified = true;
         }
     }
 
-    private void ResetEpisode()
+    /// <summary>
+    /// Starts a new supervision episode. Settings code calls this at the toggle boundary so a rapid off-to-on
+    /// transition cannot retain stale state merely because it happened between periodic watchdog ticks.
+    /// </summary>
+    public void ResetEpisode()
     {
         _wasConnected = false;
         _relaunchAttempts = 0;
         _downTicks = 0;
         _downNotified = false;
         _exhaustedNotified = false;
+    }
+
+    private void TryNotify(ForemanSeverity severity, string message)
+    {
+        try { _notify(severity, message); }
+        catch { /* notification failure must not suppress the recovery action */ }
     }
 }

@@ -92,6 +92,9 @@ public sealed class TrayController : IEventSink, IDisposable
     /// <summary>Injected from App — re-applies decoy read-auditing (re-launch the elevated sidecar with the decoy paths).</summary>
     public Action?                                            ApplyDecoyAuditing    { get; set; }
 
+    /// <summary>Injected from App — atomically revokes and re-applies the live Android bridge enrolment.</summary>
+    public Action?                                            ApplyAdbBridge         { get; set; }
+
     /// <summary>Injected from App — begins browser-extension pairing; returns the short on-screen code to show.</summary>
     public Func<string>?                                      BeginPairing          { get; set; }
 
@@ -595,7 +598,8 @@ public sealed class TrayController : IEventSink, IDisposable
                 setup: GetSetupHealth is null ? null : new Foreman.App.Windows.SetupHealthView(GetSetupHealth),
                 mutes: new Foreman.App.Windows.MutesView(_settings, () => SettingsStore.Save(_settings)),
                 connect: BuildConnectAgentView(),
-                settings: new Foreman.App.Windows.SettingsView(_settings, ApplyRunElevated, ApplyScanMcpTools, ApplyDecoyAuditing));
+                settings: new Foreman.App.Windows.SettingsView(
+                    _settings, ApplyRunElevated, ApplyScanMcpTools, ApplyDecoyAuditing, ApplyAdbBridge));
 
             w.Closed += (_, _) => _dashboardWindow = null;   // allow a fresh window after this one closes
             _dashboardWindow = w;                            // set before Show() to close the re-entrancy gap

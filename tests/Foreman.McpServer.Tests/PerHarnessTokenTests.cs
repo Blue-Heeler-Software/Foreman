@@ -405,6 +405,16 @@ public sealed class CallerScopeToolTests : IDisposable
         Assert.Equal("claude-code", doc.RootElement.GetProperty("harnessId").GetString());
     }
 
+    [Fact]
+    public void ReportSuspiciousCommand_PeerMismatchCannotMintAlertNoise()
+    {
+        using var doc = J(ForemanMcpTools.ReportSuspiciousCommand(
+            "reg save HKLM\\SAM sam.hiv", http: AsCodexStolen));
+
+        Assert.False(doc.RootElement.GetProperty("alertPublished").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("rateLimited").GetBoolean());
+    }
+
     // ── Process broker: own-tree reaping is executed + recorded; cross-tree is refused; theft is refused ──────
     [Fact]
     public void RequestProcessKill_CodexCaller_ReapsOwnChild_AndRecordsExpected()

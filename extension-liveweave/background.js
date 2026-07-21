@@ -12,6 +12,7 @@
 import { loadSettings, saveSettings, onSettingsChanged } from './settings.js';
 import { callMcpTool, openMcpSession } from './mcp-client.js';
 import { canvasNeedsReload, canvasRuntimeReady } from './canvas-runtime.mjs';
+import { canvasRuntimeStateFromPorts, createAsyncDeadlineGate } from './service-worker-state.mjs';
 import {
     boundedScan,
     canvasFromProject,
@@ -36,9 +37,8 @@ let cfg = { host: '127.0.0.1', port: 54321, token: '', pairedOrigin: '', harness
 let connected = false;
 let lastMcpError = null;
 const sidePanelPorts = new Set();   // every open side panel (a 2nd window used to orphan the 1st)
-let canvasPort = null;       // open while the canvas tab is up — keeps the SW alive for fast, responsive polling
+const canvasPortStates = new Map(); // every canvas tab and its independent runtime-version handshake
 let pollTimer = null;
-let polling = false;         // re-entrancy guard: never let two polls execute commands concurrently (storage races)
 let needsPair = false;       // set when the token is rejected (401/403) — stop polling a dead token, prompt re-pair
 let mcpSession = null;
 const cmdLog = [];           // recent commands {action, ok, error, ts} for the side-panel log (in-memory; resets on SW restart)
@@ -46,22 +46,15 @@ let captureCandidate = null; // set only by an explicit toolbar action; activeTa
 let currentProjectSummary = null;
 let selectionModeRequested = false;
 let currentNanoStatus = 'unknown';
-let canvasClientVersion = '';
-let previewClientVersion = '';
 
 function setSelectionModeRequested(enabled) {
     selectionModeRequested = !!enabled;
     const message = { kind: 'selection-mode', enabled: selectionModeRequested };
-    if (canvasPort) postTo(canvasPort, message);
+    for (const port of [...canvasPortStates.keys()]) postTo(port, message);
     for (const panel of [...sidePanelPorts]) postTo(panel, message);
 }
 
-const canvasRuntimeState = () => ({
-    hasPort: !!canvasPort,
-    canvasVersion: canvasClientVersion,
-    previewVersion: previewClientVersion,
-    extensionVersion: EXTENSION_VERSION,
-});
+const canvasRuntimeState = () => canvasRuntimeStateFromPorts(canvasPortStates, EXTENSION_VERSION);
 const canvasIsReady = () => canvasRuntimeReady(canvasRuntimeState());
 
 async function waitForCanvasReady(timeoutMs = 2500) {
@@ -85,9 +78,18 @@ const FAST_POLL_MS = 3000;
 const POLL_ALARM = 'liveweave-poll';
 const POLL_ALARM_PERIOD_MIN = 0.5;   // idle heartbeat. Chrome 120+ honours a 30s floor; older clamps sub-1-min to
                                      // 60s. Sub-minute responsiveness comes from FAST_POLL while a page holds a port.
+const POLL_RUN_TIMEOUT_MS = 45_000;
+const pollGate = createAsyncDeadlineGate(POLL_RUN_TIMEOUT_MS);
 
 const base = () => `http://${cfg.host}:${cfg.port}`;
 const selfOrigin = () => `chrome-extension://${chrome.runtime.id}`;
+
+async function loopbackFetch(url, options = {}, timeoutMs = 10_000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error(`Loopback request timed out after ${timeoutMs} ms.`)), timeoutMs);
+    try { return await fetch(url, { ...options, signal: controller.signal }); }
+    finally { clearTimeout(timer); }
+}
 const safeOrigin = (value) => {
     try { return new URL(String(value || '')).origin.slice(0, 500); }
     catch { return ''; }
@@ -106,13 +108,13 @@ async function pair(code, liveweaveDriver = cfg.liveweaveDriver) {
     const clean = (code || '').trim().toUpperCase();
     if (!clean) return { ok: false, error: 'Enter the code shown in Foreman.' };
     try {
-        const cr = await fetch(`${base()}/pair/challenge`);
+        const cr = await loopbackFetch(`${base()}/pair/challenge`);
         if (cr.status === 409) return { ok: false, error: 'No pairing window is open. Click "Pair browser extension" in Foreman first.' };
         if (!cr.ok) return { ok: false, error: `Foreman returned ${cr.status} for the challenge.` };
         const { challenge } = await cr.json();
 
         const response = await hmacHex(clean, challenge);
-        const done = await fetch(`${base()}/pair/complete`, {
+        const done = await loopbackFetch(`${base()}/pair/complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ response, origin: selfOrigin(), harnessId: 'liveweave' }),
@@ -135,7 +137,7 @@ async function pair(code, liveweaveDriver = cfg.liveweaveDriver) {
 
 async function checkHealth() {
     try {
-        const r = await fetch(`${base()}/health`);
+        const r = await loopbackFetch(`${base()}/health`);
         return r.ok;
     } catch { return false; }
 }
@@ -901,9 +903,7 @@ async function liveweaveTabInfo() {
 async function pollLiveWeave() {
     if (!cfg.token || !connected) return;
     if (needsPair) return; // token rejected — don't hammer a dead token; the operator must re-pair
-    if (polling) return;   // a poll is already draining the queue — don't run commands concurrently (storage races)
-    polling = true;
-    try {
+    const outcome = await pollGate.run(async () => {
         const tabInfoJson = JSON.stringify(await liveweaveTabInfo());
         const batch = await mcpCall('liveweave_poll_commands', {
             limit: 5,
@@ -927,16 +927,27 @@ async function pollLiveWeave() {
                 error: result.ok ? null : (result.error || 'LiveWeave command failed.'),
             });
         }
-    } finally {
-        polling = false;
+    });
+    if (!outcome.started) return;
+    if (outcome.timedOut) {
+        const error = `LiveWeave poll exceeded ${Math.round(POLL_RUN_TIMEOUT_MS / 1000)} seconds; the guard was released.`;
+        lastMcpError = error;
+        logCommand('poll', { ok: false, error });
+        return;
     }
+    if (outcome.error) throw outcome.error;
 }
 
 async function refresh() {
-    connected = await checkHealth();
-    lastMcpError = null;
-    await pollLiveWeave();
-    broadcast();
+    try {
+        connected = await checkHealth();
+        lastMcpError = null;
+        await pollLiveWeave();
+    } catch (e) {
+        lastMcpError = String(e?.message || e);
+    } finally {
+        broadcast();
+    }
 }
 
 // Fast interval for responsive building. It only runs while the worker is alive; a connected side-panel or canvas
@@ -945,7 +956,6 @@ function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(refresh, FAST_POLL_MS);
     ensurePollAlarm();
-    refresh();
 }
 
 // Durable heartbeat: an alarm wakes a suspended worker so queued commands still get applied when nobody is looking
@@ -954,8 +964,10 @@ function ensurePollAlarm() {
     try { chrome.alarms.create(POLL_ALARM, { periodInMinutes: POLL_ALARM_PERIOD_MIN }); } catch { /* no alarms API */ }
 }
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm?.name === POLL_ALARM) refresh();
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm?.name !== POLL_ALARM) return;
+    await bootstrap();
+    await refresh();
 });
 
 // ── Side panel + canvas plumbing ─────────────────────────────────────────────
@@ -965,23 +977,23 @@ chrome.runtime.onConnect.addListener((port) => {
     // building stays responsive. We don't need to do anything per-message — just poll on connect and on disconnect
     // fall back to the alarm heartbeat.
     if (port.name === 'foreman-liveweave-canvas') {
-        canvasPort = port;
-        canvasClientVersion = '';
-        previewClientVersion = '';
+        canvasPortStates.set(port, { canvasVersion: '', previewVersion: '' });
         postTo(port, { kind: 'selection-mode', enabled: selectionModeRequested });
         port.onMessage.addListener((msg) => {
+            const state = canvasPortStates.get(port);
+            if (!state) return;
             if (msg?.kind === 'canvas-ready') {
-                canvasClientVersion = String(msg.version || '');
+                state.canvasVersion = String(msg.version || '');
                 broadcast();
                 return;
             }
             if (msg?.kind === 'preview-loading') {
-                previewClientVersion = '';
+                state.previewVersion = '';
                 broadcast();
                 return;
             }
             if (msg?.kind === 'preview-ready') {
-                previewClientVersion = String(msg.version || '');
+                state.previewVersion = String(msg.version || '');
                 broadcast();
                 return;
             }
@@ -996,10 +1008,7 @@ chrome.runtime.onConnect.addListener((port) => {
         });
         refresh();
         port.onDisconnect.addListener(() => {
-            if (canvasPort === port) {
-                canvasPort = null;
-                canvasClientVersion = '';
-                previewClientVersion = '';
+            if (canvasPortStates.delete(port)) {
                 broadcast();
             }
         });
@@ -1037,6 +1046,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 function statusMessage() {
+    const runtime = canvasRuntimeState();
     return {
         kind: 'status',
         connected,
@@ -1045,8 +1055,9 @@ function statusMessage() {
         base: base(),
         extensionVersion: EXTENSION_VERSION,
         canvasConnected: canvasIsReady(),
-        canvasClientVersion,
-        previewClientVersion,
+        canvasClientVersion: runtime.canvasVersion,
+        previewClientVersion: runtime.previewVersion,
+        canvasTabCount: canvasPortStates.size,
         liveweaveDriver: cfg.liveweaveDriver || '',
         nanoStatus: currentNanoStatus,
         mcpError: lastMcpError,
@@ -1106,20 +1117,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
-// Guard against the three registration paths (onStartup + onInstalled + top-level) all firing within one worker
-// lifetime and running redundant health-checks. Resets naturally when the worker is torn down and re-evaluated.
-let booted = false;
-async function bootstrap() {
-    if (booted) return;
-    booted = true;
-    try { await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); } catch { /* Chrome < 114 */ }
-    try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
-    try {
-        const session = await chrome.storage.session.get({ liveweaveCaptureCandidate: null });
-        captureCandidate = session.liveweaveCaptureCandidate || null;
-        currentProjectSummary = summarizeProject(await getActiveProject());
-    } catch { /* first run or storage unavailable */ }
-    startPolling();
+// Share the actual boot promise across onStartup, onInstalled, top-level boot and an early alarm. A boolean set
+// before loadSettings finished let a cold-start alarm run refresh() against the default/empty configuration.
+let bootstrapPromise = null;
+function bootstrap() {
+    if (bootstrapPromise) return bootstrapPromise;
+    bootstrapPromise = (async () => {
+        try { await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); } catch { /* Chrome < 114 */ }
+        try { cfg = { ...cfg, ...(await loadSettings()) }; } catch { /* defaults */ }
+        try {
+            const session = await chrome.storage.session.get({ liveweaveCaptureCandidate: null });
+            captureCandidate = session.liveweaveCaptureCandidate || null;
+            currentProjectSummary = summarizeProject(await getActiveProject());
+        } catch { /* first run or storage unavailable */ }
+        startPolling();
+        await refresh();
+    })();
+    return bootstrapPromise;
 }
 // Only react to REAL settings changes. The canvas + history + tracked tab id also live in storage.local and are
 // rewritten on every brokered edit; without this filter each edit reloaded settings and dropped the cached MCP
@@ -1132,6 +1146,6 @@ onSettingsChanged(async (changes) => {
         mcpSession = null;
     } catch { /* keep */ }
 });
-chrome.runtime.onStartup.addListener(bootstrap);
-chrome.runtime.onInstalled.addListener(bootstrap);
+chrome.runtime.onStartup.addListener(() => bootstrap());
+chrome.runtime.onInstalled.addListener(() => bootstrap());
 bootstrap();

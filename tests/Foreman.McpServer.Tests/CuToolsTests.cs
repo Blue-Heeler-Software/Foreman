@@ -200,6 +200,22 @@ public sealed class CuToolsTests
     }
 
     [Fact]
+    public async Task CuAndroid_HeldApprovalRequiresFreshPresenceGate()
+    {
+        var state = StateWithAndroid("codex");
+        using var sub = Json(await ForemanMcpTools.CuSubmit(
+            "android", "tap", "{\"serial\":\"device-1\",\"x\":\"1\",\"y\":\"2\"}", AsHarness("codex")));
+        var id = sub.RootElement.GetProperty("actionId").GetString()!;
+
+        using var denied = Json(await ForemanMcpTools.CuApprove(id));
+        Assert.False(denied.RootElement.GetProperty("ok").GetBoolean());
+
+        state.CuPresenceApprovalGate = modality => Task.FromResult(modality == CuModality.Android);
+        using var approved = Json(await ForemanMcpTools.CuApprove(id));
+        Assert.True(approved.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
     public async Task CuSubmit_Hold_OperatorApprove_PollExecute_Complete()
     {
         StateWith(CuVerdict.Hold("test", "uncertain"));

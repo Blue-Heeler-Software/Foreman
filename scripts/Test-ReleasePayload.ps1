@@ -61,5 +61,16 @@ if ($stray.Count -gt 0) {
     throw "Release payload contains stray root-level sidecar artifact(s): $($stray.Name -join ', ')"
 }
 
+# The elevated ETW sidecar must be the self-contained single-file publish. A neighbouring managed/native payload
+# would sit outside the EXE's Authenticode verification and recreate a UAC hijack path.
+$etwRoot = Join-Path $root 'sidecar'
+$unexpectedEtwPayload = @(Get-ChildItem -LiteralPath $etwRoot -File -Recurse | Where-Object {
+    $_.FullName -ne (Join-Path $etwRoot 'Foreman.EtwSidecar.exe')
+})
+if ($unexpectedEtwPayload.Count -gt 0) {
+    $relative = @($unexpectedEtwPayload | ForEach-Object { [IO.Path]::GetRelativePath($root, $_.FullName) })
+    throw "Elevated ETW sidecar is not a single-file payload: $($relative -join ', ')"
+}
+
 $signatureNote = if ($RequireValidSignatures) { ', valid Authenticode signatures' } else { '' }
 Write-Host "Release payload verified: $($required.Count) executables, version $ExpectedVersion$signatureNote."

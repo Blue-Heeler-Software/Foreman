@@ -7,6 +7,7 @@ public enum LiveWeaveCommandStatus
 {
     Pending,
     Delivered,
+    TimedOut,
     Completed,
     Failed,
 }
@@ -86,10 +87,9 @@ public sealed class LiveWeaveBroker
     }
 
     /// <summary>
-    /// Fail any Pending/Delivered command older than <see cref="StaleAfter"/>: the extension is not open/paired
-    /// (Pending never delivered) or crashed mid-command (Delivered never completed), so the agent's result-poll
-    /// would otherwise hang. Lazily invoked on every touchpoint (no background timer), CAS-safe so a real
-    /// completion racing the sweep wins.
+    /// Resolve stale commands without pretending a delivered command is safe to retry. A never-delivered Pending
+    /// command can fail terminally. A Delivered command becomes TimedOut (outcome uncertain) and remains eligible
+    /// for a late completion, preventing an expiry/completion race from encouraging an agent-side double apply.
     /// </summary>
     private void ExpireStale()
     {
@@ -99,12 +99,16 @@ public sealed class LiveWeaveBroker
         {
             if (cmd.Status is not (LiveWeaveCommandStatus.Pending or LiveWeaveCommandStatus.Delivered)) continue;
             if (cmd.CreatedAt > cutoff) continue;
+            var wasDelivered = cmd.Status == LiveWeaveCommandStatus.Delivered;
             _commands.TryUpdate(id, cmd with
             {
-                Status = LiveWeaveCommandStatus.Failed,
-                Error = $"LiveWeave command timed out after {(int)StaleAfter.TotalMinutes} min — the LiveWeave " +
-                        "extension did not process it. Is it open in Chrome and paired with Foreman?",
-                CompletedAt = now,
+                Status = wasDelivered ? LiveWeaveCommandStatus.TimedOut : LiveWeaveCommandStatus.Failed,
+                Error = wasDelivered
+                    ? $"LiveWeave completion is overdue after {(int)StaleAfter.TotalMinutes} min. The outcome is " +
+                      "uncertain: do not resubmit this edit automatically; keep polling or inspect the canvas."
+                    : $"LiveWeave command timed out after {(int)StaleAfter.TotalMinutes} min — the LiveWeave " +
+                      "extension never accepted it. Is it open in Chrome and paired with Foreman?",
+                CompletedAt = wasDelivered ? null : now,
             }, cmd);
         }
     }
@@ -256,6 +260,7 @@ public sealed class LiveWeaveBroker
             var connected = age < TimeSpan.FromSeconds(30);
             var pending = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.Pending);
             var delivered = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.Delivered);
+            var timedOut = _commands.Values.Count(c => c.Status == LiveWeaveCommandStatus.TimedOut);
             var d = _driver;   // snapshot once so driverMode and driverHarness can't disagree if SetDriver races
             var driverMode = string.IsNullOrEmpty(d)
                 ? "operator_only"
@@ -270,7 +275,8 @@ public sealed class LiveWeaveBroker
                 nanoStatus = _presence.NanoStatus,
                 tab = _presence.TabInfo,
                 pendingCommands = pending,
-                inFlightCommands = delivered,
+                inFlightCommands = delivered + timedOut,
+                uncertainCommands = timedOut,
                 driverHarness = DriverLabel(d),
                 driverMode,
                 hint = connected

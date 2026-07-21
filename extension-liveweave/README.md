@@ -1,6 +1,6 @@
 # Foreman LiveWeave browser extension
 
-LiveWeave 0.4.1 is a Manifest V3 visual website workspace linked to the local Foreman desktop app over loopback. It
+LiveWeave 0.4.2 is a Manifest V3 visual website workspace linked to the local Foreman desktop app over loopback. It
 can start from a blank project or import a rendered page snapshot, lets the operator select the exact rendered
 element, and routes a scoped creation, improvement, or rework prompt either to a chosen Foreman harness or Chrome's
 on-device Nano model. Editing and previewing happen in extension-owned pages; the source tab is never modified.

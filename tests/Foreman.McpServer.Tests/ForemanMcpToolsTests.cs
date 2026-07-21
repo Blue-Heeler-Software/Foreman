@@ -78,6 +78,24 @@ public sealed class ForemanMcpToolsTests : IDisposable
     }
 
     [Fact]
+    public void ReportSuspiciousCommand_AlertPublishingIsRateLimitedPerCaller()
+    {
+        JsonDocument? last = null;
+        for (var i = 0; i < 13; i++)
+        {
+            last?.Dispose();
+            last = ToJson(ForemanMcpTools.ReportSuspiciousCommand("reg save HKLM\\SAM sam.hiv"));
+        }
+
+        using (last)
+        {
+            Assert.True(last!.RootElement.GetProperty("rateLimited").GetBoolean());
+            Assert.False(last.RootElement.GetProperty("alertPublished").GetBoolean());
+            Assert.True(last.RootElement.GetProperty("retryAfterSeconds").GetInt32() > 0);
+        }
+    }
+
+    [Fact]
     public void ListMonitoredProcesses_ScopesToHarnessTree()
     {
         using var doc = ToJson(ForemanMcpTools.ListMonitoredProcesses(harnessId: "codex"));
@@ -186,6 +204,22 @@ public sealed class ForemanMcpToolsTests : IDisposable
         }
 
         Assert.True(_state.ActiveAlerts <= 1_000, $"ActiveAlerts={_state.ActiveAlerts} exceeded the cap");
+    }
+
+    [Fact]
+    public void AlertStore_NoiseFloodDoesNotEvictUnresolvedCritical()
+    {
+        var critical = new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow.AddMinutes(-5), ForemanSeverity.Critical, "test", "retain me");
+        _state.AddEvent(critical);
+        for (var i = 0; i < 1_100; i++)
+        {
+            _state.AddEvent(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "test", $"noise {i}"));
+        }
+
+        Assert.Same(critical, _state.GetAlert(critical.Id));
+        Assert.True(_state.HasCritical);
     }
 
     [Theory]

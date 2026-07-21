@@ -26,12 +26,14 @@ namespace Foreman.App;
 [SupportedOSPlatform("windows")]
 public sealed class ElevatedSidecarController : IDisposable
 {
+    private static SidecarPayloadPin? _activePayloadPin;
     private readonly object _gate = new();
     private CancellationTokenSource? _cts;
     private volatile Dictionary<int, double> _rates = new();
     private volatile WakeRequestSnapshot _wakeRequests = WakeRequestSnapshot.Unavailable("Elevated sidecar is not connected.");
     private volatile bool _connected;
     private volatile bool _launchFailed;   // last launch attempt failed to START (declined UAC / missing / untrusted)
+    private volatile bool _launchInProgress;
     private bool _captureNet = true;
     private bool _captureWakeRequests = true;
     private IReadOnlyList<string> _decoyPaths = [];
@@ -62,6 +64,12 @@ public sealed class ElevatedSidecarController : IDisposable
     /// </summary>
     public bool LaunchFailed => _launchFailed;
 
+    /// <summary>
+    /// True while Windows is displaying the UAC prompt or the accepted helper is still connecting. Supervisors
+    /// must not interpret this interval as a crash and launch another elevation prompt.
+    /// </summary>
+    public bool LaunchInProgress => _launchInProgress;
+
     /// <summary>Raised when the elevated sidecar reports a SACL-audited read of a decoy credential file.</summary>
     public Action<DecoyReadMessage>? OnDecoyRead { get; set; }
 
@@ -79,6 +87,7 @@ public sealed class ElevatedSidecarController : IDisposable
             if (IsRunning) return;
             IsRunning = true;
             _launchFailed = false;   // a fresh attempt is starting; clear the prior verdict
+            _launchInProgress = true;
             _cts = new CancellationTokenSource();
             var cts = _cts;
             _ = Task.Run(() => RunAsync(cts));
@@ -92,6 +101,7 @@ public sealed class ElevatedSidecarController : IDisposable
             if (!IsRunning) return;
             IsRunning = false;
             _connected = false;
+            _launchInProgress = false;
             _cts?.Cancel();
             _rates = new();
             _wakeRequests = WakeRequestSnapshot.Unavailable("Elevated sidecar is not connected.");
@@ -129,6 +139,7 @@ public sealed class ElevatedSidecarController : IDisposable
             if (!string.Equals(presented, nonce, StringComparison.Ordinal)) return;
 
             _connected = true;
+            _launchInProgress = false;
             _launchFailed = false;   // launched and handshook — a later drop is a crash, not a failed launch
             while (!ct.IsCancellationRequested)
             {
@@ -146,7 +157,14 @@ public sealed class ElevatedSidecarController : IDisposable
             CleanupDecoyPathsFile();
             // Clear IsRunning so a later Start() can relaunch a dead/failed sidecar — but only if a newer
             // Start() hasn't already replaced our CTS (else we'd stomp the live run's flag).
-            lock (_gate) { if (ReferenceEquals(_cts, cts)) IsRunning = false; }
+            lock (_gate)
+            {
+                if (ReferenceEquals(_cts, cts))
+                {
+                    IsRunning = false;
+                    _launchInProgress = false;
+                }
+            }
         }
     }
 
@@ -188,29 +206,31 @@ public sealed class ElevatedSidecarController : IDisposable
     public static string SidecarPath() => Path.Combine(AppContext.BaseDirectory, "sidecar", "Foreman.EtwSidecar.exe");
 
     /// <summary>
-    /// Hold a write/delete-denying handle on the elevated sidecar for the App's WHOLE lifetime so a same-user process
-    /// cannot swap it AT REST. This is CRITICAL here because the sidecar is launched with requireAdministrator (UAC), so
-    /// a swapped-in binary would turn Foreman's branded admin prompt into a privilege-escalation primitive. On
-    /// unsigned/dev builds (where <see cref="SidecarIntegrity"/> waives the signer match) this at-rest lock — not
-    /// Authenticode — IS the integrity safeguard; on signed builds it is defense-in-depth that also closes the
-    /// verify->launch TOCTOU. Mirrors the desktop-CU helpers' pin. Call ONCE at startup regardless of the Run-Elevated
-    /// toggle (the at-rest window is exactly when the feature is off) and hold the handle until exit. Returns null if the
-    /// sidecar isn't installed (or is already locked by a prior instance).
+    /// Hold write/delete-denying handles on the elevated sidecar's ENTIRE staged payload for the App's whole lifetime.
+    /// Framework-dependent development builds load managed code from neighbouring DLLs, so pinning only the apphost EXE
+    /// leaves the actual payload replaceable. Release builds are independently required to contain one self-contained
+    /// EXE, but this directory-wide lease keeps local builds safe as well. Call once at startup and retain until exit.
     /// </summary>
-    public static FileStream? PinBinaryAtRest()
+    public static IDisposable? PinBinaryAtRest()
     {
-        try
-        {
-            var exe = SidecarPath();
-            return File.Exists(exe) ? new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read) : null;
-        }
-        catch { return null; }
+        _activePayloadPin?.Dispose();
+        _activePayloadPin = SidecarPayloadPin.TryAcquire(Path.GetDirectoryName(SidecarPath())!);
+        return _activePayloadPin;
     }
 
     private bool LaunchSidecar(string pipeName, string nonce)
     {
         var exe = SidecarPath();
         if (!File.Exists(exe)) return false;
+
+        if (_activePayloadPin?.ValidateSnapshot() != true)
+        {
+            EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Sidecar",
+                "Refused to launch the elevated sidecar because its complete payload could not be held and verified " +
+                "unchanged. Reinstall Foreman or restart after any development build finishes."));
+            return false;
+        }
 
         // Never launch an UNTRUSTED binary with administrator rights. The sidecar sits in a same-user-writable
         // dir and forces requireAdministrator, so an overwritten sidecar would turn Foreman's branded UAC prompt
@@ -250,6 +270,63 @@ public sealed class ElevatedSidecarController : IDisposable
             return true;
         }
         catch { return false; }
+    }
+
+    private sealed class SidecarPayloadPin : IDisposable
+    {
+        private readonly string _root;
+        private readonly Dictionary<string, FileStream> _files;
+        private bool _disposed;
+
+        private SidecarPayloadPin(string root, Dictionary<string, FileStream> files)
+        {
+            _root = root;
+            _files = files;
+        }
+
+        public static SidecarPayloadPin? TryAcquire(string root)
+        {
+            var held = new Dictionary<string, FileStream>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (!Directory.Exists(root)) return null;
+                foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    var canonical = Path.GetFullPath(path);
+                    held.Add(canonical, new FileStream(
+                        canonical, FileMode.Open, FileAccess.Read, FileShare.Read));
+                }
+
+                return held.Count > 0 ? new SidecarPayloadPin(Path.GetFullPath(root), held) : null;
+            }
+            catch
+            {
+                foreach (var stream in held.Values) stream.Dispose();
+                return null;
+            }
+        }
+
+        public bool ValidateSnapshot()
+        {
+            if (_disposed) return false;
+            try
+            {
+                var current = Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories)
+                    .Select(Path.GetFullPath)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return current.SetEquals(_files.Keys)
+                    && _files.Values.All(static stream => stream.CanRead);
+            }
+            catch { return false; }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            foreach (var stream in _files.Values) stream.Dispose();
+            _files.Clear();
+        }
     }
 
     private void CleanupDecoyPathsFile()

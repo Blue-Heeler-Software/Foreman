@@ -42,6 +42,20 @@ public sealed class ForemanStateTests
         Assert.False(state.HasCritical);
     }
 
+    [Fact]
+    public void SuspiciousCommandLimiter_IsPerCallerAndRecoversAfterWindow()
+    {
+        var limiter = new SuspiciousCommandAlertLimiter(permitLimit: 2, window: TimeSpan.FromMinutes(1));
+        var now = DateTimeOffset.UnixEpoch;
+
+        Assert.True(limiter.TryAcquire("codex", now, out _));
+        Assert.True(limiter.TryAcquire("codex", now.AddSeconds(1), out _));
+        Assert.False(limiter.TryAcquire("codex", now.AddSeconds(2), out var retry));
+        Assert.True(retry > TimeSpan.Zero);
+        Assert.True(limiter.TryAcquire("claude-code", now.AddSeconds(2), out _));
+        Assert.True(limiter.TryAcquire("codex", now.AddMinutes(1).AddSeconds(1), out _));
+    }
+
     // ── Ask-Harness lifecycle: TTL expiry, late reply, prune order ──────────────────────────────
 
     private static ForemanState WithAsk(out AskHarnessRequest req, string harness = "claude-code")

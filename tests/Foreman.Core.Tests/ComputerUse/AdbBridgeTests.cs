@@ -17,6 +17,7 @@ public sealed class AdbBridgeTests
         public bool Cancelled { get; private set; }
         public List<IReadOnlyList<string>> Calls { get; } = [];
         public Queue<AdbCommandResult> Results { get; } = [];
+        public Action<IReadOnlyList<string>>? OnRun { get; set; }
 
         public Task<AdbCommandResult> RunAsync(
             IReadOnlyList<string> arguments,
@@ -25,6 +26,7 @@ public sealed class AdbBridgeTests
             CancellationToken ct = default)
         {
             Calls.Add(arguments.ToArray());
+            OnRun?.Invoke(arguments);
             return Task.FromResult(Results.Count > 0
                 ? Results.Dequeue()
                 : new AdbCommandResult(0, Encoding.UTF8.GetBytes("device\n"), string.Empty));
@@ -169,6 +171,23 @@ public sealed class AdbBridgeTests
     }
 
     [Fact]
+    public async Task Broker_LiveRevocationRejectsPreviouslyApprovedAndroidActions()
+    {
+        var broker = new CuBroker(new Allow());
+        broker.SetDriver("codex");
+        broker.SetAndroidDevices(["device-1"]);
+        var approved = await broker.SubmitAsync(
+            Android("screenshot", new() { ["serial"] = "device-1" }), new CuContext("codex"));
+
+        var count = broker.RevokeModality(CuModality.Android, "settings changed");
+        broker.SetAndroidDevices([]);
+
+        Assert.Equal(1, count);
+        Assert.Equal(CuActionState.Rejected, broker.Get(approved.ActionId)!.State);
+        Assert.Empty(broker.Claim(5, CuModality.Android));
+    }
+
+    [Fact]
     public async Task Executor_RechecksDeviceState_ThenRunsBoundedCommand()
     {
         var runner = new FakeRunner();
@@ -185,6 +204,27 @@ public sealed class AdbBridgeTests
         Assert.True(result.Ok);
         Assert.Equal(["-s", "device-1", "get-state"], runner.Calls[0]);
         Assert.Equal(["-s", "device-1", "exec-out", "uiautomator", "dump", "/dev/tty"], runner.Calls[1]);
+    }
+
+    [Fact]
+    public async Task Executor_PanicBetweenStateCheckAndAction_StopsBeforeSecondAdbCall()
+    {
+        var halted = false;
+        var runner = new FakeRunner { OnRun = _ => halted = true };
+        using var executor = new AdbBridgeExecutor(
+            AdbBridgeOptions.Create(@"C:\Android\adb.exe", ["device-1"]),
+            runner,
+            () => halted);
+        var item = new CuBrokerItem("a1", Android("tap", new()
+        {
+            ["serial"] = "device-1", ["x"] = "1", ["y"] = "2",
+        }), CuActionState.Executing, null, DateTimeOffset.UtcNow);
+
+        var result = await executor.ExecuteAsync(item);
+
+        Assert.False(result.Ok);
+        Assert.Single(runner.Calls);
+        Assert.Contains("halted", result.Error!, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

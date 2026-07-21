@@ -15,16 +15,19 @@ public partial class SettingsView : UserControl
     private readonly Action<bool>? _onRunElevatedChanged;
     private readonly Action<bool>? _onScanMcpToolsChanged;
     private readonly Action? _onDecoyAuditChanged;
+    private readonly Action? _onAdbBridgeChanged;
 
     public SettingsView(ForemanSettings settings,
                         Action<bool>? onRunElevatedChanged = null,
                         Action<bool>? onScanMcpToolsChanged = null,
-                        Action? onDecoyAuditChanged = null)
+                        Action? onDecoyAuditChanged = null,
+                        Action? onAdbBridgeChanged = null)
     {
         _settings = settings;
         _onRunElevatedChanged = onRunElevatedChanged;
         _onScanMcpToolsChanged = onScanMcpToolsChanged;
         _onDecoyAuditChanged = onDecoyAuditChanged;
+        _onAdbBridgeChanged = onAdbBridgeChanged;
         InitializeComponent();
         Populate();
         RefreshPresenceLock();
@@ -354,6 +357,10 @@ public partial class SettingsView : UserControl
         var portChanged         = port != _settings.McpPort;
         var runElevatedChanged  = (RunElevatedCheck.IsChecked == true) != _settings.RunElevated;
         var scanMcpToolsChanged = (ScanMcpToolsCheck.IsChecked == true) != _settings.ScanMcpTools;
+        var adbChanged = adbEnabled != oldAdb.Enabled
+            || !string.Equals(oldAdb.ExecutablePath ?? string.Empty, adbPath, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(oldAdb.ExecutableSha256 ?? string.Empty, adbHash ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            || !new HashSet<string>(oldAdb.EnrolledDeviceSerials, StringComparer.OrdinalIgnoreCase).SetEquals(adbDevices);
 
         _settings.McpPort                    = port;
         _settings.RunElevated                = RunElevatedCheck.IsChecked == true;
@@ -431,6 +438,11 @@ public partial class SettingsView : UserControl
         // Apply the MCP tool-scan toggle (starts/stops the opt-in outbound probe).
         if (scanMcpToolsChanged)
             _onScanMcpToolsChanged?.Invoke(_settings.ScanMcpTools);
+
+        // Revocation/re-enrolment is live and atomic: the old executor and its pending actions are stopped before the
+        // new binary/device set is armed. The Saved confirmation therefore describes current runtime state.
+        if (adbChanged)
+            _onAdbBridgeChanged?.Invoke();
 
         // Hosted as a tab (no window to close) — confirm in place instead.
         SavedStatus.Text = "Saved.";
