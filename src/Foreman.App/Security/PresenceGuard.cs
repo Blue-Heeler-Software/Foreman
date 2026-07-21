@@ -105,6 +105,7 @@ public static class PresenceGuard
         WeakeningAction.ResumeComputerUse    => "resume computer use after a panic stop",
         WeakeningAction.BindCuWindow         => "bind a window for AI computer use",
         WeakeningAction.EnrollLocalAgentHost => "authorize a local AI agent to drive the desktop",
+        WeakeningAction.EnrollAdbBridge      => "authorize the Android ADB bridge and enrolled devices",
         WeakeningAction.ExitForeman          => "quit Foreman",
         _                                    => "security change",
     };

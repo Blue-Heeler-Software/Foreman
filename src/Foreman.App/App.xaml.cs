@@ -28,6 +28,8 @@ public partial class App : Application
     private Foreman.App.ComputerUse.DesktopCuController? _desktopCu;
     private Foreman.App.ComputerUse.PilotChannelController? _pilotChannel;
     private Foreman.Core.ComputerUse.CuExecutorPump? _cuPump;
+    private Foreman.Core.ComputerUse.AdbBridgeExecutor? _adbBridge;
+    private Foreman.Core.ComputerUse.CuExecutorPump? _adbPump;
     private System.IO.FileStream? _cuSidecarPin;
     private System.IO.FileStream? _cuPilotPin;
     private System.IO.FileStream? _etwSidecarPin;
@@ -348,10 +350,57 @@ public partial class App : Application
         _mcpHost.State.CuDesktopApprovalGate = () => Security.PresenceGuard.AuthorizeAsync(
             Foreman.Core.Security.WeakeningAction.ApproveCuDesktopAction,
             "approve a held desktop computer-use action", forcePresence: true, freshTap: true);
-        // Connect-Agent window's "Browser-use driver" picker reads/sets the CU driver in-process (operator).
+        // Connect-Agent window's shared browser/Android driver picker reads/sets the CU driver in-process (operator).
         _tray.GetCuDriver = () => _mcpHost.State.Cu?.Driver;
         _tray.SetCuDriver = id => _mcpHost.State.Cu?.SetDriver(id);
         _tray.GetCuAttentionTab = () => _mcpHost.State.Cu?.AttentionTab;
+
+        // Android/ADB bridge: a third modality on the SAME audited broker and shared harness-driver set. The executor
+        // is strictly in-process; harnesses submit structured Android actions through cu_submit, while only this pump
+        // can claim them. Device-scoped actions are admitted only for the presence-enrolled serial set.
+        var adbSettings = settings.AdbBridge ?? new Foreman.Core.Settings.AdbBridgeSettings();
+        cuBroker.SetAndroidDevices(adbSettings.EnrolledDeviceSerials);
+        if (adbSettings.Enabled)
+        {
+            var adbPath = adbSettings.ExecutablePath?.Trim() ?? string.Empty;
+            var adbHash = adbSettings.ExecutableSha256?.Trim() ?? string.Empty;
+            if (!Path.IsPathFullyQualified(adbPath) || !File.Exists(adbPath) || adbHash.Length != 64)
+            {
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.High,
+                    "Foreman.Android",
+                    "Android/ADB bridge is enabled but its adb path/hash enrolment is missing or unavailable — " +
+                    "bridge REFUSED to arm. Re-save it under Settings → Computer use."));
+            }
+            else
+            {
+                var options = Foreman.Core.ComputerUse.AdbBridgeOptions.Create(
+                    Path.GetFullPath(adbPath), adbSettings.EnrolledDeviceSerials, adbHash);
+                _adbBridge = new Foreman.Core.ComputerUse.AdbBridgeExecutor(options);
+                if (!_adbBridge.IsReady)
+                {
+                    _adbBridge.Dispose();
+                    _adbBridge = null;
+                    EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.High,
+                        "Foreman.Android",
+                        "Android/ADB bridge REFUSED to arm because adb.exe changed after enrolment or could not be pinned. " +
+                        "Verify it, then re-save it under Settings → Computer use."));
+                }
+                else
+                {
+                    _mcpHost.State.Adb = _adbBridge;
+                    _adbPump = new Foreman.Core.ComputerUse.CuExecutorPump(cuBroker, _adbBridge, batch: 2);
+                    _ = _adbPump.RunAsync(TimeSpan.FromMilliseconds(400), _cts!.Token);
+                    panicState.Changed += halted =>
+                    {
+                        if (halted) _adbBridge?.PanicStop();
+                    };
+                    EventBus.Instance.Publish(new MonitoringNoticeEvent(DateTimeOffset.UtcNow, ForemanSeverity.Info,
+                        "Foreman.Android",
+                        $"Android/ADB bridge armed with {options.EnrolledSerials.Count} enrolled device(s). " +
+                        "Observe-only actions are audited; tap/type/swipe/key actions require operator approval."));
+                }
+            }
+        }
 
         // Held-CU operator approve/reject for the tray's approvals window. Mirrors the cu_approve / cu_reject MCP tools
         // (incl. the desktop presence tap) so the operator has an IN-APP way to clear a held action - there was none,
@@ -404,9 +453,9 @@ public partial class App : Application
         _tray.Panic = panicController;
         // Keep the tray STOP/RESUME label correct even when a halt/resume doesn't change the tray status colour.
         panicState.Changed += _ => Dispatcher.BeginInvoke(new Action(() => _tray?.RefreshMenu()));
-        // INV-20: on panic, the broker rejects every pending/in-flight DESKTOP item and bumps the panic epoch so a stale
-        // relayed proposal can't execute post-halt. Unconditional (fires even when desktop CU isn't armed - the desktop
-        // queue is then simply empty), so it never depends on the arm block running.
+        // INV-20: on panic, the broker rejects every pending/in-flight local-input (Desktop or Android) item and bumps
+        // the panic epoch so a stale proposal can't execute post-halt. Unconditional, so it never depends on either
+        // executor's arm block running.
         panicState.Changed += halted => { if (halted) cuBroker.OnPanicHalt(); };
         // Credential vault (P1): constructed DORMANT - it creates no files until the operator enrolls (tray UI, P1.3c).
         // The App holds the unlocked key; the resolver injects {{vault:...}} only at the inject boundary (P1.4). DPAPI
@@ -1385,6 +1434,7 @@ public partial class App : Application
         _sidecarWatchdog?.Stop();
         _alertResolver?.Dispose();
         _toolScan?.Dispose();
+        _adbBridge?.Dispose();
         _headSealKey?.Dispose();
         _sidecar?.Dispose();
         _mcpHost?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));

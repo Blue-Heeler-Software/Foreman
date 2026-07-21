@@ -44,6 +44,8 @@ That safety loop can also save money. Catching a runaway command or abandoned ag
 - Reads agent MCP configuration and alerts when a new or changed MCP server appears.
 - Optionally scans HTTP/SSE MCP tool descriptions for prompt-injection or data-exfiltration wording. This opt-in scan is the only feature that connects to third-party MCP servers; stdio servers are never launched.
 - Exposes a local MCP server so agents can check Foreman Agent Safety status, pre-flight commands, inspect recent events, and get integration instructions.
+- Brokers audited browser and opt-in Android/ADB computer use through one shared, per-harness-authorised `cu_*` surface,
+  with device enrolment, operator holds, and a global panic stop.
 - Keeps a searchable/exportable event log and a dashboard for live process, harness, and behavior state.
 - Defines a shared-repo harness deconfliction model for leases, handoffs, and Git conflict evidence; see
   [docs/harness-deconfliction.md](docs/harness-deconfliction.md).
@@ -278,8 +280,44 @@ from the C# method name), so call them exactly as shown:
 | `list_mcp_servers` | Discovered MCP servers across harness configs |
 | `list_mcp_tool_findings` | Cached opt-in MCP tool-description findings |
 | `scan_repo_for_agent_config` | Vet a repo's agent-config supply chain (`.claude`/`.gemini` hooks, `.cursor` rules, `.vscode` `folderOpen` tasks, `.github/setup.js`, `CLAUDE.md`/`AGENTS.md`) for the "rules file backdoor" planted-trigger class — *before* opening it in an agent |
+| `cu_status` | Mediated browser/Android/desktop broker state, panic state, ADB readiness, and held actions |
+| `cu_submit` / `cu_action_status` | Submit an audited browser or bounded Android action and retrieve its result |
+| `cu_approve` / `cu_reject` | Operator-only decision for actions held by the broker |
+| `cu_set_driver` | Operator-only shared harness allow-list for browser and Android computer use |
 
 See [docs/oversight-model.md](docs/oversight-model.md) for the Ask Harness vs Send for Audit model and the MCP supply-chain tiers.
+
+### Android / ADB bridge
+
+Foreman includes an opt-in Android Debug Bridge modality inside the same audited `cu_*` broker used for browser
+computer use. It is a bounded bridge, not an `adb shell` convenience tool:
+
+- observe-only `devices`, `screenshot`, `ui_dump`, and capped `logcat` actions;
+- `tap`, `type`, `swipe`, and constrained `key` actions that are always held for operator approval;
+- an absolute, operator-selected `adb.exe` path — Foreman never searches `PATH`; its SHA-256 is sealed at enrolment
+  and the binary is write/delete-pinned while Foreman is running;
+- explicit device-serial enrolment, a fresh device-authorisation check before every scoped action, bounded output and
+  command timeouts;
+- the existing global panic stop, which rejects queued/in-flight Android work and kills the active adb client;
+- the shared driver set plus each harness's **Computer use policy**, so every selected harness can use the unified
+  Foreman MCP plugin without receiving executor or raw-shell authority.
+
+To arm it, first enable Foreman's presence lock, then open **Settings → Computer use**. Select the Android SDK
+`platform-tools\adb.exe`, use **Test and list devices**, enter the serials you want to enrol, enable the bridge, save,
+and restart Foreman. Select allowed harnesses under **Connect agent → Computer-use driver(s)** or the individual
+harness settings.
+
+Example calls:
+
+```text
+cu_submit(modality="android", verb="devices", argsJson="{}")
+cu_submit(modality="android", verb="ui_dump", argsJson="{\"serial\":\"emulator-5554\"}")
+cu_submit(modality="android", verb="tap", argsJson="{\"serial\":\"emulator-5554\",\"x\":120,\"y\":340}")
+```
+
+If exactly one device is enrolled, `serial` may be omitted; Foreman stamps that serial into the action before it is
+audited. Results are retrieved with `cu_action_status(actionId)`. Screenshots return PNG metadata plus base64 image
+data; output and execution time are capped.
 
 ## Configuration
 
@@ -298,6 +336,7 @@ Settings live at `%LocalAppData%\Foreman\settings.json` and are editable from th
 | `ScanMcpTools` | `false` | Opt-in MCP tool-description injection scan |
 | `LlmTriage` | enabled | Cross-agent auditor preference routing |
 | `ScheduledAudit` | disabled | Optional count/time-based independent cross-harness review with per-harness cooldown |
+| `AdbBridge` | disabled | Bounded, presence-enrolled Android/ADB computer-use executor |
 
 ## Release Trust
 
@@ -307,9 +346,6 @@ The installer is per-user and requires no admin prompt. `Foreman.exe`, its four 
 
 - Add a full settings UI for LLM triage preferences.
 - Add first-class OpenCode/T3 MCP config adapters after more field testing.
-- Explore an Android/ADB computer-use bridge as a mediated CU modality: start with observe-only device inventory,
-  screenshot, UI dump, and logcat capture; only add approved tap/type/swipe after explicit device enrollment, audit,
-  and panic wiring. Do not expose raw `adb shell` as an MCP convenience bridge.
 - Add native Windows toast notifications in place of tray balloons.
 - Continue tuning false positives from real agent workflows.
 - Browser extension (alpha): pairs to this machine over loopback for at-a-glance Foreman Agent Safety status — connect via **Connect Agent → Pair browser extension**. See [extension/README.md](extension/README.md) and [docs/closed-loop-spec.md](docs/closed-loop-spec.md).

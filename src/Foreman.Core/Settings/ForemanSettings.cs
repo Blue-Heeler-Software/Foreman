@@ -32,7 +32,7 @@ public sealed class ForemanSettings
     public bool NotifyOnWarning { get; set; } = true;       // medium-severity "warning" toasts; false = mute the yellow popups (still logged + shown)
     public bool MonitorAllProcesses { get; set; } = false; // false = harness children only
 
-    /// <summary>Persisted mediated browser-use (cu_*) driver: which harness may drive. Normalized form:
+    /// <summary>Persisted mediated browser/Android (cu_*) driver set: which harnesses may drive. Normalized form:
     /// null/empty = operator-only, "*" = any harness, else a harness id. Restored into the CuBroker on startup
     /// so the operator doesn't have to re-pick it after every relaunch.</summary>
     public string? CuDriver { get; set; }
@@ -65,6 +65,13 @@ public sealed class ForemanSettings
     /// (INV-15 propose-not-act) - every desktop action from a driver is Held for the operator. Sealed (a settings edit
     /// flipping this on is tamper-detected). Leave off unless you accept unattended desktop autonomy.</summary>
     public bool CuDesktopAutoGrant { get; set; }
+
+    /// <summary>
+    /// Opt-in Android Debug Bridge modality. It is deliberately a bounded broker, not raw adb access: only enrolled
+    /// device serials and Foreman's fixed devices/screenshot/UI-dump/logcat/tap/type/swipe/key verbs are available.
+    /// Harness authority still comes from <see cref="CuDriver"/> plus the per-harness computer-use policy.
+    /// </summary>
+    public AdbBridgeSettings AdbBridge { get; set; } = new();
 
     /// <summary>Persist the event log to disk (JSONL) so it survives restarts. On by default.</summary>
     public bool EventLogPersist { get; set; } = true;
@@ -330,6 +337,27 @@ public sealed class ForemanSettings
 
     public Foreman.Core.Mcp.HarnessCapabilityRestrictions EffectiveCapabilityRestrictions(string harnessId)
         => Foreman.Core.Mcp.HarnessCapabilityPolicy.Effective(HarnessCapabilityRestrictions, harnessId);
+}
+
+public sealed class AdbBridgeSettings
+{
+    /// <summary>Off by default. Changes take effect after Foreman restarts.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// Absolute operator-selected path to adb/adb.exe. Foreman never searches PATH because an agent-controlled PATH
+    /// entry could turn bridge activation into arbitrary process execution.
+    /// </summary>
+    public string? ExecutablePath { get; set; }
+
+    /// <summary>
+    /// SHA-256 of the operator-enrolled adb binary. The runner verifies it and keeps the file write/delete-locked while
+    /// Foreman is active, so a same-user process cannot replace the trusted executable after enrolment.
+    /// </summary>
+    public string? ExecutableSha256 { get; set; }
+
+    /// <summary>Device serials the operator explicitly enrolled. Empty means inventory only.</summary>
+    public List<string> EnrolledDeviceSerials { get; set; } = [];
 }
 
 public sealed class LlmTriageSettings

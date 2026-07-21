@@ -39,8 +39,8 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
-        "Returns the computer-use panic state: whether Foreman-mediated computer/browser use is currently HALTED by " +
-        "an operator panic stop. While halted, all mediated computer/browser actions are refused. Resume is " +
+        "Returns the computer-use panic state: whether Foreman-mediated browser/desktop/Android use is currently HALTED by " +
+        "an operator panic stop. While halted, all mediated computer-use actions are refused. Resume is " +
         "operator-only (a presence tap at the machine) and is intentionally NOT available over MCP — an agent " +
         "cannot un-halt itself.")]
     public static object ComputerUseStatus()
@@ -1422,21 +1422,34 @@ public static class ForemanMcpTools
     // reports via cu_complete_action. The panic halt (computer_use_status) blocks submit + empties the poll.
 
     [McpServerTool, Description(
-        "Mediated computer-use broker status: whether CU is halted (panic), the selected driver set, and the actions " +
-        "currently HELD for operator approval. Read-only.")]
-    public static object CuStatus()
+        "Mediated computer-use broker status: whether CU is halted (panic), the selected driver set, bounded Android/ADB " +
+        "bridge availability, and actions currently HELD for operator approval. Read-only.")]
+    public static object CuStatus(Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
         if (state.Cu is null)
             return new { available = false, reason = "Mediated computer use is not wired (headless/test)." };
-        var held = state.Cu.ListHeld();
+        var caller = CallerScope.From(http);
+        var held = state.Cu.ListHeld()
+            .Where(i => caller.IsOperator
+                || string.Equals(i.Action.ByHarness, caller.HarnessId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         return new
         {
             available = true,
             halted = state.Panic?.IsHalted ?? false,
             driver = state.Cu.Driver,
             attentionTab = state.Cu.AttentionTab,   // operator's pinned shared-attention tab (null = no pin)
-            heldCount = held.Count,
+            android = state.Adb is null
+                ? new { enabled = false, ready = false, executable = (string?)null, enrolledDevices = Array.Empty<string>() }
+                : new
+                {
+                    enabled = true,
+                    ready = state.Adb.IsReady,
+                    executable = (string?)state.Adb.ExecutablePath,
+                    enrolledDevices = state.Adb.EnrolledSerials.ToArray(),
+                },
+            heldCount = held.Length,
             held = held.Select(i => new { actionId = i.ActionId, modality = i.Action.Modality.ToString().ToLowerInvariant(), verb = i.Action.Verb, reason = i.Verdict?.Reason }).ToArray(),
         };
     }
@@ -1461,13 +1474,14 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
-        "Submit a computer-use action for Foreman to AUDIT and (if cleared) execute. modality = 'browser' or " +
-        "'desktop'; verb e.g. navigate/click/type/read; argsJson is a JSON object of verb args, e.g. " +
+        "Submit a computer-use action for Foreman to AUDIT and (if cleared) execute. modality = 'browser', 'android', " +
+        "or operator-only 'desktop'. Android is a bounded ADB broker: devices/screenshot/ui_dump/logcat/tap/type/swipe/key; " +
+        "there is no raw shell. argsJson is a JSON object of verb args, e.g. " +
         "{\"url\":\"https://...\"} or {\"text\":\"...\",\"selector\":\"#q\"}. Returns the action's state: 'approved' " +
         "(cleared to run), 'held' (awaiting operator approval — poll cu_action_status), or 'blocked' (refused).")]
     public static async Task<object> CuSubmit(
-        [Description("'browser' or 'desktop'")] string modality,
-        [Description("Action verb, e.g. navigate, click, type, read")] string verb,
+        [Description("'browser', 'android', or operator-only 'desktop'")] string modality,
+        [Description("Action verb; Android: devices, screenshot, ui_dump, logcat, tap, type, swipe, or key")] string verb,
         [Description("JSON object of verb arguments")] string? argsJson = null,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
@@ -1481,13 +1495,15 @@ public static class ForemanMcpTools
         if (string.IsNullOrWhiteSpace(verb))
             return new { accepted = false, reason = "verb is required." };
         if (!Enum.TryParse<Foreman.Core.ComputerUse.CuModality>(modality?.Trim(), ignoreCase: true, out var mod))
-            return new { accepted = false, reason = "modality must be 'browser' or 'desktop'." };
+            return new { accepted = false, reason = "modality must be 'browser', 'android', or 'desktop'." };
 
         // Desktop CU is OPERATOR-DRIVEN IN-PROCESS ONLY (spec INV-7, Codex review #2): never over MCP. A harness
         // cannot submit or drain desktop actions through this tool, and a "*" driver never extends to desktop. The
         // App's in-process desktop pump is the only path that submits Desktop actions to the broker.
         if (mod == Foreman.Core.ComputerUse.CuModality.Desktop)
             return new { accepted = false, reason = "Desktop computer-use is operator-driven in-process only — not available over MCP." };
+        if (mod == Foreman.Core.ComputerUse.CuModality.Android && state.Adb is null)
+            return new { accepted = false, reason = "The operator has not enabled the Android/ADB bridge." };
 
         var who = caller.IsOperator ? "operator" : caller.HarnessId;
 
@@ -1499,8 +1515,15 @@ public static class ForemanMcpTools
             if (!browserUse.Allowed)
                 return new { accepted = false, status = browserUse.Access == HarnessCapabilityAccess.Block ? "blocked" : "operator_approval_required", reason = browserUse.Reason };
         }
+        if (!caller.IsOperator && mod == Foreman.Core.ComputerUse.CuModality.Android)
+        {
+            var computerUse = HarnessCapabilityPolicy.EvaluateComputerUse(
+                HarnessCapabilityPolicy.Effective(state.HarnessCapabilityRestrictions, caller.HarnessId));
+            if (!computerUse.Allowed)
+                return new { accepted = false, status = computerUse.Access == HarnessCapabilityAccess.Block ? "blocked" : "operator_approval_required", reason = computerUse.Reason };
+        }
 
-        if (!state.Cu.CanDrive(who, caller.IsOperator))
+        if (!state.Cu.CanDriveModality(who, caller.IsOperator, mod))
             return new { accepted = false, reason = state.Cu.Driver is null
                 ? "No computer-use driver selected. Ask the operator to choose your harness as the CU driver."
                 : $"Computer use is currently accepting actions only from Foreman's selected driver set ({FormatCuDriver(state.Cu.Driver)})." };
@@ -1529,13 +1552,19 @@ public static class ForemanMcpTools
 
     [McpServerTool, Description("Returns the current state + result of a computer-use action submitted via cu_submit.")]
     public static object CuActionStatus(
-        [Description("actionId from cu_submit")] string actionId)
+        [Description("actionId from cu_submit")] string actionId,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         var state = _state ?? new ForemanState();
         if (state.Cu is null) return new { found = false, reason = "Mediated computer use is not available." };
         if (string.IsNullOrWhiteSpace(actionId)) return new { found = false, reason = "actionId is required." };
+        var caller = CallerScope.From(http);
+        if (!caller.CanMutate) return new { found = false, reason = "Refused: token/process identity mismatch." };
         var item = state.Cu.Get(actionId.Trim());
         if (item is null) return new { found = false, reason = "Unknown actionId." };
+        if (!caller.IsOperator
+            && !string.Equals(item.Action.ByHarness, caller.HarnessId, StringComparison.OrdinalIgnoreCase))
+            return new { found = false, reason = "Unknown actionId." };
         return new
         {
             found = true,
@@ -1738,10 +1767,10 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
-        "Operator only: choose which harnesses may DRIVE Foreman-mediated browser use (submit cu_* actions). Empty/blank " +
+        "Operator only: choose which harnesses may DRIVE Foreman-mediated browser and Android use (submit cu_* actions). Empty/blank " +
         "= operator only (default); a harness id (e.g. 'codex') = just that harness; comma-separated ids (e.g. " +
         "'claude-code,codex') = that shared set; 'any' = every connected harness. The selected driver set is global " +
-        "Foreman routing, separate from per-harness CU/BU policy, and keeps the shared attention tab intact.")]
+        "Foreman routing, separate from per-harness CU/BU policy, and keeps browser attention + Android enrolment intact.")]
     public static object CuSetDriver(
         [Description("Harness id(s) to authorize as the CU driver set; comma-separated allowed; empty = operator-only; 'any' = all harnesses")] string? harnessId = null,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
@@ -1768,10 +1797,17 @@ public static class ForemanMcpTools
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(json)) return map;
+        if (json.Length > 64 * 1024) throw new FormatException("argsJson exceeds the 64 KiB cap.");
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new FormatException("argsJson must be a JSON object.");
         foreach (var p in doc.RootElement.EnumerateObject())
-            map[p.Name] = p.Value.ValueKind == JsonValueKind.String ? (p.Value.GetString() ?? "") : p.Value.ToString();
+        {
+            if (map.Count >= 32) throw new FormatException("argsJson may contain at most 32 fields.");
+            if (p.Name.Length is < 1 or > 64) throw new FormatException("argsJson field names must be 1-64 characters.");
+            var value = p.Value.ValueKind == JsonValueKind.String ? (p.Value.GetString() ?? "") : p.Value.ToString();
+            if (value.Length > 16 * 1024) throw new FormatException($"argsJson field '{p.Name}' exceeds the 16 KiB cap.");
+            map[p.Name] = value;
+        }
         return map;
     }
 

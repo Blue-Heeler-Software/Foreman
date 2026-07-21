@@ -60,6 +60,8 @@ public sealed class SettingsSealTests
     [InlineData("decoyRead")]
     [InlineData("peerBinding")]
     [InlineData("capabilities")]
+    [InlineData("adb")]
+    [InlineData("adbHash")]
     [InlineData("mute")]
     public void TamperingASecurityField_IsDetected(string field)
     {
@@ -78,6 +80,12 @@ public sealed class SettingsSealTests
             case "decoyRead":       s.DecoyCredentials.EnableReadAuditing = false; break;
             case "peerBinding":     s.McpPeerBindingEnforce = false; break;
             case "capabilities":    s.HarnessCapabilityRestrictions["claude-code"].BrowserUse = HarnessCapabilityAccess.Allow; break;
+            case "adb":
+                s.AdbBridge.Enabled = true;
+                s.AdbBridge.ExecutablePath = @"C:\Android\platform-tools\adb.exe";
+                s.AdbBridge.EnrolledDeviceSerials = ["device-1"];
+                break;
+            case "adbHash":         s.AdbBridge.ExecutableSha256 = new string('0', 64); break;
             case "mute":            s.Mutes.Add(new MuteEntry { Scope = "category", Value = "cred" }); break;
         }
 
@@ -112,6 +120,8 @@ public sealed class SettingsSealTests
         var b = Base();
         b.DisabledHarnesses = ["cline", "aider"];          // reversed
         b.EmergencyRuleIds = ["net-001", "cred-004"];      // reversed
+        a.AdbBridge.EnrolledDeviceSerials = ["device-b", "device-a"];
+        b.AdbBridge.EnrolledDeviceSerials = ["device-a", "device-b"];
         Assert.Equal(SettingsSeal.Compute(a, Secret), SettingsSeal.Compute(b, Secret));
     }
 

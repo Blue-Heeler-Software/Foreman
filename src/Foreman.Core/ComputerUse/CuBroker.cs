@@ -112,17 +112,55 @@ public sealed class CuBroker
             return bad;
         }
 
-        // Desktop driver authorization (INV-14): a Desktop action must come from an explicitly enrolled driver id (or
-        // the operator); the "*" wildcard never authorizes Desktop. Blocked early, before audit. (Browser is unaffected
-        // - it keeps the existing Claim-time CanDrive gate.)
-        if (action.Modality == CuModality.Desktop
-            && !CanDriveModality(action.ByHarness, isOperator: false, CuModality.Desktop))
+        if (action.Modality == CuModality.Android && !CuVerbs.IsKnownAndroid(action.Verb))
+        {
+            var bad = new CuBrokerItem(id, action, CuActionState.Blocked,
+                CuVerdict.Block("broker", "unsupported Android/ADB verb"), DateTimeOffset.UtcNow,
+                Error: "Unsupported Android verb.", UpdatedAt: DateTimeOffset.UtcNow);
+            _items[id] = bad;
+            return bad;
+        }
+
+        // Desktop/Android driver authorization. Desktop still requires an explicit id (never "*"); Android uses the
+        // operator-approved shared driver set, so every selected harness can use the same unified cu_* surface.
+        if (action.Modality is CuModality.Desktop or CuModality.Android
+            && !CanDriveModality(action.ByHarness, isOperator: false, action.Modality))
         {
             var denied = new CuBrokerItem(id, action, CuActionState.Blocked,
-                CuVerdict.Block("broker", "driver not authorized for desktop computer use (enroll the id; '*' does not count)"),
-                DateTimeOffset.UtcNow, Error: "Driver not authorized for desktop.", UpdatedAt: DateTimeOffset.UtcNow);
+                CuVerdict.Block("broker", $"driver not authorized for {action.Modality.ToString().ToLowerInvariant()} computer use"),
+                DateTimeOffset.UtcNow, Error: "Driver not authorized for this modality.", UpdatedAt: DateTimeOffset.UtcNow);
             _items[id] = denied;
             return denied;
+        }
+
+        if (action.Modality == CuModality.Android
+            && !string.Equals(action.Verb, "devices", StringComparison.OrdinalIgnoreCase))
+        {
+            var serial = action.Arg("serial").Trim();
+            lock (_enrollLock)
+            {
+                // QOL: when exactly one device is enrolled, a harness may omit serial; stamp the enrolled identity into
+                // the audited action so the target is still explicit and immutable before approval/execution.
+                if (serial.Length == 0 && _androidEnrollments.Count == 1)
+                {
+                    serial = _androidEnrollments.Single();
+                    var stamped = new Dictionary<string, string>(action.Args, StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["serial"] = serial,
+                    };
+                    action = action with { Args = stamped };
+                }
+                if (serial.Length == 0 || !_androidEnrollments.Contains(serial))
+                {
+                    var denied = new CuBrokerItem(id, action, CuActionState.Blocked,
+                        CuVerdict.Block("broker", serial.Length == 0
+                            ? "Android action requires an explicitly enrolled device serial"
+                            : "target Android device is not enrolled"),
+                        DateTimeOffset.UtcNow, Error: "Target Android device is not enrolled.", UpdatedAt: DateTimeOffset.UtcNow);
+                    _items[id] = denied;
+                    return denied;
+                }
+            }
         }
 
         // Rate limit (Slice 2): a non-operator harness flooding actions faster than a human could pilot is Held
@@ -187,6 +225,15 @@ public sealed class CuBroker
                     ? $"desktop action held: {boundsReason}"
                     : "desktop action held for operator approval (auto-grant off)");
             }
+        }
+
+        // Android state changes are propose-not-act: even a local Allow must be explicitly approved by the operator.
+        // Observe-only devices/screenshot/ui_dump/logcat can use the audited fast path.
+        if (action.Modality == CuModality.Android && state == CuActionState.Approved
+            && CuVerbs.IsStateChanging(action.Verb))
+        {
+            state = CuActionState.Held;
+            verdict = CuVerdict.Hold("broker", "Android state-changing action held for operator approval");
         }
 
         var item = new CuBrokerItem(id, action, state, verdict, DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow,
@@ -310,7 +357,7 @@ public sealed class CuBroker
                     deliver = item with { Action = item.Action with { Args = stamped } };
                 }
             }
-            else
+            else if (item.Action.Modality == CuModality.Browser)
             {
                 // Browser: re-evaluate the pinned-tab gate at delivery (operator-approved excursions pass), then stamp
                 // the live pin into a no-tabId state change so the executor cannot divert to the active tab.
@@ -411,6 +458,7 @@ public sealed class CuBroker
     // flag, so a settings edit alone can't enroll it).
     private readonly object _enrollLock = new();
     private readonly HashSet<string> _desktopEnrollments = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _androidEnrollments = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Enroll an explicit DESKTOP driver id (e.g. "local-agent-host"). Stored in a derived set separate from
     /// the persisted browser driver set, so a later browser-driver change cannot drop it and it is never persisted. The
@@ -421,6 +469,35 @@ public sealed class CuBroker
         var norm = (id ?? string.Empty).Trim().ToLowerInvariant();
         if (norm.Length == 0 || norm == "*") return;
         lock (_enrollLock) _desktopEnrollments.Add(norm);
+    }
+
+    /// <summary>
+    /// Replaces the explicit Android device enrolment set. Device identity is separate from harness authority: a
+    /// harness must be in <see cref="Drivers"/> AND its requested serial must be enrolled. The App seeds this from
+    /// the presence-gated, sealed ADB settings at startup.
+    /// </summary>
+    public void SetAndroidDevices(IEnumerable<string>? serials)
+    {
+        var normalized = (serials ?? [])
+            .Select(static s => (s ?? string.Empty).Trim())
+            .Where(AdbBridgeExecutor.IsSafeSerial)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        lock (_enrollLock)
+        {
+            _androidEnrollments.Clear();
+            foreach (var serial in normalized)
+                _androidEnrollments.Add(serial);
+        }
+    }
+
+    public IReadOnlyList<string> AndroidDevices
+    {
+        get
+        {
+            lock (_enrollLock)
+                return _androidEnrollments.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
     }
 
     public bool CanDrive(string? harnessId, bool isOperator)
@@ -434,7 +511,7 @@ public sealed class CuBroker
 
     /// <summary>Modality-aware driver gate (spec INV-14): the "*" wildcard NEVER authorizes the Desktop modality - a
     /// desktop driver must be an EXPLICITLY enumerated, operator-enrolled id (e.g. "local-agent-host"). The operator /
-    /// Hello root always passes. Browser keeps the existing wildcard behaviour.</summary>
+    /// Hello root always passes. Browser and Android use the operator's shared driver set.</summary>
     public bool CanDriveModality(string? harnessId, bool isOperator, CuModality modality)
     {
         if (isOperator || string.Equals(harnessId, OperatorMarker, StringComparison.OrdinalIgnoreCase)) return true;
@@ -535,7 +612,12 @@ public sealed class CuBroker
 
     // Modality-scoped dispatch: browser actions hit the pinned-tab gate, desktop actions the one-window gate.
     private CuVerdict? EvaluateModalityExcursion(CuAction a, string when) =>
-        a.Modality == CuModality.Desktop ? EvaluateWindowExcursion(a, when) : EvaluateExcursion(a, when);
+        a.Modality switch
+        {
+            CuModality.Desktop => EvaluateWindowExcursion(a, when),
+            CuModality.Browser => EvaluateExcursion(a, when),
+            _ => null,
+        };
 
     // ── Desktop one-window confinement (parallel to the pin; modality-scoped) ────
 
@@ -576,14 +658,14 @@ public sealed class CuBroker
         return (true, w is null ? "Cleared the bound CU window." : $"Bound CU window '{w.TitleAtBind}' (pid {w.OwnerPid}).");
     }
 
-    /// <summary>Called on a panic HALT: invalidate the desktop queue. Every non-terminal Desktop item is Rejected and
-    /// the panic epoch is bumped, so any in-flight/after Claim refuses items approved before the halt (spec Slice 1).</summary>
+    /// <summary>Called on a panic HALT: invalidate local-input queues. Every non-terminal Desktop or Android item is
+    /// Rejected and the panic epoch is bumped, so any in-flight/after Claim refuses items approved before the halt.</summary>
     public void OnPanicHalt()
     {
         Interlocked.Increment(ref _panicEpoch);
         foreach (var item in _items.Values)
         {
-            if (item.Action.Modality != CuModality.Desktop) continue;
+            if (item.Action.Modality is not (CuModality.Desktop or CuModality.Android)) continue;
             if (item.State is CuActionState.Auditing or CuActionState.Held or CuActionState.Approved or CuActionState.Executing)
                 _items[item.ActionId] = item with
                 {

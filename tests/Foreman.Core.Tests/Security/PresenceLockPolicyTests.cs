@@ -17,6 +17,7 @@ public sealed class PresenceLockPolicyTests
     [InlineData(WeakeningAction.ClearOrRotateLog)]
     [InlineData(WeakeningAction.EditHarnessSysprompt)]
     [InlineData(WeakeningAction.RelaxHarnessCapabilityRestriction)]
+    [InlineData(WeakeningAction.EnrollAdbBridge)]
     [InlineData(WeakeningAction.ExitForeman)]
     public void LockOff_GatesNothing(WeakeningAction action)
         => Assert.False(PresenceLockPolicy.RequiresPresence(action, Off()));
@@ -30,6 +31,7 @@ public sealed class PresenceLockPolicyTests
     [InlineData(WeakeningAction.ClearOrRotateLog)]
     [InlineData(WeakeningAction.EditHarnessSysprompt)]
     [InlineData(WeakeningAction.RelaxHarnessCapabilityRestriction)]
+    [InlineData(WeakeningAction.EnrollAdbBridge)]
     public void Standard_GatesTheWeakeningSet(WeakeningAction action)
         => Assert.True(PresenceLockPolicy.RequiresPresence(action, Standard()));
 
@@ -52,4 +54,8 @@ public sealed class PresenceLockPolicyTests
         Assert.False(s.Enabled);
         Assert.Equal(LockScope.Standard, s.Scope);
     }
+
+    [Fact]
+    public void AdbEnrolment_ForcesFullUserVerification()
+        => Assert.True(PresenceLockPolicy.ForcesUserVerification(WeakeningAction.EnrollAdbBridge));
 }

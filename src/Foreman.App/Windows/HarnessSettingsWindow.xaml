@@ -109,16 +109,16 @@
                 <Separator Margin="0,16,0,14" Background="{StaticResource BorderBrush}" />
 
                 <StackPanel x:Name="CuDriverPanel">
-                    <TextBlock Text="Foreman shared browser-use driver" FontSize="15" FontWeight="SemiBold"
+                    <TextBlock Text="Foreman shared computer-use drivers" FontSize="15" FontWeight="SemiBold"
                                Foreground="{StaticResource TextPrimaryBrush}" FontFamily="Segoe UI, Arial" />
                     <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,8"
-                               Text="Who may submit Foreman-mediated browser-use (cu_*) actions. This is global Foreman routing, separate from the harness policy above. Actions are still audited, held when risky, panic-haltable, and executed by the browser extension." />
+                               Text="Who may submit Foreman-mediated browser and Android/ADB (cu_*) actions through the unified plugin. This is global routing, separate from the harness policies above. Browser actions use Browser use policy; Android uses Computer use policy. Actions remain audited, approval-gated when risky, and panic-haltable." />
                     <ComboBox x:Name="ForemanDriverCombo" MinWidth="260">
                         <ComboBoxItem Tag="unchanged" Content="Leave Foreman's driver set unchanged" />
                         <ComboBoxItem Tag="include" Content="Add this harness to Foreman's shared driver set" />
                         <ComboBoxItem Tag="remove" Content="Remove this harness from Foreman's shared driver set" />
                         <ComboBoxItem Tag="only" Content="Make this harness Foreman's only driver" />
-                        <ComboBoxItem Tag="any" Content="Allow any harness to drive browser use" />
+                        <ComboBoxItem Tag="any" Content="Allow any harness to drive browser and Android use" />
                         <ComboBoxItem Tag="operator" Content="Operator only — no harness driver" />
                     </ComboBox>
                     <TextBlock x:Name="CuDriverNote" Style="{StaticResource Muted}" Margin="0,6,0,0" />
