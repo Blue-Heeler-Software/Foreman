@@ -21,6 +21,7 @@ public sealed class ForemanState : IEventSink
     private readonly ConcurrentDictionary<string, HarnessContextUsage> _contextUsage = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxEvents = 1000;
     private const int MaxAlerts = 1000;
+    private const int MaxAgentReportedAlerts = 200;
     private const int MaxAskHarnessRequests = 200;
     private readonly SuspiciousCommandAlertLimiter _suspiciousCommandAlerts = new();
 
@@ -111,17 +112,19 @@ public sealed class ForemanState : IEventSink
         {
             _alertById[evt.Id] = evt;
 
+            foreach (var stale in EventRetentionPolicy.SelectAgentQuotaVictims(
+                         _alertById.Values.ToArray(), MaxAgentReportedAlerts))
+                _alertById.TryRemove(stale.Id, out _);
+
             // Bound the alert store like the event queue — a connected agent can mint events,
             // so an uncapped dictionary is attacker-inflatable memory + count poisoning.
             // Evict acknowledged first, then oldest, so live signal survives the longest.
             if (_alertById.Count > MaxAlerts)
             {
-                foreach (var stale in _alertById.Values
-                    .OrderBy(static a => a.Acknowledged ? 0 : 1)
-                    .ThenBy(static a => a.Severity)
-                    .ThenBy(static a => a.Timestamp)
-                    .Take(_alertById.Count - MaxAlerts)
-                    .ToList())
+                var protectArrival = !EventRetentionPolicy.IsAgentReported(evt) &&
+                                     evt.Severity >= ForemanSeverity.High ? evt.Id : null;
+                foreach (var stale in EventRetentionPolicy.SelectVictims(
+                             _alertById.Values.ToArray(), _alertById.Count - MaxAlerts, protectArrival))
                 {
                     _alertById.TryRemove(stale.Id, out _);
                 }

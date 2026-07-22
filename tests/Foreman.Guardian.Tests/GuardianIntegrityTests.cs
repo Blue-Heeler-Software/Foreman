@@ -27,13 +27,30 @@ public sealed class GuardianIntegrityTests
         => Assert.True(GuardianIntegrity.Decide(referenceSigner: "ABC", subjectSigner: "abc").Trusted); // case-insensitive thumbprint
 
     [Fact]
-    public void DevelopmentLayout_RequiresCanonicalGuardianSubdirectory()
+    public void UnsignedInstall_ArbitraryRootCannotBypassRecordedHklmRoot()
     {
-        Assert.True(GuardianInstallReference.LayoutMatches(
-            @"C:\Foreman-dev\Foreman.exe",
-            @"C:\Foreman-dev\guardian\Foreman.Guardian.exe"));
-        Assert.False(GuardianInstallReference.LayoutMatches(
-            @"C:\Foreman-dev\Foreman.exe",
-            @"C:\attacker\Foreman.Guardian.exe"));
+        var result = GuardianIntegrity.DecideForInstall(
+            referenceSigner: null,
+            subjectSigner: null,
+            foremanPath: @"C:\Users\attacker\x\Foreman.exe",
+            guardianPath: @"C:\Users\attacker\x\guardian\Foreman.Guardian.exe",
+            recordedInstallRoot: @"C:\Users\operator\AppData\Local\Programs\Foreman",
+            allowUnsignedDevelopment: true);
+
+        Assert.False(result.Trusted);
+        Assert.Contains("administrator-recorded", result.Reason);
+    }
+
+    [Fact]
+    public void UnsignedInstall_MatchingRootStillRequiresExplicitDevelopmentOptIn()
+    {
+        const string root = @"C:\Foreman-dev";
+        var withoutOptIn = GuardianIntegrity.DecideForInstall(
+            null, null, root + @"\Foreman.exe", root + @"\guardian\Foreman.Guardian.exe", root, false);
+        var withOptIn = GuardianIntegrity.DecideForInstall(
+            null, null, root + @"\Foreman.exe", root + @"\guardian\Foreman.Guardian.exe", root, true);
+
+        Assert.False(withoutOptIn.Trusted);
+        Assert.True(withOptIn.Trusted);
     }
 }

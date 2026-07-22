@@ -29,9 +29,19 @@ internal static class GuardianControl
         if (!trusted)
             return (false, $"Refusing to install — the guardian binary failed its integrity check: {reason}");
 
+#if !DEBUG
+        if (!SidecarIntegrity.SelfIsSigned())
+            return (false, "This unsigned release cannot install the LocalSystem Guardian safely. Use a signed " +
+                           "release, or an explicit Debug development build while no signing certificate exists.");
+#endif
+
         // Pass only our live PID. The elevated guardian resolves the image path itself and requires its own image
         // to occupy this process's canonical guardian subdirectory; an attacker-supplied path is never trusted.
-        return Run(exe, $"--install --foreman-pid {Environment.ProcessId}", "install");
+        var developmentOptIn = "";
+#if DEBUG
+        developmentOptIn = " --allow-unsigned-development";
+#endif
+        return Run(exe, $"--install --foreman-pid {Environment.ProcessId}{developmentOptIn}", "install");
     }
 
     public static (bool Ok, string Message) Uninstall()

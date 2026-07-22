@@ -33,6 +33,15 @@ public sealed class SettingsStore
     /// </summary>
     public static ISettingsSealer? Sealer { get; set; }
 
+    /// <summary>Optional durable witness that this installation has successfully sealed settings before.</summary>
+    public static Func<bool>? HasPriorSealEvidence { get; set; }
+
+    /// <summary>Best-effort writer paired with <see cref="HasPriorSealEvidence"/>.</summary>
+    public static Action? RecordSealEvidence { get; set; }
+
+    /// <summary>True only during a documented local MCP-token rotation.</summary>
+    public static Func<bool>? IntegritySecretRecentlyRegenerated { get; set; }
+
     /// <summary>
     /// The seal verdict from the most recent <see cref="Load()"/>: Tampered means settings.json was edited by
     /// something other than Foreman. A tampered object is never returned: Load first restores a sealed last-known-good
@@ -70,10 +79,27 @@ public sealed class SettingsStore
                 // Keep a verified recovery copy of the exact settings Foreman last accepted. It is deliberately
                 // separate from settings.json so a later direct edit can be reverted before startup consumes it.
                 TryWriteRecovery(path, json, storedSeal!);
+                TryRecordSealEvidence();
             }
-            else if (LastSealVerdict == SettingsSealVerdict.Tampered)
+            else if (LastSealVerdict == SettingsSealVerdict.Tampered &&
+                     TryAdoptAfterLocalSecretRotation(path, json, settings, sealer, secret))
+            {
+                LastSealVerdict = SettingsSealVerdict.Sealed;
+                LastLoadFault = "The MCP authentication token was recently regenerated. Existing settings matched " +
+                                "the last-known-good snapshot and were re-sealed with the new local integrity key.";
+                TryRecordSealEvidence();
+                return settings;
+            }
+            else
             {
                 var recovered = TryReadRecovery(path, sealer, secret);
+                var establishedSealWasRemoved = LastSealVerdict == SettingsSealVerdict.Unsealed &&
+                    (recovered is not null || SafeHasPriorSealEvidence());
+
+                if (LastSealVerdict != SettingsSealVerdict.Tampered && !establishedSealWasRemoved)
+                    return settings;
+
+                LastSealVerdict = SettingsSealVerdict.Tampered;
                 QuarantineTampered(path);
                 if (recovered is not null)
                 {
@@ -124,6 +150,7 @@ public sealed class SettingsStore
             {
                 WriteAtomically(SealPath(path), seal);
                 TryWriteRecovery(path, json, seal);
+                TryRecordSealEvidence();
             }
         }
         catch { /* seal is best-effort; a missing seal reads as Unsealed, never blocks the save */ }
@@ -162,6 +189,44 @@ public sealed class SettingsStore
                 : null;
         }
         catch { return null; }
+    }
+
+    private static bool TryAdoptAfterLocalSecretRotation(
+        string path,
+        string currentJson,
+        ForemanSettings settings,
+        ISettingsSealer? sealer,
+        string? newSecret)
+    {
+        if (sealer is not null || string.IsNullOrEmpty(newSecret) ||
+            IntegritySecretRecentlyRegenerated?.Invoke() != true)
+            return false;
+
+        try
+        {
+            var recoveryJson = File.ReadAllText(RecoveryPath(path));
+            var priorRecoverySeal = File.ReadAllText(RecoverySealPath(path)).Trim();
+            if (priorRecoverySeal.Length == 0) return false;
+            if (!string.Equals(currentJson, recoveryJson, StringComparison.Ordinal)) return false;
+
+            var newSeal = SettingsSeal.Compute(settings, newSecret);
+            WriteAtomically(SealPath(path), newSeal);
+            TryWriteRecovery(path, currentJson, newSeal);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static bool SafeHasPriorSealEvidence()
+    {
+        try { return HasPriorSealEvidence?.Invoke() == true; }
+        catch { return false; }
+    }
+
+    private static void TryRecordSealEvidence()
+    {
+        try { RecordSealEvidence?.Invoke(); }
+        catch { }
     }
 
     private static void TryWriteRecovery(string path, string json, string seal)

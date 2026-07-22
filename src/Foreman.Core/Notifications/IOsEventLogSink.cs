@@ -43,6 +43,7 @@ public static class OsEventIds
     public const int SecondInstanceBlocked = 1005;
     public const int LogChainAnchor = 1006;      // external rollback witness for the on-disk audit chain head
     public const int AbnormalTermination = 1007; // prior instance was killed (dangling run) — watchdog-of-the-watchdog
+    public const int SettingsSealEstablished = 1008; // durable witness that this install has left first-run state
 
     // 2000–2099 — health / state
     public const int MonitoringDegraded = 2000;

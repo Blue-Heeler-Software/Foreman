@@ -134,6 +134,26 @@ public sealed class GuardianClientPolicy
         HardenPolicyFile(path);
     }
 
+    internal static byte[]? CaptureRaw(string programDataDir)
+    {
+        var path = PolicyPath(programDataDir);
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
+    internal static void RestoreRaw(string programDataDir, byte[]? prior, bool harden = true)
+    {
+        var path = PolicyPath(programDataDir);
+        if (prior is null)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
+
+        Directory.CreateDirectory(programDataDir);
+        File.WriteAllBytes(path, prior);
+        if (harden) HardenPolicyFile(path);
+    }
+
     public static GuardianClientPolicy Load(string programDataDir)
     {
         var path = PolicyPath(programDataDir);

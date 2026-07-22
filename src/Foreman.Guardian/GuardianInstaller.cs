@@ -35,7 +35,7 @@ internal static class GuardianInstaller
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Foreman", "guardian");
     public static string InstalledExePath => Path.Combine(ProgramFilesDir, "Foreman.Guardian.exe");
 
-    public static int Install(int? foremanPid, Action<string> log)
+    public static int Install(int? foremanPid, bool allowUnsignedDevelopment, Action<string> log)
     {
         if (!GuardianInstallReference.TryResolve(foremanPid, Environment.ProcessPath, out var foremanPath, out var referenceReason))
         {
@@ -44,7 +44,12 @@ internal static class GuardianInstaller
         }
 
         // 1. LPE guard — refuse to register a binary that isn't the genuine, same-publisher Foreman as SYSTEM.
-        var (trusted, reason) = GuardianIntegrity.VerifyForInstall(foremanPath, trustedDevelopmentLayout: true);
+        string? recordedInstallRoot;
+        try { recordedInstallRoot = GuardianInstallRoot.Read(); }
+        catch (Exception ex) { log($"install REFUSED (root anchor): {ex.Message}"); return 2; }
+
+        var (trusted, reason) = GuardianIntegrity.VerifyForInstall(
+            foremanPath, Environment.ProcessPath, recordedInstallRoot, allowUnsignedDevelopment);
         if (!trusted) { log($"install REFUSED (integrity): {reason}"); return 2; }
         log($"integrity ok: {reason}");
 
@@ -69,6 +74,9 @@ internal static class GuardianInstaller
         var backupDir = Path.Combine(parent, $"guardian.backup.{Guid.NewGuid():N}");
         var hadPayload = Directory.Exists(ProgramFilesDir);
         var serviceExisted = ServiceExists();
+        byte[]? policyBackup;
+        try { policyBackup = GuardianClientPolicy.CaptureRaw(ProgramDataDir); }
+        catch (Exception ex) { log($"install REFUSED (policy backup): {ex.Message}"); return 2; }
         try
         {
             CopyTree(srcDir, stageDir, log);                 // stage before interrupting a working service
@@ -82,6 +90,7 @@ internal static class GuardianInstaller
             CreateService(InstalledExePath, log);            // 5
             TryRegisterEventSource(log);                     // 6
             StartService(log);                               // 7
+            GuardianInstallRoot.Write(GuardianInstallRoot.RootForExecutable(foremanPath));
             TryDeleteDir(backupDir, log);
 
             log("guardian installed and started.");
@@ -99,6 +108,9 @@ internal static class GuardianInstaller
             {
                 try { StopAndDeleteService(log); } catch { }
             }
+
+            try { GuardianClientPolicy.RestoreRaw(ProgramDataDir, policyBackup); }
+            catch (Exception policyEx) { log($"client-policy restore failed: {policyEx.Message}"); }
 
             try
             {
@@ -119,6 +131,9 @@ internal static class GuardianInstaller
             {
                 log($"previous payload restore failed: {restoreEx.Message}; backup remains at {backupDir}");
             }
+
+            try { GuardianInstallRoot.Restore(recordedInstallRoot); }
+            catch (Exception rootEx) { log($"install-root restore failed: {rootEx.Message}"); }
 
             if (serviceExisted)
                 try { StartService(log); } catch (Exception restartEx) { log($"previous service restart failed: {restartEx.Message}"); }

@@ -13,20 +13,26 @@ public sealed class SidecarSupervisorTests
         public bool LaunchDeclined;
         public bool LaunchInProgress;
         public bool ThrowOnNotify;
+        public bool ThrowOnRelaunch;
         public int Relaunches;
         public readonly List<(ForemanSeverity Sev, string Msg)> Notices = [];
         public SidecarSupervisor Make(int maxRelaunch = 2, int graceTicks = 1) => new(
             () => ExpectedUp,
             () => Connected,
             () => LaunchDeclined,
-            () => Relaunches++,
+            () =>
+            {
+                Relaunches++;
+                if (ThrowOnRelaunch) throw new InvalidOperationException("relaunch failed");
+            },
             (sev, msg) =>
             {
                 if (ThrowOnNotify) throw new InvalidOperationException("notice sink failed");
                 Notices.Add((sev, msg));
             },
             maxRelaunch, graceTicks,
-            () => LaunchInProgress);
+            () => LaunchInProgress,
+            maxLaunchInProgressTicks: 2);
     }
 
     [Fact]
@@ -171,7 +177,7 @@ public sealed class SidecarSupervisorTests
         sup.Tick();
         rig.Connected = false;
         rig.LaunchInProgress = true;
-        for (var i = 0; i < 5; i++) sup.Tick();
+        for (var i = 0; i < 2; i++) sup.Tick();
 
         Assert.Equal(0, rig.Relaunches);
         Assert.Empty(rig.Notices);
@@ -179,6 +185,42 @@ public sealed class SidecarSupervisorTests
         rig.LaunchInProgress = false;
         sup.Tick();
         Assert.Equal(1, rig.Relaunches);
+    }
+
+    [Fact]
+    public void StuckLaunchInProgress_ExpiresAndRecoversInsteadOfWedgingSilently()
+    {
+        var rig = new Rig { Connected = true };
+        var sup = rig.Make(maxRelaunch: 1, graceTicks: 0);
+        sup.Tick();
+
+        rig.Connected = false;
+        rig.LaunchInProgress = true;
+        sup.Tick();
+        sup.Tick();
+        Assert.Empty(rig.Notices);
+
+        sup.Tick();
+
+        Assert.Equal(1, rig.Relaunches);
+        var notice = Assert.Single(rig.Notices);
+        Assert.Equal(ForemanSeverity.High, notice.Sev);
+        Assert.Contains("stopped unexpectedly", notice.Msg);
+    }
+
+    [Fact]
+    public void ThrowingRelaunchConsumesBudgetAndEventuallyReportsExhaustion()
+    {
+        var rig = new Rig { Connected = true, ThrowOnRelaunch = true };
+        var sup = rig.Make(maxRelaunch: 1, graceTicks: 0);
+        sup.Tick();
+        rig.Connected = false;
+
+        sup.Tick();
+        sup.Tick();
+
+        Assert.Equal(1, rig.Relaunches);
+        Assert.Contains(rig.Notices, n => n.Msg.Contains("keeps stopping", StringComparison.Ordinal));
     }
 
     [Fact]

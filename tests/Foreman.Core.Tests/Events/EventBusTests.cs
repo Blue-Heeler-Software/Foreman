@@ -49,4 +49,39 @@ public sealed class EventBusTests
 
         Assert.DoesNotContain(history.Snapshot(), e => e.Id == acknowledged.Id);
     }
+
+    [Fact]
+    public void BoundedHistory_AgentCriticalFloodCannotDropArrivingHostHigh()
+    {
+        var history = new BoundedEventHistory(1000);
+        for (var i = 0; i < 1_100; i++)
+            history.Add(AgentCritical(i));
+
+        var hostHigh = new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Settings", "genuine host alarm");
+        history.Add(hostHigh);
+
+        Assert.Contains(history.Snapshot(), e => e.Id == hostHigh.Id);
+        Assert.True(history.Snapshot().Count(e => EventRetentionPolicy.IsAgentReported(e)) <= 250);
+    }
+
+    [Fact]
+    public void BoundedHistory_ArrivingHostCriticalIsNeverItsOwnEvictionVictim()
+    {
+        var history = new BoundedEventHistory(2);
+        history.Add(new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow, ForemanSeverity.Critical, "Foreman.Guardian", "host one"));
+        history.Add(new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow, ForemanSeverity.Critical, "Foreman.Guardian", "host two"));
+        var arriving = new MonitoringNoticeEvent(
+            DateTimeOffset.UnixEpoch, ForemanSeverity.Critical, "Foreman.Settings", "arriving host");
+
+        history.Add(arriving);
+
+        Assert.Contains(history.Snapshot(), e => e.Id == arriving.Id);
+    }
+
+    private static CommandAlertEvent AgentCritical(int index) => new(
+        DateTimeOffset.UtcNow.AddMilliseconds(index), ForemanSeverity.Critical,
+        "MCP.ReportSuspiciousCommand", $"fabricated {index}", "rm -rf /", "del-001", "delete", "test", "none", 0);
 }

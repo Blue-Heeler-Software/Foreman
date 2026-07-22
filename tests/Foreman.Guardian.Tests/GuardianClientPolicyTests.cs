@@ -51,4 +51,27 @@ public sealed class GuardianClientPolicyTests
     public void UnknownMode_FailsClosed()
         => Assert.False(GuardianClientPolicy.Decide(
             "legacy_allow_all", ForemanPath, null, null, ForemanPath, null, null).Trusted);
+
+    [Fact]
+    public void FailedInstallPolicyReplacement_CanRestoreExactPriorBytes()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "guardian-policy-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = GuardianClientPolicy.PolicyPath(dir);
+            var prior = System.Text.Encoding.UTF8.GetBytes("prior-policy-bytes");
+            File.WriteAllBytes(path, prior);
+            var captured = GuardianClientPolicy.CaptureRaw(dir);
+
+            File.WriteAllText(path, "replacement-policy");
+            GuardianClientPolicy.RestoreRaw(dir, captured, harden: false);
+
+            Assert.Equal(prior, File.ReadAllBytes(path));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
 }

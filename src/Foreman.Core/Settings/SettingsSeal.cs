@@ -28,11 +28,10 @@ public enum SettingsSealVerdict
 /// there is no privilege boundary, so the agent can read the install secret and recompute any seal. What IS
 /// achievable, and what this provides, is DETECTION. Foreman re-seals on every save (<see cref="Compute"/>), so
 /// any edit it did not make — another principal, accidental corruption, or a naive agent that flips a flag
-/// without re-sealing — is caught at load (<see cref="Verify"/>) and can be reverted + alerted. Combined with the
-/// external OS-event-log anchor and a SACL write-audit on settings.json, even a sophisticated same-user agent
-/// that deletes/recomputes the seal trips a loud, externally-recorded signal rather than silently weakening
-/// Foreman. The seal is keyed by the install secret (the same one minting MCP tokens), so it also blocks
-/// cross-user / offline tampering outright.
+/// without re-sealing — is caught at load (<see cref="Verify"/>) and can be reverted + alerted. A durable OS-event
+/// witness distinguishes an established install from a genuine first run if the seal and recovery pair are deleted.
+/// There is no settings-file SACL today, and a sophisticated same-user process that can read the local key can still
+/// recompute a local seal; the opt-in SYSTEM guardian is the privilege boundary for that stronger threat model.
 /// </summary>
 public static class SettingsSeal
 {

@@ -39,30 +39,58 @@ public static class GuardianIntegrity
     }
 
     /// <summary>
-    /// Install self-verify: is THIS guardian binary signed by the same publisher as Foreman.exe? Unsigned developer
-    /// builds are admitted only after the caller has independently proved the canonical staged layout; an arbitrary
-    /// unsigned <c>--foreman</c> path is never a trust anchor. Never throws.
+    /// Install self-verify: is THIS guardian binary signed by the same publisher as Foreman.exe? The resolved live
+    /// launcher must also match the administrator-owned install root once one exists. Unsigned developer builds are
+    /// admitted only with an explicit opt-in; shipped unsigned builds fail closed by default. Never throws.
     /// </summary>
-    public static (bool Trusted, string Reason) VerifyForInstall(string? foremanPath, bool trustedDevelopmentLayout)
+    public static (bool Trusted, string Reason) VerifyForInstall(
+        string? foremanPath,
+        string? guardianPath,
+        string? recordedInstallRoot,
+        bool allowUnsignedDevelopment)
     {
         try
         {
             var referenceSigner = VerifiedSignerThumbprint(foremanPath);
-            var subjectSigner = VerifiedSignerThumbprint(Environment.ProcessPath);
-            if (referenceSigner is not null)
-                return Decide(referenceSigner, subjectSigner);
-
-            if (!trustedDevelopmentLayout)
-                return (false, "unsigned development install was not launched from Foreman's canonical staged guardian path.");
-            if (subjectSigner is not null)
-                return (false, "an unsigned Foreman reference cannot authorise a differently-signed guardian.");
-
-            return (true, "unsigned development Foreman and guardian matched the live launcher and canonical staged layout.");
+            var subjectSigner = VerifiedSignerThumbprint(guardianPath);
+            return DecideForInstall(referenceSigner, subjectSigner, foremanPath, guardianPath,
+                recordedInstallRoot, allowUnsignedDevelopment);
         }
         catch
         {
             return (false, "guardian install integrity verification failed unexpectedly.");
         }
+    }
+
+    /// <summary>Pure production install decision over already-verified signer and path evidence.</summary>
+    public static (bool Trusted, string Reason) DecideForInstall(
+        string? referenceSigner,
+        string? subjectSigner,
+        string? foremanPath,
+        string? guardianPath,
+        string? recordedInstallRoot,
+        bool allowUnsignedDevelopment)
+    {
+        if (string.IsNullOrWhiteSpace(foremanPath) || string.IsNullOrWhiteSpace(guardianPath) ||
+            !GuardianInstallReference.LayoutMatches(foremanPath, guardianPath))
+            return (false, "the live launcher and guardian do not match Foreman's canonical staged layout.");
+
+        var resolvedRoot = GuardianInstallRoot.RootForExecutable(foremanPath);
+        if (!string.IsNullOrWhiteSpace(recordedInstallRoot) &&
+            !string.Equals(resolvedRoot,
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(recordedInstallRoot)),
+                StringComparison.OrdinalIgnoreCase))
+            return (false, "the live launcher is outside the administrator-recorded Foreman install root.");
+
+        if (referenceSigner is not null)
+            return Decide(referenceSigner, subjectSigner);
+
+        if (!allowUnsignedDevelopment)
+            return (false, "Foreman is unsigned; Guardian installation requires an explicit --allow-unsigned-development opt-in.");
+        if (subjectSigner is not null)
+            return (false, "an unsigned Foreman reference cannot authorise a differently-signed guardian.");
+
+        return (true, "explicit unsigned-development install matched the live launcher, staged layout, and recorded root.");
     }
 
     /// <summary>Authenticode signer thumbprint IF the file's embedded signature is valid (chains to a trusted root); else null.</summary>

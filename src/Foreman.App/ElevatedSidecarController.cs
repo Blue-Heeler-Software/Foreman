@@ -34,6 +34,7 @@ public sealed class ElevatedSidecarController : IDisposable
     private volatile bool _connected;
     private volatile bool _launchFailed;   // last launch attempt failed to START (declined UAC / missing / untrusted)
     private volatile bool _launchInProgress;
+    private int _processStartInProgress;   // Process.Start(runas) cannot be cancelled while UAC is open
     private bool _captureNet = true;
     private bool _captureWakeRequests = true;
     private IReadOnlyList<string> _decoyPaths = [];
@@ -119,7 +120,20 @@ public sealed class ElevatedSidecarController : IDisposable
             using var server = CreateOwnerOnlyPipe(pipeName);
             if (!LaunchSidecar(pipeName, nonce)) { _launchFailed = true; return; }   // exe missing or UAC declined
 
-            await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
+            using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectionCts.CancelAfter(TimeSpan.FromSeconds(60));
+            try
+            {
+                await server.WaitForConnectionAsync(connectionCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                EventBus.Instance.Publish(new MonitoringNoticeEvent(
+                    DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Sidecar",
+                    "The elevated helper launched but did not complete its authenticated connection within 60 " +
+                    "seconds. The launch was cleared so supervision can recover cleanly."));
+                return;
+            }
 
             // Reject a non-elevated racer: the cmdline nonce is readable by same-user processes, so a medium-IL
             // agent could scrape it and connect first. The genuine sidecar runs elevated — anything that isn't is
@@ -220,6 +234,7 @@ public sealed class ElevatedSidecarController : IDisposable
 
     private bool LaunchSidecar(string pipeName, string nonce)
     {
+        if (Volatile.Read(ref _processStartInProgress) != 0) return false;
         var exe = SidecarPath();
         if (!File.Exists(exe)) return false;
 
@@ -266,8 +281,19 @@ public sealed class ElevatedSidecarController : IDisposable
         {
             // UseShellExecute=true is required for the sidecar's requireAdministrator manifest to
             // raise the UAC prompt. If the user declines, Process.Start throws (1223) — features stay n/a.
-            Process.Start(new ProcessStartInfo(exe) { Arguments = args, UseShellExecute = true });
-            return true;
+            // A watchdog expiry may request recovery while the original ShellExecute is still blocked on UAC.
+            // Refuse another Process.Start until it returns, so bounded recovery cannot stack elevation prompts.
+            if (Interlocked.CompareExchange(ref _processStartInProgress, 1, 0) != 0)
+                return false;
+            try
+            {
+                Process.Start(new ProcessStartInfo(exe) { Arguments = args, UseShellExecute = true });
+                return true;
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _processStartInProgress, 0);
+            }
         }
         catch { return false; }
     }

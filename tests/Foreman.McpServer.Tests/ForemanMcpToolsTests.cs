@@ -222,6 +222,23 @@ public sealed class ForemanMcpToolsTests : IDisposable
         Assert.True(_state.HasCritical);
     }
 
+    [Fact]
+    public void AlertStore_AgentCriticalFloodCannotEvictArrivingHostHigh()
+    {
+        for (var i = 0; i < 1_100; i++)
+        {
+            _state.AddEvent(new CommandAlertEvent(
+                DateTimeOffset.UtcNow.AddMilliseconds(i), ForemanSeverity.Critical,
+                "MCP.ReportSuspiciousCommand", $"fabricated {i}", "rm -rf /", "del-001", "delete", "test", "none", 0));
+        }
+
+        var hostHigh = new MonitoringNoticeEvent(
+            DateTimeOffset.UtcNow, ForemanSeverity.High, "Foreman.Settings", "genuine host alarm");
+        _state.AddEvent(hostHigh);
+
+        Assert.Same(hostHigh, _state.GetAlert(hostHigh.Id));
+    }
+
     [Theory]
     [InlineData("t3-code", "t3-code-default")]
     [InlineData("opencode", "opencode-default")]

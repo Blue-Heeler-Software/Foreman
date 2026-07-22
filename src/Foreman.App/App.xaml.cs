@@ -158,8 +158,23 @@ public partial class App : Application
 
         // Seal the security-significant settings with the install secret BEFORE loading, so the load can detect a
         // direct (non-Foreman) edit of settings.json — the same-user agent's way around the UI presence gates.
-        var installSecret = new McpAuthToken().Value;
+        var authToken = new McpAuthToken();
+        var installSecret = authToken.Value;
         SettingsStore.IntegritySecret = () => installSecret;
+        SettingsStore.IntegritySecretRecentlyRegenerated = authToken.RecentlyRegenerated;
+        var priorSealEvidence = _osLog.ReadOwnRecent(4096)
+            .Any(static entry => entry.EventId == OsEventIds.SettingsSealEstablished);
+        SettingsStore.HasPriorSealEvidence = () => priorSealEvidence;
+        SettingsStore.RecordSealEvidence = () =>
+        {
+            if (priorSealEvidence || !_osLog.IsAvailable) return;
+            _osLog.Write(
+                OsEventIds.SettingsSealEstablished,
+                OsEventCategory.Lifecycle,
+                ForemanSeverity.Info,
+                "Foreman successfully sealed its security-significant settings posture.");
+            priorSealEvidence = true;
+        };
         // Phase A step 7: when the opt-in guardian is installed + SYSTEM-verified, seal settings through it (secret
         // behind the SYSTEM boundary). Set BEFORE Load so the verdict uses the right key; null ⇒ local secret path.
         SettingsStore.Sealer = GuardianSettingsSealer.TryCreate(() => installSecret);

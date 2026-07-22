@@ -11,11 +11,13 @@ public sealed class BoundedEventHistory
     private readonly object _gate = new();
     private readonly List<ForemanEvent> _events = [];
     private readonly int _capacity;
+    private readonly int _agentQuota;
 
     public BoundedEventHistory(int capacity)
     {
         if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
         _capacity = capacity;
+        _agentQuota = Math.Max(1, capacity / 4);
     }
 
     public void Add(ForemanEvent evt)
@@ -23,15 +25,16 @@ public sealed class BoundedEventHistory
         lock (_gate)
         {
             _events.Add(evt);
-            if (_events.Count <= _capacity) return;
+            foreach (var victim in EventRetentionPolicy.SelectAgentQuotaVictims(_events, _agentQuota))
+                _events.Remove(victim);
 
-            var victim = _events
-                .Select(static (candidate, index) => new { candidate, index })
-                .OrderBy(static x => x.candidate.Acknowledged ? 0 : 1)
-                .ThenBy(static x => x.candidate.Severity)
-                .ThenBy(static x => x.candidate.Timestamp)
-                .First();
-            _events.RemoveAt(victim.index);
+            if (_events.Count <= _capacity) return;
+            var protectArrival = !EventRetentionPolicy.IsAgentReported(evt) && evt.Severity >= ForemanSeverity.High
+                ? evt.Id
+                : null;
+            foreach (var victim in EventRetentionPolicy.SelectVictims(
+                         _events, _events.Count - _capacity, protectArrival))
+                _events.Remove(victim);
         }
     }
 
