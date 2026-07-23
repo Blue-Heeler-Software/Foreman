@@ -37,7 +37,10 @@ ever touches the network: it talks only to `http://127.0.0.1:54321`.
 ## Load it
 
 1. Build/run Foreman (the desktop app) so its MCP server is listening on `127.0.0.1:54321`.
-2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select this `extension/` folder.
+2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select either:
+   - installed release: `%LOCALAPPDATA%\Programs\Foreman\extensions\foreman` (an upgraded alpha may retain
+     `%LOCALAPPDATA%\Foreman\extensions\foreman`); or
+   - source checkout: this `extension/` folder.
 3. In Foreman, open **Connect agent → Pair browser extension** — it shows a code like `ABCDE-FGHJK`.
 4. Click the extension's **Details → Extension options**, type the code, hit **Pair**.
 5. Open the side panel (click the toolbar icon). It should read **🔒 On-device · verified** with live alert counts.

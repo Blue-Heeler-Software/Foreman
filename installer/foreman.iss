@@ -22,7 +22,9 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
 ; Install per-user so no UAC prompt is required.
 PrivilegesRequired=lowest
-DefaultDirName={localappdata}\{#MyAppInstallDirName}
+; Keep immutable program files separate from Foreman's mutable settings/vault/log data in
+; %LOCALAPPDATA%\Foreman. Inno retains the previous directory for existing upgrades.
+DefaultDirName={localappdata}\Programs\{#MyAppInstallDirName}
 DisableProgramGroupPage=yes
 OutputDir=Output
 OutputBaseFilename=Foreman-Agent-Safety-Setup-{#MyAppVersion}
@@ -32,6 +34,9 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; Foreman already owns this named mutex. Refuse install/upgrade while the tray app is running rather than
+; replacing a live executable or leaving a reboot-pending mixture of versions.
+AppMutex=ForemanSingleInstanceMutex
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

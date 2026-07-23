@@ -9,8 +9,8 @@ from the extension produced during the OpenAI Build Week 2026 submission period.
   2026-07-13 at 18:33:42 ACST, before the submission period opened.
 - **Initial Build Week integration commit:** `06c0fdc` (`fix: harden security boundaries and release validation`),
   committed 2026-07-20 at 00:28:02 ACST.
-- **Current submission release:** `v0.1.0-alpha3`, which carries the later Build Week Android/ADB bridge work;
-  the release tag identifies the exact reviewed commit.
+- **Immutable submission release:** `v0.1.0-alpha3` at `c5fd504`, which carries the later Build Week Android/ADB
+  bridge work. The release tag identifies the exact deadline build and will not be moved or replaced.
 - **Recorded change set:** 49 files changed, with 1,765 additions and 228 removals.
 
 The integration commit is a code boundary, not a complete transcript of the work. Timestamped Codex sessions
@@ -18,6 +18,18 @@ record the corresponding investigation, threat modelling, implementation, review
 submission provides the required `/feedback` Codex session ID. Earlier Codex sessions explain Foreman's
 development history, but only work completed after the submission period opened is presented for Build Week
 judging.
+
+## Post-submission maintenance boundary
+
+The submission period closed on 21 July 2026 at 5:00 PM PT. Commits after `c5fd504` are not claimed as
+Build Week work. The repository and maintained installers may receive clearly identified security, reliability,
+packaging, and ordinary development updates during judging because the rules require the working project to
+remain available for testing. Those updates do not change the Devpost submission, demo, `/feedback` session ID,
+or the immutable `v0.1.0-alpha3` evidence tag.
+
+For eligibility review, use `v0.1.0-alpha3`. For hands-on installation, use the newest maintained pre-release
+and read its release disclosure; later builds may contain post-deadline security corrections that deliberately
+fail closed where the submission snapshot did not.
 
 ## How Codex contributed
 
@@ -62,9 +74,10 @@ The eligible extension includes:
 
 Foreman supports Windows 10/11 x64.
 
-1. Download the newest pre-release installer and `checksums-sha256.txt` from
+1. For hands-on testing, download the newest maintained pre-release installer and `checksums-sha256.txt` from
    [GitHub Releases](https://github.com/aXL333/Foreman/releases).
-2. Verify that the release targets `06c0fdc` or a later commit containing it.
+2. For deadline/eligibility review, use the immutable `v0.1.0-alpha3` tag at `c5fd504`. Do not treat
+   post-deadline maintenance commits as submission-period work.
 3. Verify the installer checksum, then install and launch Foreman from the Windows tray.
 4. Use **Connect agent** to configure Codex, Claude Code, or Cursor; Foreman backs up the existing harness
    configuration before changing its own MCP entry.
@@ -82,4 +95,5 @@ not required for the normal monitoring and Ask Harness demonstration. The Androi
 default and does not grant a harness raw shell access or permission to target an unenrolled device.
 
 Alpha installers may be unsigned until the documented SignPath configuration is available. Each release
-therefore states its signing mode and includes SHA-256 checksums and GitHub build-provenance attestations.
+therefore states its signing mode automatically and includes SHA-256 checksums and GitHub build-provenance
+attestations. Unsigned Release builds fail closed for the optional LocalSystem Guardian.

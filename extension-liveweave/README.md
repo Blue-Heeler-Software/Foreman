@@ -73,7 +73,10 @@ Nano prompts.
 ## Load and pair
 
 1. Run Foreman so its MCP server is listening on `127.0.0.1:54321`.
-2. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extension-liveweave/`.
+2. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select either:
+   - installed release: `%LOCALAPPDATA%\Programs\Foreman\extensions\liveweave` (an upgraded alpha may retain
+     `%LOCALAPPDATA%\Foreman\extensions\liveweave`); or
+   - source checkout: `extension-liveweave/`.
 3. In Foreman, open **Connect agent -> Pair browser extension**.
 4. Open LiveWeave extension options, select a driver harness, enter the code, and pair.
 5. Reload the unpacked extension after changing its source files.

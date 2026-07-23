@@ -23,7 +23,9 @@
 
 > **OpenAI Build Week 2026:** Foreman predates the event. See
 > [docs/openai-build-week-2026.md](docs/openai-build-week-2026.md) for the pre-event baseline,
-> eligible extension, Codex collaboration record, and judge testing path.
+> eligible extension, immutable submission snapshot, Codex collaboration record, and judge testing path.
+> Post-deadline security and packaging maintenance is identified separately and is not claimed as
+> submission-period work.
 
 ## Why Foreman Agent Safety Exists
 
@@ -105,9 +107,26 @@ Anything else can be added in Settings as a custom harness executable name.
 
 ### Install
 
-Download the newest alpha installer and its SHA-256 checksum from
+Download the newest maintained alpha installer and its SHA-256 checksum from
 [GitHub Releases](https://github.com/aXL333/Foreman/releases). Releases are self-contained, so judges and
-other evaluators do not need to rebuild Foreman or install the .NET SDK.
+other evaluators do not need to rebuild Foreman or install the .NET SDK. New installations place program
+files under `%LOCALAPPDATA%\Programs\Foreman`; mutable settings, vault data, and logs remain under
+`%LOCALAPPDATA%\Foreman`. Existing alpha upgrades retain their previously selected installation directory.
+
+The immutable OpenAI Build Week submission snapshot is
+[`v0.1.0-alpha3`](https://github.com/aXL333/Foreman/releases/tag/v0.1.0-alpha3) at commit `c5fd504`.
+It remains available as deadline evidence. Later releases are clearly labelled post-submission
+maintenance/development builds; use the newest maintained release for hands-on testing and the snapshot when
+reviewing what existed at the deadline.
+
+Both unpacked MV3 browser extensions are included with maintained installers:
+
+- Foreman safety/browser-use extension: `%LOCALAPPDATA%\Programs\Foreman\extensions\foreman`
+- LiveWeave page builder: `%LOCALAPPDATA%\Programs\Foreman\extensions\liveweave`
+
+In Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose the
+relevant folder. An upgraded alpha installation may instead keep these folders under its older install
+directory; right-click the Foreman shortcut and choose **Open file location** if needed.
 
 The repository can be newer than the most recent installer. To test an unreleased commit or work from source:
 
@@ -117,10 +136,11 @@ dotnet test .\Foreman.slnx -c Release
 dotnet run --project .\src\Foreman.App\Foreman.App.csproj
 ```
 
-Prerequisites:
+Installer prerequisite:
 
 - Windows 10/11 x64
-- .NET 10 SDK
+
+Building from source additionally requires the stable .NET 10 SDK.
 
 To produce the same self-contained installer payload used by the release workflow:
 
@@ -154,6 +174,8 @@ dotnet publish .\src\Foreman.CuPilot\Foreman.CuPilot.csproj `
   -o publish\cu-pilot
 Remove-Item publish\Foreman.EtwSidecar.*,publish\Foreman.Guardian.*,publish\Foreman.CuSidecar.*,publish\Foreman.CuPilot.* `
   -ErrorAction SilentlyContinue
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Copy-ReleaseExtensions.ps1 `
+  -PayloadPath publish
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleasePayload.ps1 `
   -PayloadPath publish -ExpectedVersion $version
 ```
@@ -340,7 +362,7 @@ Settings live at `%LocalAppData%\Foreman\settings.json` and are editable from th
 
 ## Release Trust
 
-The installer is per-user and requires no admin prompt. `Foreman.exe`, its four helper executables, and the installer are Authenticode-signed via **SignPath Foundation** (free OV signing for open source) when the release workflow is configured for it; signing is opt-in and gated on a repo variable, so until it's wired up, alpha installers ship **unsigned** and the release notes say so. Either way the release attaches **SHA-256 checksums** and GitHub build-provenance attestations. Note that even when signed, a freshly-published build can still show a SmartScreen "unrecognized app" prompt until Microsoft's reputation system catches up — this is expected for a low-volume tool, which is why the checksums matter. See [CODE_SIGNING.md](CODE_SIGNING.md) for how signing works and how to verify a download, and [docs/release-checklist.md](docs/release-checklist.md) for the maintainer signing setup.
+The installer is per-user and requires no admin prompt. `Foreman.exe`, its four helper executables, and the installer are Authenticode-signed via **SignPath Foundation** (free OV signing for open source) when the release workflow is configured for it; signing is opt-in and gated on a repo variable, so until it is wired up, alpha installers ship **unsigned** and the release notes say so automatically. The optional LocalSystem Guardian fails closed in an unsigned Release build; only an explicitly opted-in Debug development build can use the path-and-hash development mode. Either way the release attaches **SHA-256 checksums** and GitHub build-provenance attestations. Note that even when signed, a freshly-published build can still show a SmartScreen "unrecognized app" prompt until Microsoft's reputation system catches up — this is expected for a low-volume tool, which is why the checksums matter. See [CODE_SIGNING.md](CODE_SIGNING.md) for how signing works and how to verify a download, and [docs/release-checklist.md](docs/release-checklist.md) for the maintainer signing setup.
 
 ## Roadmap
 

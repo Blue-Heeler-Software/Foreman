@@ -102,7 +102,8 @@ NOT a dev-build workaround. Two dev-build workarounds were considered and reject
 scheduled task that retries until `W:` mounts (fixes late-mount only, changes the auto-start mechanism), and (b)
 staging a copy to `C:\…\Programs` + auto-refresh (most robust but drops a SECOND copy of the AV-flagged
 `Foreman.Monitor.dll` on `C:`, expanding the Bitdefender surface we just fought). The clean fix is: release.yml
-publishes a single-file signed build → an installer drops it under `C:` (e.g. `%LocalAppData%\Programs\ForemanAgentSafety`)
+publishes a single-file signed build → an installer drops new installations under
+`%LocalAppData%\Programs\Foreman` (existing alpha upgrades may retain `%LocalAppData%\Foreman`)
 → `StartupManager.SetEnabled` registers that stable path. `StartupManager.GetDriveWarning` already surfaces the
 risk in the meantime.
 

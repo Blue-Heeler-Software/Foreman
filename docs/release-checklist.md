@@ -2,15 +2,23 @@
 
 Use this before publishing a public binary release.
 
+Run the Release workflow manually with **Publish a GitHub Release** left off first. This builds the complete
+installer on the release runner and uploads a seven-day Actions candidate without creating a tag or Release.
+Only publish from `main` after that candidate passes the checks below.
+
 ## Required
 
 - Run `dotnet test .\Foreman.slnx -c Release --verbosity minimal`.
 - Run `dotnet build .\src\Foreman.App\Foreman.App.csproj -c Release`.
 - Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleasePayload.ps1` against the
   release-equivalent `publish` directory and confirm all five payload executables carry the intended release version.
+- Run `scripts\Test-ReleasePayloadBypasses.ps1` against that payload and confirm hidden helper siblings and
+  packaged extension test fixtures are both rejected before the clean payload is revalidated.
 - Verify a clean install on a fresh Windows 10/11 x64 VM.
 - Verify uninstall removes app files and run-at-login registration.
 - Verify first run opens the Connect Agent path and supports Claude Code and Codex.
+- Verify both unpacked MV3 extensions are installed under `<install>\extensions`, contain no test fixtures,
+  and can be loaded and paired from Chrome without cloning the repository.
 - Verify `/health` is reachable and `/mcp` rejects missing or wrong bearer tokens.
 - Verify a connected Claude Code or Codex session appears in the dashboard.
 - Verify Ask Harness delivery for at least one connected client.
@@ -18,18 +26,23 @@ Use this before publishing a public binary release.
 - Capture fresh screenshots for README/release notes.
 - Attach SHA-256 checksums to the release.
 - State clearly whether the installer is signed or unsigned (see **Code Signing** below).
+- Confirm the generated release disclosure identifies `v0.1.0-alpha3` as the immutable Build Week snapshot and
+  labels every later build as post-submission maintenance/development.
 - Confirm the "Attest build provenance" step succeeded (see **Build Provenance** below); it runs on every
   release with no setup, so a failure there means the release lacks a verifiable provenance record.
 
 ## Recommended
 
 - Test installer upgrade over a previous version.
+- Confirm a running Foreman instance blocks install/upgrade through `AppMutex` rather than mixing file versions.
 - Test run-at-login on/off.
 - Test `RunElevated` sidecar opt-in and opt-out.
 - Test `ScanMcpTools` with a harmless HTTP MCP server.
 - Confirm all screenshots avoid exposing user paths, tokens, project names, or private terminal output.
 - Confirm release notes state the supported stable .NET 10 SDK/runtime and Windows versions accurately.
 - Review SECURITY.md and README.md for claims that drifted since the last release.
+- Review and intentionally update the pinned `INNO_SETUP_VERSION`; never silently consume the runner's latest
+  compiler.
 
 ## Code Signing (SignPath Foundation)
 
