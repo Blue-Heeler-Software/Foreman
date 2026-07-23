@@ -233,12 +233,14 @@ jobs:
         run: |
           choco install innosetup --version="$env:INNO_SETUP_VERSION" --require-checksums --no-progress -y
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          $actual = [Diagnostics.FileVersionInfo]::GetVersionInfo($iscc).ProductVersion
-          if (-not $actual.StartsWith($env:INNO_SETUP_VERSION, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Expected Inno Setup $env:INNO_SETUP_VERSION but runner has '$actual'."
+          $compilerOutput = @(& $iscc "/DMyAppVersion=$env:RELEASE_VERSION" installer/foreman.iss 2>&1)
+          $compilerExit = $LASTEXITCODE
+          $compilerOutput | Write-Host
+          if ($compilerExit -ne 0) { throw "Inno Setup failed with exit code $compilerExit." }
+          $expectedBanner = "Compiler engine version: Inno Setup $env:INNO_SETUP_VERSION"
+          if (($compilerOutput -join "`n") -notmatch [Regex]::Escape($expectedBanner)) {
+            throw "The installer was not compiled by the pinned engine '$expectedBanner'."
           }
-          & $iscc "/DMyAppVersion=$env:RELEASE_VERSION" installer/foreman.iss
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
 
       # --- Sign the installer itself LAST, after it is built from the already-signed payload. ---
       - name: Upload unsigned installer
