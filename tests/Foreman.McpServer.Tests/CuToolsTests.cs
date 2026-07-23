@@ -380,6 +380,26 @@ public sealed class CuToolsTests
     }
 
     [Fact]
+    public async Task CuResolveVault_EmbeddedPaymentCardToken_RefusedBeforeResolver()
+    {
+        var state = StateWith(CuVerdict.Allow("test"));
+        var resolverCalled = false;
+        state.ResolveVaultAsync = (_, _, _) =>
+        {
+            resolverCalled = true;
+            return Task.FromResult<(bool Ok, string? Value, string Reason, bool Queued)>((true, "should-not-reach", "ok", false));
+        };
+        var token = "{{vault:shop.example/personal01/cardnumber}}";
+        var actionId = await ExecutingBrowserAction("prefix " + token);
+
+        using var res = Json(await ForemanMcpTools.CuResolveVault(
+            actionId, token, "shop.example", AsHarness("browser-extension")));
+
+        Assert.False(res.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(resolverCalled);
+    }
+
+    [Fact]
     public async Task CuResolveVault_SubmittingHarness_Refused()
     {
         var state = StateWith(CuVerdict.Allow("test"));

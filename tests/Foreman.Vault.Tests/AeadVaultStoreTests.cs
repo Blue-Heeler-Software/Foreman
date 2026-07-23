@@ -158,4 +158,93 @@ public sealed class AeadVaultStoreTests : IDisposable
         Assert.Empty(store.ListItems());
         Assert.False(store.Delete("GitHub"));   // already gone
     }
+
+    [Fact]
+    public void PaymentCards_SharingOrigin_ResolveOnlySelectedEntry()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(new VaultEntry
+        {
+            EntryId = "personal01",
+            Kind = VaultEntryKind.PaymentCard,
+            Name = "Personal Visa",
+            Origins = { "shop.example" },
+            Harnesses = { "codex" },
+            PaymentCard = new VaultPaymentCard
+                { CardNumber = "4111 1111 1111 1111", CardholderName = "A User", ExpiryMonth = "12", ExpiryYear = "2099" },
+        });
+        store.Upsert(new VaultEntry
+        {
+            EntryId = "workcard01",
+            Kind = VaultEntryKind.PaymentCard,
+            Name = "Work card",
+            Origins = { "shop.example" },
+            Harnesses = { "claude-code" },
+            PaymentCard = new VaultPaymentCard
+                { CardNumber = "5555 5555 5555 4444", CardholderName = "A User", ExpiryMonth = "12", ExpiryYear = "2099" },
+        });
+
+        var allowed = new VaultResolver(store).Resolve(
+            "{{vault:shop.example/personal01/cardnumber}}", "shop.example", "codex", isOperator: false);
+        var siblingAclBypass = new VaultResolver(store).Resolve(
+            "{{vault:shop.example/workcard01/cardnumber}}", "shop.example", "codex", isOperator: false);
+
+        Assert.True(allowed.Ok);
+        Assert.Equal("4111111111111111", allowed.Resolved);
+        Assert.False(siblingAclBypass.Ok);
+        Assert.Null(siblingAclBypass.Resolved);
+    }
+
+    [Fact]
+    public void PaymentCard_EditBlankNumberAndCvc_PreservesSecretsButUpdatesAcl()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(new VaultEntry
+        {
+            EntryId = "personal01",
+            Kind = VaultEntryKind.PaymentCard,
+            Name = "Personal Visa",
+            Origins = { "shop.example" },
+            Harnesses = { "codex" },
+            PaymentCard = new VaultPaymentCard
+                { CardNumber = "4111111111111111", SecurityCode = "123", ExpiryMonth = "12", ExpiryYear = "2099" },
+        });
+
+        Assert.True(store.UpdateItem("Personal Visa", new VaultEntry
+        {
+            Kind = VaultEntryKind.PaymentCard,
+            Name = "Personal Visa",
+            Origins = { "shop.example" },
+            Harnesses = { "claude-code" },
+            PaymentCard = new VaultPaymentCard { ExpiryMonth = "11", ExpiryYear = "2098" },
+        }));
+
+        Assert.Equal("4111111111111111", store.GetSecret("shop.example", VaultField.CardNumber, "personal01"));
+        Assert.Equal("123", store.GetSecret("shop.example", VaultField.CardSecurityCode, "personal01"));
+        Assert.True(store.FindByOrigin("shop.example", "personal01")!.AllowsHarness("claude-code"));
+        Assert.False(store.FindByOrigin("shop.example", "personal01")!.AllowsHarness("codex"));
+    }
+
+    [Fact]
+    public void PaymentCard_OnSameOrigin_DoesNotHijackLegacyLoginReference()
+    {
+        var store = AeadVaultStore.Create(VaultPath, Pw, KeyComp);
+        store.Upsert(new VaultEntry
+        {
+            EntryId = "personal01",
+            Kind = VaultEntryKind.PaymentCard,
+            Name = "Personal Visa",
+            Origins = { "shop.example" },
+            PaymentCard = new VaultPaymentCard
+                { CardNumber = "4111111111111111", ExpiryMonth = "12", ExpiryYear = "2099" },
+        });
+        store.Upsert(new VaultEntry
+        {
+            Name = "Shop login", Origins = { "shop.example" }, Username = "alice", Password = "login-secret",
+        });
+
+        Assert.Equal("login-secret", store.GetSecret("shop.example", VaultField.Password));
+        Assert.Equal("4111111111111111",
+            store.GetSecret("shop.example", VaultField.CardNumber, "personal01"));
+    }
 }

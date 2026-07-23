@@ -1,7 +1,19 @@
 namespace Foreman.Core.Vault;
 
 /// <summary>A field of a vault item that a <c>{{vault:origin/field}}</c> reference can resolve.</summary>
-public enum VaultField { Username, Password, Totp, Note }
+public enum VaultField
+{
+    Username,
+    Password,
+    Totp,
+    Note,
+    CardholderName,
+    CardNumber,
+    CardExpiryMonth,
+    CardExpiryYear,
+    CardSecurityCode,
+    BillingAddress,
+}
 
 /// <summary>
 /// Non-secret metadata about a vault item: its name, the origin(s) it is registered for (domain-binding), the
@@ -18,6 +30,14 @@ public sealed record VaultItemInfo(
     /// existing resolver-path constructions keep working.</summary>
     public bool HasUsername { get; init; }
     public bool HasPassword { get; init; }
+    public string EntryId { get; init; } = "";
+    public bool IsPaymentCard { get; init; }
+    public string? CardholderName { get; init; }
+    public string? CardLastFour { get; init; }
+    public string? CardExpiryMonth { get; init; }
+    public string? CardExpiryYear { get; init; }
+    public string? BillingAddress { get; init; }
+    public bool HasCardSecurityCode { get; init; }
 
     /// <summary>True if a specific harness is authorized to resolve this item. Empty <see cref="Harnesses"/> =
     /// operator-only (deny by default) — a harness must be explicitly listed. The operator is allowed separately

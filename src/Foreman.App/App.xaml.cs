@@ -501,6 +501,15 @@ public partial class App : Application
             new Foreman.App.Vault.DpapiVaultKeyProtector());
         panicState.Changed += halted => { if (halted) _vaultService?.Lock(); };
         _tray.Vault = _vaultService;   // operator-only "Vault…" tray window (enroll / unlock / manage)
+        _tray.GetEligibleCardHarnesses = () =>
+            Foreman.Core.Integration.HarnessConnectors.All
+                .Where(c =>
+                {
+                    try { return c.IsConfigured(settings.McpPort); }
+                    catch { return false; }
+                })
+                .Select(c => new Foreman.App.Windows.VaultView.VaultHarnessChoice(c.HarnessId, c.DisplayName))
+                .ToArray();
         // Browser-extension executor's resolve path (cu_resolve_vault): the App holds the unlocked key + resolver, so the
         // reference -> plaintext substitution happens here, gated by a per-release presence tap (when the lock is on; the
         // approval-cache TTL keeps a single login from prompting per field) + domain-binding + ACL inside the resolver.

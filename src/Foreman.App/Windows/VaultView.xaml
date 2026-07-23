@@ -32,6 +32,31 @@
             <Setter Property="Padding" Value="12,7" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
+        <Style x:Key="SliderSwitchStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="38" />
+            <Setter Property="Height" Value="20" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border x:Name="Track" CornerRadius="10" Background="#FF343946" BorderBrush="#FF4B5262" BorderThickness="1" />
+                            <Ellipse x:Name="Thumb" Width="14" Height="14" Fill="#FFD8DCE6"
+                                     HorizontalAlignment="Left" Margin="3,0,0,0" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                                <Setter TargetName="Thumb" Property="Margin" Value="0,0,3,0" />
+                                <Setter TargetName="Thumb" Property="Fill" Value="White" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Grid Margin="20">
@@ -159,9 +184,11 @@
                                             </StackPanel>
                                         </Grid>
                                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                            <TextBlock Text="{Binding Fields}" Foreground="{StaticResource TextMutedBrush}" FontSize="11" />
-                                            <TextBlock Text="{Binding Acl}" Foreground="{StaticResource AccentBrush}" FontSize="11" Margin="14,0,0,0" />
-                                        </StackPanel>
+                                             <TextBlock Text="{Binding Fields}" Foreground="{StaticResource TextMutedBrush}" FontSize="11" />
+                                             <TextBlock Text="{Binding Acl}" Foreground="{StaticResource AccentBrush}" FontSize="11" Margin="14,0,0,0" />
+                                         </StackPanel>
+                                         <TextBlock Text="{Binding ReferenceHint}" Foreground="{StaticResource TextMutedBrush}"
+                                                    FontFamily="Consolas" FontSize="10" Margin="0,4,0,0" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>
@@ -171,7 +198,10 @@
                     <TextBlock x:Name="EmptyHint" Text="No credentials yet. Add one below."
                                Foreground="{StaticResource TextMutedBrush}" FontSize="12" Margin="2,2,0,0" Visibility="Collapsed" />
 
-                    <Button x:Name="AddButton" Content="+ Add credential" Click="ShowAddFormClick" Margin="0,12,0,0" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="AddButton" Content="+ Add login" Click="ShowAddFormClick" Margin="0,0,8,0" />
+                        <Button x:Name="AddCardButton" Content="+ Add payment card" Click="ShowCardFormClick" />
+                    </StackPanel>
 
                     <!-- Add / edit form -->
                     <Border x:Name="AddForm" Visibility="Collapsed" Background="#FF14161E" BorderBrush="#FF303540"
@@ -205,6 +235,80 @@
                                 <Button Content="Save" Click="SaveItemClick" Margin="0,0,8,0"
                                         Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" />
                                 <Button Content="Cancel" Click="CancelAddClick" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="CardForm" Visibility="Collapsed" Background="#FF14161E" BorderBrush="#FF303540"
+                            BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,14,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="CardFormTitle" Text="Add payment card" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <TextBlock x:Name="CardEditKeepHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="11"
+                                       Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,10"
+                                       Text="Editing this card — leave Card number or security code blank to keep the current value." />
+                            <TextBlock Text="Card nickname" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBox x:Name="CardName" />
+                            <TextBlock Text="Name on card" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBox x:Name="CardHolder" />
+                            <TextBlock Text="Card number" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <PasswordBox x:Name="CardNumber" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                    <TextBlock Text="Expiry month (MM)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBox x:Name="CardExpiryMonth" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                    <TextBlock Text="Expiry year (YYYY)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBox x:Name="CardExpiryYear" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Security code" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                                    <PasswordBox x:Name="CardSecurityCode" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Billing address (optional)" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBox x:Name="CardBillingAddress" AcceptsReturn="True" MinHeight="54" TextWrapping="Wrap" />
+                            <TextBlock Text="Checkout websites where this card may be filled" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />
+                            <TextBox x:Name="CardOrigins" />
+                            <TextBlock Text="Use exact hosts separated by commas, e.g. store.example.com. Card data remains blocked on every other site."
+                                       FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,-6,0,10" />
+
+                            <TextBlock Text="Models that can use these card numbers" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,2" />
+                            <TextBlock Text="Opt-in only. A model appears here after Foreman has successfully assigned its connector; it does not need to be online now."
+                                       FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                            <ItemsControl x:Name="CardHarnessSwitches">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="12" />
+                                                <TextBlock Text="{Binding HarnessId}" FontFamily="Consolas" FontSize="10"
+                                                           Foreground="{StaticResource TextMutedBrush}" />
+                                            </StackPanel>
+                                            <ToggleButton Grid.Column="1" Style="{StaticResource SliderSwitchStyle}"
+                                                          IsChecked="{Binding IsAllowed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          ToolTip="Allow this model to request card fills" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="NoCardHarnessesHint" Visibility="Collapsed"
+                                       Text="No successfully assigned Foreman model connectors yet. Connect a model first; cards remain operator-only."
+                                       FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,4,0,8" />
+                            <TextBlock x:Name="CardError" Foreground="#FFFF6666" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,8" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Save card" Click="SaveCardClick" Margin="0,0,8,0"
+                                        Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" />
+                                <Button Content="Cancel" Click="CancelCardClick" />
                             </StackPanel>
                         </StackPanel>
                     </Border>

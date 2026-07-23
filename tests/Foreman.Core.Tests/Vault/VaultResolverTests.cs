@@ -12,9 +12,11 @@ public sealed class VaultResolverTests
         public Dictionary<VaultField, string> Secrets = new();
         public bool Wiped;
 
-        public VaultItemInfo? FindByOrigin(string origin) =>
-            Info is not null && Info.Origins.Any(o => VaultDomainBinding.HostMatches(o, origin)) ? Info : null;
-        public string? GetSecret(string origin, VaultField field) => Secrets.GetValueOrDefault(field);
+        public VaultItemInfo? FindByOrigin(string origin, string? entryId = null) =>
+            Info is not null
+            && (string.IsNullOrWhiteSpace(entryId) || string.Equals(Info.EntryId, entryId, StringComparison.OrdinalIgnoreCase))
+            && Info.Origins.Any(o => VaultDomainBinding.HostMatches(o, origin)) ? Info : null;
+        public string? GetSecret(string origin, VaultField field, string? entryId = null) => Secrets.GetValueOrDefault(field);
         public void WipeInMemoryKeys() => Wiped = true;
     }
 

@@ -15,10 +15,30 @@ public sealed class VaultDocument
     public byte[]? DepositPrivateKeyPkcs8 { get; set; }
 }
 
+public enum VaultEntryKind
+{
+    Login = 0,
+    PaymentCard = 1,
+}
+
+/// <summary>Payment-card fields. Stored only inside the encrypted vault document.</summary>
+public sealed class VaultPaymentCard
+{
+    public string? CardholderName { get; set; }
+    public string? CardNumber { get; set; }
+    public string? ExpiryMonth { get; set; }
+    public string? ExpiryYear { get; set; }
+    public string? SecurityCode { get; set; }
+    public string? BillingAddress { get; set; }
+}
+
 /// <summary>One credential. <see cref="Origins"/> drives domain-binding; <see cref="Harnesses"/> is the resolve ACL
 /// (empty = operator-only). <see cref="TotpSeedBase32"/> is an RFC-6238 seed (resolved to a live code on demand).</summary>
 public sealed class VaultEntry
 {
+    /// <summary>Stable non-secret selector used when several entries share an origin.</summary>
+    public string EntryId { get; set; } = "";
+    public VaultEntryKind Kind { get; set; } = VaultEntryKind.Login;
     public string Name { get; set; } = "";
     public List<string> Origins { get; set; } = [];
     public List<string> Harnesses { get; set; } = [];
@@ -26,4 +46,5 @@ public sealed class VaultEntry
     public string? Password { get; set; }
     public string? TotpSeedBase32 { get; set; }
     public string? Notes { get; set; }
+    public VaultPaymentCard? PaymentCard { get; set; }
 }

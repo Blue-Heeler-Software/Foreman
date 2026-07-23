@@ -65,6 +65,15 @@ public sealed class AuditorTests
     }
 
     [Fact]
+    public void FastPath_PaymentCardReference_HoldsAndIsFinal_EvenInTextField()
+    {
+        var v = FastPathAuditor.Judge(
+            TypeInto("{{vault:shop.example/abc12345/cardnumber}}", "text"), new CuContext());
+        Assert.Equal(CuDecision.Hold, v.Decision);
+        Assert.True(v.Final);
+    }
+
+    [Fact]
     public void Project_IncludesUrlAndTypedText()
     {
         var a = new CuAction(CuModality.Browser, "type",

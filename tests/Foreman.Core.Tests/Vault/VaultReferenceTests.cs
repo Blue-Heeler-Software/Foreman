@@ -34,6 +34,20 @@ public sealed class VaultReferenceTests
         => Assert.Equal("nothing here", VaultReference.Replace("nothing here", (_, _) => "x"));
 
     [Fact]
+    public void SelectedCardReference_ParsesEntryAndField()
+    {
+        string? seenEntry = null;
+        var output = VaultReference.Replace("{{vault:shop.example/abc12345/cardnumber}}", (_, entry, field) =>
+        {
+            seenEntry = entry;
+            return field == VaultField.CardNumber ? "4111111111111111" : null;
+        });
+        Assert.Equal("abc12345", seenEntry);
+        Assert.Equal("4111111111111111", output);
+        Assert.True(VaultReference.HasPaymentCardReference("{{vault:shop.example/abc12345/cardnumber}}"));
+    }
+
+    [Fact]
     public void TrySignup_DetectsWholeSignupToken()
     {
         Assert.True(VaultReference.TrySignup("{{vault:example.com/signup}}", out var o));

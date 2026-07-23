@@ -1663,7 +1663,7 @@ public static class ForemanMcpTools
     }
 
     [McpServerTool, Description(
-        "CU executor only: resolve a {{vault:origin/field}} reference in an APPROVED, EXECUTING browser action to its " +
+        "CU executor only: resolve a {{vault:origin/field}} or {{vault:origin/entryId/field}} reference in an APPROVED, EXECUTING browser action to its " +
         "real value for the live target origin you are about to fill. Also handles {{vault:origin/signup}} - a WRITE " +
         "that GENERATES + stores a NEW password for the live origin (operator-approved + presence-tapped) and returns it " +
         "to fill into a signup form. The submitting harness can never call this; the value is returned only to the " +
@@ -1671,7 +1671,7 @@ public static class ForemanMcpTools
         "registered origin (and an allowed harness / the operator), or resolution is refused.")]
     public static async Task<object> CuResolveVault(
         [Description("actionId being executed")] string actionId,
-        [Description("The {{vault:origin/field}} reference to resolve (must be one present in the approved action)")] string reference,
+        [Description("The whole vault reference to resolve (must be one present in the approved action)")] string reference,
         [Description("The live target origin/host you are about to fill into (e.g. the tab host)")] string liveOrigin,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
@@ -1704,6 +1704,9 @@ public static class ForemanMcpTools
             && item.Action.Args.Values.SelectMany(v => Foreman.Core.Vault.VaultReference.Tokens(v))
                    .Any(t => string.Equals(t, want, StringComparison.OrdinalIgnoreCase));
         if (!inAction) return new { ok = false, reason = "That reference was not part of the approved action." };
+        if (Foreman.Core.Vault.VaultReference.HasPaymentCardReference(want)
+            && !item.Action.Args.Values.Any(v => string.Equals((v ?? string.Empty).Trim(), want, StringComparison.OrdinalIgnoreCase)))
+            return new { ok = false, reason = "A payment-card reference must be the entire field value." };
         // A signup is a WRITE that fills the WHOLE field with a freshly-minted password; it is only valid as the ENTIRE
         // arg value, never embedded in other text. Requiring whole-arg here makes the WRITE agree with the fast-path
         // HOLD (which forces any signup-bearing action to operator approval) so an embedded signup token can never mint.

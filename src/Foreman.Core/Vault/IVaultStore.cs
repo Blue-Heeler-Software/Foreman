@@ -11,11 +11,11 @@ public interface IVaultStore
     bool IsUnlocked { get; }
 
     /// <summary>Non-secret metadata for the item registered to <paramref name="origin"/>, or null if none.</summary>
-    VaultItemInfo? FindByOrigin(string origin);
+    VaultItemInfo? FindByOrigin(string origin, string? entryId = null);
 
     /// <summary>The plaintext for a field — for <see cref="VaultField.Totp"/>, the CURRENT code. SENSITIVE: injection
     /// boundary only. Null if the field is absent/empty.</summary>
-    string? GetSecret(string origin, VaultField field);
+    string? GetSecret(string origin, VaultField field, string? entryId = null);
 
     /// <summary>Zero/forget the in-memory derived key and any cached plaintext (called on panic / lock / exit).</summary>
     void WipeInMemoryKeys();

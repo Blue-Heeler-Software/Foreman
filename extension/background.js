@@ -209,7 +209,7 @@ async function resolveTargetTab(args) {
 // Match the App's VaultReference grammar exactly: {{vault:<origin>/<field>}}. A fresh /g instance per call (no
 // shared lastIndex state). Field/origin shapes mirror Foreman.Core.Vault.VaultReference so we extract the same
 // whole tokens the server binds against.
-const vaultTokenRe = () => /\{\{vault:([A-Za-z0-9.\-]+(?::\d+)?)\/([A-Za-z]+)\}\}/g;
+const vaultTokenRe = () => /\{\{vault:([A-Za-z0-9.\-]+(?::\d+)?)\/(?:([A-Za-z0-9_-]{6,64})\/)?([A-Za-z]+)\}\}/g;
 
 function vaultRefs(value) {
     const refs = [];
@@ -217,7 +217,7 @@ function vaultRefs(value) {
     for (const m of String(value).matchAll(vaultTokenRe())) {
         if (seen.has(m[0])) continue;
         seen.add(m[0]);
-        refs.push({ token: m[0], field: String(m[2] || '').toLowerCase() });
+        refs.push({ token: m[0], entryId: m[2] || null, field: String(m[3] || '').toLowerCase() });
     }
     return refs;
 }
@@ -225,6 +225,19 @@ function vaultRefs(value) {
 function needsPasswordField(refs) {
     // /signup returns a freshly generated password, so it gets the same page-side guard as /password.
     return refs.some((r) => r.field === 'password' || r.field === 'signup');
+}
+
+function paymentAutocomplete(refs) {
+    const names = {
+        cardholdername: 'cc-name',
+        cardnumber: 'cc-number',
+        cardexpirymonth: 'cc-exp-month',
+        cardexpiryyear: 'cc-exp-year',
+        cardsecuritycode: 'cc-csc',
+        billingaddress: 'billing street-address|street-address|billing address-line1|address-line1',
+    };
+    const hits = refs.map((r) => names[r.field]).filter(Boolean);
+    return hits.length === 1 && refs.length === 1 ? hits[0] : (hits.length > 0 ? '__invalid__' : null);
 }
 
 // Resolve every {{vault:...}} token in `value` to its real secret via cu_resolve_vault, bound to this action and
@@ -283,6 +296,15 @@ function injInspectFillTarget(selector, policy) {
             const type = String(el.getAttribute && el.getAttribute('type') || 'text').toLowerCase();
             if (tag !== 'input' || type !== 'password')
                 return { ok: false, error: 'Vault password fills require a selector that matches an input[type=password] field.' };
+        } else if (p.requiredAutocomplete) {
+            if (p.requiredAutocomplete === '__invalid__')
+                return { ok: false, error: 'A payment-card fill must contain exactly one card field reference.' };
+            if (tag !== 'input' && tag !== 'textarea')
+                return { ok: false, error: 'Payment-card data may only be filled into a form input.' };
+            const ac = String(el.getAttribute && el.getAttribute('autocomplete') || '').trim().toLowerCase();
+            const accepted = String(p.requiredAutocomplete).split('|');
+            if (!accepted.includes(ac))
+                return { ok: false, error: `Payment-card field requires autocomplete="${p.requiredAutocomplete}".` };
         } else if (tag !== 'input' && tag !== 'textarea' && !el.isContentEditable) {
             return { ok: false, error: `<${tag}> is not a fillable field.` };
         }
@@ -313,6 +335,15 @@ function injFill(selector, value, policy) {
                 const type = String(target.getAttribute && target.getAttribute('type') || 'text').toLowerCase();
                 if (targetTag !== 'input' || type !== 'password')
                     return { ok: false, error: 'Vault password fills require a selector that matches an input[type=password] field.' };
+            } else if (p.requiredAutocomplete) {
+                if (p.requiredAutocomplete === '__invalid__')
+                    return { ok: false, error: 'A payment-card fill must contain exactly one card field reference.' };
+                if (targetTag !== 'input' && targetTag !== 'textarea')
+                    return { ok: false, error: 'Payment-card data may only be filled into a form input.' };
+                const ac = String(target.getAttribute && target.getAttribute('autocomplete') || '').trim().toLowerCase();
+                const accepted = String(p.requiredAutocomplete).split('|');
+                if (!accepted.includes(ac))
+                    return { ok: false, error: `Payment-card field requires autocomplete="${p.requiredAutocomplete}".` };
             } else if (targetTag !== 'input' && targetTag !== 'textarea' && !target.isContentEditable) {
                 return { ok: false, error: `<${targetTag}> is not a fillable field.` };
             }
@@ -437,6 +468,7 @@ async function executeCuAction(act) {
             const fillPolicy = refs.length > 0 ? {
                 requireSelector: true,
                 requirePasswordField: needsPasswordField(refs),
+                requiredAutocomplete: paymentAutocomplete(refs),
                 expectedOrigin: gate.origin,
             } : {};
             if (refs.length > 0) {

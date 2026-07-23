@@ -71,6 +71,7 @@ public sealed class TrayController : IEventSink, IDisposable
     /// dashboard Vault tab (which now also host the locked-time deposit review, so nothing vault-related needs a
     /// tray-menu rebuild on unlock).</summary>
     public Foreman.Vault.VaultService? Vault { get; set; }
+    public Func<IReadOnlyList<Foreman.App.Windows.VaultView.VaultHarnessChoice>>? GetEligibleCardHarnesses { get; set; }
 
     /// <summary>Injected from App — gathers the live posture snapshot behind the dashboard "Setup" tab.</summary>
     public Func<Foreman.Core.Health.SetupHealthSnapshot>?     GetSetupHealth        { get; set; }
@@ -842,6 +843,8 @@ public sealed class TrayController : IEventSink, IDisposable
         view.AcceptDeposit       = id => AcceptDeposit?.Invoke(id) ?? (false, "Vault unavailable.");
         view.RejectDeposit       = id => RejectDeposit?.Invoke(id);
         view.ClearDepositQueue   = () => ClearDepositQueue?.Invoke();
+        view.GetEligibleCardHarnesses = () => GetEligibleCardHarnesses?.Invoke()
+            ?? Array.Empty<Foreman.App.Windows.VaultView.VaultHarnessChoice>();
     }
 
     private static void AddMenuItem(ContextMenu menu, string header, Action? onClick, bool enabled = true)

@@ -30,6 +30,13 @@ public static class CuHeuristics
     {
         if (string.Equals(a.Verb, "type", StringComparison.OrdinalIgnoreCase))
         {
+            // Payment-card release is financially consequential. Even with per-card harness ACL, exact-origin binding
+            // and a presence tap, never let it ride an automatic allow path.
+            if (a.Args.Values.Any(Foreman.Core.Vault.VaultReference.HasPaymentCardReference))
+                return CuVerdict.Hold(Src,
+                    "payment-card data release requires explicit operator approval",
+                    final: true);
+
             // Agent self-signup ({{vault:origin/signup}}) is a vault WRITE — it GENERATES + stores a NEW credential.
             // Never let it ride the auto-Allow fast path on a benign-looking fieldType: HOLD so the operator must
             // explicitly approve the creation (cu_approve) before the executor can resolve it. (A {{vault:o/field}}

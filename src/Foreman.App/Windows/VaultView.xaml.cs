@@ -22,6 +22,8 @@ public partial class VaultView : UserControl
 {
     private readonly VaultService _vault;
     private string? _editingOriginalName;   // non-null while the add form is editing an existing item (its original name)
+    private string? _editingEntryId;
+    private readonly List<VaultHarnessChoice> _cardHarnessChoices = [];
 
     /// <summary>Injected by the composition root so locked-time sign-ups are reviewed INLINE on this surface (no
     /// separate window): the pending count, a drained snapshot (no secrets), and per-item accept / reject / clear.</summary>
@@ -30,6 +32,7 @@ public partial class VaultView : UserControl
     public Func<string, (bool Ok, string Reason)>? AcceptDeposit { get; set; }
     public Action<string>? RejectDeposit { get; set; }
     public Action? ClearDepositQueue { get; set; }
+    public Func<IReadOnlyList<VaultHarnessChoice>>? GetEligibleCardHarnesses { get; set; }
 
     private readonly List<DepositReviewItem> _reviewItems = [];
 
@@ -43,6 +46,7 @@ public partial class VaultView : UserControl
         EnrollConfirm.KeyDown += (_, e) => SubmitOnEnter(e, EnrollClick);
         UnlockPw.KeyDown      += (_, e) => SubmitOnEnter(e, UnlockClick);
         AddPw.KeyDown         += (_, e) => SubmitOnEnter(e, SaveItemClick);
+        CardNumber.KeyDown    += (_, e) => SubmitOnEnter(e, SaveCardClick);
         Loaded += (_, _) => RefreshState();
     }
 
@@ -186,26 +190,74 @@ public partial class VaultView : UserControl
         var rows = _vault.ListItems().Select(VaultItemRow.From).ToList();
         ItemsList.ItemsSource = rows;
         EmptyHint.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (rows.Count == 0) OpenAddForm();   // empty vault (incl. first run) — jump straight to adding one
     }
 
     private void OpenAddForm()
     {
         _editingOriginalName = null;                       // a fresh open is always ADD mode
+        _editingEntryId = null;
         AddFormTitle.Text = "Add credential";
         EditKeepHint.Visibility = Visibility.Collapsed;
         AddForm.Visibility = Visibility.Visible;
+        CardForm.Visibility = Visibility.Collapsed;
         AddButton.Visibility = Visibility.Collapsed;
+        AddCardButton.Visibility = Visibility.Collapsed;
         AddOrigins.Focus();   // the website is the one required field, so start there
     }
 
     private void ShowAddFormClick(object sender, RoutedEventArgs e) => OpenAddForm();
 
+    private void ShowCardFormClick(object sender, RoutedEventArgs e) => OpenCardForm(null);
+
+    private void OpenCardForm(VaultItemRow? row)
+    {
+        _editingOriginalName = row?.Name;
+        _editingEntryId = row?.EntryId;
+        CardFormTitle.Text = row is null ? "Add payment card" : "Edit payment card";
+        CardEditKeepHint.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
+        CardName.Text = row?.Name ?? string.Empty;
+        CardHolder.Text = row?.CardholderName ?? string.Empty;
+        CardExpiryMonth.Text = row?.CardExpiryMonth ?? string.Empty;
+        CardExpiryYear.Text = row?.CardExpiryYear ?? string.Empty;
+        CardBillingAddress.Text = row?.BillingAddress ?? string.Empty;
+        CardOrigins.Text = row is null ? string.Empty : string.Join(", ", row.OriginList);
+        CardNumber.Clear();
+        CardSecurityCode.Clear();
+        CardError.Text = string.Empty;
+        BindCardHarnesses(row?.HarnessList ?? []);
+        AddForm.Visibility = Visibility.Collapsed;
+        CardForm.Visibility = Visibility.Visible;
+        AddButton.Visibility = Visibility.Collapsed;
+        AddCardButton.Visibility = Visibility.Collapsed;
+        CardName.Focus();
+    }
+
+    private void BindCardHarnesses(IReadOnlyList<string> allowed)
+    {
+        _cardHarnessChoices.Clear();
+        var eligible = (GetEligibleCardHarnesses?.Invoke() ?? []).ToList();
+        // A previously selected ACL is itself durable evidence that the connector was eligible when the operator
+        // opted in. Keep it visible if the harness is currently offline or its config temporarily cannot be read.
+        foreach (var id in allowed)
+            if (!eligible.Any(h => string.Equals(h.HarnessId, id, StringComparison.OrdinalIgnoreCase)))
+                eligible.Add(new VaultHarnessChoice(id, KnownHarnesses.GetById(id)?.DisplayName ?? id));
+        foreach (var h in eligible.OrderBy(h => h.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+            _cardHarnessChoices.Add(new VaultHarnessChoice(h.HarnessId, h.DisplayName)
+            {
+                IsAllowed = allowed.Contains(h.HarnessId, StringComparer.OrdinalIgnoreCase),
+            });
+        CardHarnessSwitches.ItemsSource = null;
+        CardHarnessSwitches.ItemsSource = _cardHarnessChoices;
+        NoCardHarnessesHint.Visibility = _cardHarnessChoices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     // Edit an existing item: pre-fill the non-secret metadata; secrets stay blank and "leave blank to keep" them.
     private void EditItemClick(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not VaultItemRow row) return;
+        if (row.IsPaymentCard) { OpenCardForm(row); return; }
         _editingOriginalName = row.Name;
+        _editingEntryId = row.EntryId;
         AddFormTitle.Text = "Edit credential";
         EditKeepHint.Visibility = Visibility.Visible;
         AddOrigins.Text = string.Join(", ", row.OriginList);
@@ -213,7 +265,9 @@ public partial class VaultView : UserControl
         AddHarnesses.Text = string.Join(", ", row.HarnessList);
         AddUser.Text = string.Empty; AddPw.Clear(); AddTotp.Text = string.Empty; AddError.Text = string.Empty;
         AddForm.Visibility = Visibility.Visible;
+        CardForm.Visibility = Visibility.Collapsed;
         AddButton.Visibility = Visibility.Collapsed;
+        AddCardButton.Visibility = Visibility.Collapsed;
         AddOrigins.Focus();
     }
 
@@ -226,11 +280,16 @@ public partial class VaultView : UserControl
         try { _vault.Delete(row.Name); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Foreman Agent Safety — Vault", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
         Log($"Vault item '{row.Name}' deleted.");
-        if (string.Equals(_editingOriginalName, row.Name, StringComparison.OrdinalIgnoreCase)) CloseAddForm();
+        if (string.Equals(_editingOriginalName, row.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            if (row.IsPaymentCard) CloseCardForm(); else CloseAddForm();
+        }
         PopulateItems();
     }
 
     private void CancelAddClick(object sender, RoutedEventArgs e) => CloseAddForm();
+
+    private void CancelCardClick(object sender, RoutedEventArgs e) => CloseCardForm();
 
     private void GeneratePwClick(object sender, RoutedEventArgs e) => AddPw.Password = VaultPasswordGenerator.Generate(20);
 
@@ -244,6 +303,8 @@ public partial class VaultView : UserControl
 
         var entry = new VaultEntry
         {
+            EntryId = _editingEntryId ?? string.Empty,
+            Kind = VaultEntryKind.Login,
             Name = name,
             Origins = origins,
             Harnesses = SplitCsv(AddHarnesses.Text),
@@ -271,10 +332,102 @@ public partial class VaultView : UserControl
         AddPw.Clear();
         AddError.Text = string.Empty;
         _editingOriginalName = null;
+        _editingEntryId = null;
         AddFormTitle.Text = "Add credential";
         EditKeepHint.Visibility = Visibility.Collapsed;
         AddForm.Visibility = Visibility.Collapsed;
         AddButton.Visibility = Visibility.Visible;
+        AddCardButton.Visibility = Visibility.Visible;
+    }
+
+    private void SaveCardClick(object sender, RoutedEventArgs e)
+    {
+        CardError.Text = string.Empty;
+        var name = CardName.Text.Trim();
+        var origins = ParseOrigins(CardOrigins.Text);
+        var number = Digits(CardNumber.Password);
+        var cvc = Digits(CardSecurityCode.Password);
+        var month = CardExpiryMonth.Text.Trim();
+        var year = CardExpiryYear.Text.Trim();
+
+        if (name.Length == 0) { CardError.Text = "Enter a nickname for this card."; return; }
+        if (origins.Count == 0) { CardError.Text = "Enter at least one checkout website."; return; }
+        if (_editingOriginalName is null && (number.Length is < 12 or > 19 || !PassesLuhn(number)))
+        { CardError.Text = "Enter a valid card number (12–19 digits)."; return; }
+        if (number.Length > 0 && (number.Length is < 12 or > 19 || !PassesLuhn(number)))
+        { CardError.Text = "The replacement card number is invalid."; return; }
+        if (!int.TryParse(month, out var mm) || mm is < 1 or > 12)
+        { CardError.Text = "Expiry month must be between 01 and 12."; return; }
+        if (year.Length != 4 || !int.TryParse(year, out var yyyy) || yyyy < DateTime.UtcNow.Year)
+        { CardError.Text = "Enter a four-digit expiry year that has not passed."; return; }
+        if (yyyy == DateTime.UtcNow.Year && mm < DateTime.UtcNow.Month)
+        { CardError.Text = "This card has expired."; return; }
+        if (cvc.Length > 0 && cvc.Length is < 3 or > 4)
+        { CardError.Text = "Security code must be 3 or 4 digits."; return; }
+
+        var entry = new VaultEntry
+        {
+            EntryId = _editingEntryId ?? string.Empty,
+            Kind = VaultEntryKind.PaymentCard,
+            Name = name,
+            Origins = origins,
+            Harnesses = _cardHarnessChoices.Where(h => h.IsAllowed).Select(h => h.HarnessId).ToList(),
+            PaymentCard = new VaultPaymentCard
+            {
+                CardholderName = NullIfBlank(CardHolder.Text),
+                CardNumber = NullIfBlank(number),
+                ExpiryMonth = mm.ToString("00"),
+                ExpiryYear = yyyy.ToString(),
+                SecurityCode = NullIfBlank(cvc),
+                BillingAddress = NullIfBlank(CardBillingAddress.Text),
+            },
+        };
+        try
+        {
+            if (_editingOriginalName is { } original)
+            {
+                if (!_vault.UpdateItem(original, entry))
+                { CardError.Text = "That card no longer exists — close and reopen the list."; return; }
+            }
+            else _vault.Upsert(entry);
+        }
+        catch (Exception ex) { CardError.Text = ex.Message; return; }
+        Log(_editingOriginalName is null ? $"Payment card '{name}' saved." : $"Payment card '{name}' updated.");
+        CloseCardForm();
+        PopulateItems();
+    }
+
+    private void CloseCardForm()
+    {
+        CardName.Text = CardHolder.Text = CardExpiryMonth.Text = CardExpiryYear.Text =
+            CardBillingAddress.Text = CardOrigins.Text = string.Empty;
+        CardNumber.Clear();
+        CardSecurityCode.Clear();
+        CardError.Text = string.Empty;
+        _cardHarnessChoices.Clear();
+        CardHarnessSwitches.ItemsSource = null;
+        _editingOriginalName = null;
+        _editingEntryId = null;
+        CardForm.Visibility = Visibility.Collapsed;
+        AddButton.Visibility = Visibility.Visible;
+        AddCardButton.Visibility = Visibility.Visible;
+    }
+
+    private static string Digits(string? value) =>
+        new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+
+    private static bool PassesLuhn(string digits)
+    {
+        var sum = 0;
+        var alternate = false;
+        for (var i = digits.Length - 1; i >= 0; i--)
+        {
+            var n = digits[i] - '0';
+            if (alternate && (n *= 2) > 9) n -= 9;
+            sum += n;
+            alternate = !alternate;
+        }
+        return digits.Length > 0 && sum % 10 == 0;
     }
 
     private static List<string> SplitCsv(string? s) =>
@@ -313,25 +466,56 @@ public partial class VaultView : UserControl
         public string Origins { get; init; } = string.Empty;
         public string Fields { get; init; } = string.Empty;
         public string Acl { get; init; } = string.Empty;
+        public string ReferenceHint { get; init; } = string.Empty;
         // Raw lists carried for the Edit form to pre-fill (no secret VALUES — only origins + the agent ACL).
         public IReadOnlyList<string> OriginList { get; init; } = [];
         public IReadOnlyList<string> HarnessList { get; init; } = [];
+        public string EntryId { get; init; } = string.Empty;
+        public bool IsPaymentCard { get; init; }
+        public string? CardholderName { get; init; }
+        public string? CardExpiryMonth { get; init; }
+        public string? CardExpiryYear { get; init; }
+        public string? BillingAddress { get; init; }
 
         public static VaultItemRow From(Foreman.Core.Vault.VaultItemInfo i)
         {
             var fields = new List<string>();
-            if (i.HasUsername) fields.Add("username");
-            if (i.HasPassword) fields.Add("password");
-            if (i.HasTotp) fields.Add("2FA");
+            if (i.IsPaymentCard)
+            {
+                fields.Add(i.CardLastFour is null ? "payment card" : $"card •••• {i.CardLastFour}");
+                if (i.HasCardSecurityCode) fields.Add("security code");
+            }
+            else
+            {
+                if (i.HasUsername) fields.Add("username");
+                if (i.HasPassword) fields.Add("password");
+                if (i.HasTotp) fields.Add("2FA");
+            }
             return new VaultItemRow
             {
                 Name = i.Name,
                 Origins = string.Join(", ", i.Origins),
                 Fields = fields.Count > 0 ? string.Join(" · ", fields) : "(no fields)",
                 Acl = i.Harnesses.Count > 0 ? "agents: " + string.Join(", ", i.Harnesses) : "operator only",
+                ReferenceHint = i.IsPaymentCard && i.Origins.Count > 0 && i.EntryId.Length > 0
+                    ? $"ref: {{{{vault:{i.Origins[0]}/{i.EntryId}/cardnumber}}}}"
+                    : string.Empty,
                 OriginList = i.Origins,
                 HarnessList = i.Harnesses,
+                EntryId = i.EntryId,
+                IsPaymentCard = i.IsPaymentCard,
+                CardholderName = i.CardholderName,
+                CardExpiryMonth = i.CardExpiryMonth,
+                CardExpiryYear = i.CardExpiryYear,
+                BillingAddress = i.BillingAddress,
             };
         }
+    }
+
+    public sealed class VaultHarnessChoice(string harnessId, string displayName)
+    {
+        public string HarnessId { get; } = harnessId;
+        public string DisplayName { get; } = displayName;
+        public bool IsAllowed { get; set; }
     }
 }

@@ -59,6 +59,32 @@ The vault **key** never leaves the App. The submitting agent only ever held the 
   all-or-nothing** (never partially substituted). The vault file is ACL-locked + SACL-audited (reuses
   the decoy read-audit path).
 
+### Payment cards
+
+Payment cards are a distinct vault item kind with operator-editable cardholder name, card number,
+expiry, optional security code and billing address. A card must also name the exact checkout hosts
+where it may be filled. Multiple cards may share a checkout host: each receives a stable, non-secret
+entry ID and uses a selected reference such as:
+
+```
+{{vault:store.example/7f20a61c4e91/cardnumber}}
+{{vault:store.example/7f20a61c4e91/cardexpirymonth}}
+```
+
+Model access is default-deny per card. The Vault UI lists only harnesses whose Foreman connector is
+successfully configured (they need not currently be online), and presents a separate opt-in switch
+for each. The selected harness IDs are stored in the card's sealed ACL.
+
+Card release adds stricter gates on top of the ordinary vault rules:
+
+- every card-bearing CU action is a final **Hold** requiring explicit operator approval;
+- each reference must be the whole value for one field, never embedded in other text;
+- the live checkout host must match the card's operator-entered origin allow-list;
+- the browser target must carry the matching standard payment `autocomplete` value (`cc-number`,
+  `cc-name`, `cc-exp-month`, `cc-exp-year` or `cc-csc`);
+- the submitting model never receives the value; only the browser-extension executor resolves it,
+  after the existing presence tap, and the value is not logged.
+
 ## Threat model
 
 | Attack | Defense (Foreman primitive) |

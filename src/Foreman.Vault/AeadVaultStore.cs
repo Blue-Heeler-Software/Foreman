@@ -53,11 +53,11 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         }
     }
 
-    public VaultItemInfo? FindByOrigin(string origin)
+    public VaultItemInfo? FindByOrigin(string origin, string? entryId = null)
     {
         lock (_gate)
         {
-            var e = FindEntryLocked(origin);
+            var e = FindEntryLocked(origin, entryId);
             return e is null ? null : ToInfo(e);
         }
     }
@@ -74,13 +74,21 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         {
             HasUsername = !string.IsNullOrWhiteSpace(e.Username),
             HasPassword = !string.IsNullOrWhiteSpace(e.Password),
+            EntryId = e.EntryId,
+            IsPaymentCard = e.Kind == VaultEntryKind.PaymentCard,
+            CardholderName = e.PaymentCard?.CardholderName,
+            CardLastFour = LastFour(e.PaymentCard?.CardNumber),
+            CardExpiryMonth = e.PaymentCard?.ExpiryMonth,
+            CardExpiryYear = e.PaymentCard?.ExpiryYear,
+            BillingAddress = e.PaymentCard?.BillingAddress,
+            HasCardSecurityCode = !string.IsNullOrWhiteSpace(e.PaymentCard?.SecurityCode),
         };
 
-    public string? GetSecret(string origin, VaultField field)
+    public string? GetSecret(string origin, VaultField field, string? entryId = null)
     {
         lock (_gate)
         {
-            var e = FindEntryLocked(origin);
+            var e = FindEntryLocked(origin, entryId);
             if (e is null) return null;
             return field switch
             {
@@ -88,8 +96,14 @@ public sealed class AeadVaultStore(string path) : IVaultStore
                 VaultField.Password => e.Password,
                 VaultField.Note     => e.Notes,
                 VaultField.Totp     => string.IsNullOrWhiteSpace(e.TotpSeedBase32)
-                                         ? null
-                                         : VaultTotp.FromBase32(e.TotpSeedBase32!, DateTime.UtcNow),
+                                          ? null
+                                          : VaultTotp.FromBase32(e.TotpSeedBase32!, DateTime.UtcNow),
+                VaultField.CardholderName  when e.Kind == VaultEntryKind.PaymentCard => e.PaymentCard?.CardholderName,
+                VaultField.CardNumber      when e.Kind == VaultEntryKind.PaymentCard => DigitsOnly(e.PaymentCard?.CardNumber),
+                VaultField.CardExpiryMonth when e.Kind == VaultEntryKind.PaymentCard => e.PaymentCard?.ExpiryMonth,
+                VaultField.CardExpiryYear  when e.Kind == VaultEntryKind.PaymentCard => e.PaymentCard?.ExpiryYear,
+                VaultField.CardSecurityCode when e.Kind == VaultEntryKind.PaymentCard => DigitsOnly(e.PaymentCard?.SecurityCode),
+                VaultField.BillingAddress  when e.Kind == VaultEntryKind.PaymentCard => e.PaymentCard?.BillingAddress,
                 _ => null,
             };
         }
@@ -101,6 +115,8 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         lock (_gate)
         {
             EnsureUnlockedLocked();
+            PrepareEntry(entry);
+            ValidateEntry(entry);
             _doc!.Items.RemoveAll(i => string.Equals(i.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
             _doc.Items.Add(entry);
             SaveLocked();
@@ -118,8 +134,12 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         lock (_gate)
         {
             EnsureUnlockedLocked();
+            PrepareEntry(entry);
+            ValidateEntry(entry);
             var nameTaken = _doc!.Items.Any(i => string.Equals(i.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
-            var originTaken = entry.Origins.Any(o => FindEntryLocked(o) is not null);
+            var originTaken = entry.Origins.Any(o => _doc.Items.Any(i =>
+                i.Kind == VaultEntryKind.Login &&
+                i.Origins.Any(existingOrigin => VaultDomainBinding.HostMatches(existingOrigin, o))));
             if (nameTaken || originTaken) return false;
             _doc.Items.Add(entry);
             SaveLocked();
@@ -141,11 +161,26 @@ public sealed class AeadVaultStore(string path) : IVaultStore
             EnsureUnlockedLocked();
             var existing = _doc!.Items.FirstOrDefault(i => string.Equals(i.Name, originalName, StringComparison.OrdinalIgnoreCase));
             if (existing is null) return false;
+            if (string.IsNullOrWhiteSpace(updated.EntryId)) updated.EntryId = existing.EntryId;
+            PrepareEntry(updated);
             // Preserve unchanged secrets (blank field == keep), since the UI can't round-trip the real value.
             updated.Username       = string.IsNullOrEmpty(updated.Username)       ? existing.Username       : updated.Username;
             updated.Password       = string.IsNullOrEmpty(updated.Password)       ? existing.Password       : updated.Password;
             updated.TotpSeedBase32 = string.IsNullOrWhiteSpace(updated.TotpSeedBase32) ? existing.TotpSeedBase32 : updated.TotpSeedBase32;
             updated.Notes          = string.IsNullOrEmpty(updated.Notes)          ? existing.Notes          : updated.Notes;
+            if (updated.Kind == VaultEntryKind.PaymentCard && existing.Kind == VaultEntryKind.PaymentCard)
+            {
+                updated.PaymentCard ??= new VaultPaymentCard();
+                var old = existing.PaymentCard;
+                if (old is not null)
+                {
+                    updated.PaymentCard.CardNumber = string.IsNullOrWhiteSpace(updated.PaymentCard.CardNumber)
+                        ? old.CardNumber : updated.PaymentCard.CardNumber;
+                    updated.PaymentCard.SecurityCode = string.IsNullOrWhiteSpace(updated.PaymentCard.SecurityCode)
+                        ? old.SecurityCode : updated.PaymentCard.SecurityCode;
+                }
+            }
+            ValidateEntry(updated);
             // Remove the old record (and any item already holding the NEW name, so a rename can't duplicate).
             _doc.Items.RemoveAll(i => string.Equals(i.Name, originalName, StringComparison.OrdinalIgnoreCase)
                                    || string.Equals(i.Name, updated.Name, StringComparison.OrdinalIgnoreCase));
@@ -202,8 +237,67 @@ public sealed class AeadVaultStore(string path) : IVaultStore
         }
     }
 
-    private VaultEntry? FindEntryLocked(string origin) =>
-        _doc?.Items.FirstOrDefault(i => i.Origins.Any(o => VaultDomainBinding.HostMatches(o, origin)));
+    private VaultEntry? FindEntryLocked(string origin, string? entryId = null) =>
+        _doc?.Items.FirstOrDefault(i =>
+            (string.IsNullOrWhiteSpace(entryId)
+                ? i.Kind == VaultEntryKind.Login
+                : string.Equals(i.EntryId, entryId, StringComparison.OrdinalIgnoreCase)) &&
+            i.Origins.Any(o => VaultDomainBinding.HostMatches(o, origin)));
+
+    private static void PrepareEntry(VaultEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.EntryId))
+            entry.EntryId = Guid.NewGuid().ToString("N")[..12];
+        if (entry.Kind != VaultEntryKind.PaymentCard) return;
+        entry.PaymentCard ??= new VaultPaymentCard();
+        entry.PaymentCard.CardNumber = DigitsOnly(entry.PaymentCard.CardNumber);
+        entry.PaymentCard.SecurityCode = DigitsOnly(entry.PaymentCard.SecurityCode);
+    }
+
+    private static void ValidateEntry(VaultEntry entry)
+    {
+        if (entry.Kind != VaultEntryKind.PaymentCard) return;
+        var card = entry.PaymentCard ?? throw new InvalidOperationException("payment-card details are required");
+        if (entry.Origins.Count == 0) throw new InvalidOperationException("a payment card needs at least one checkout origin");
+        var number = card.CardNumber ?? "";
+        if (number.Length is < 12 or > 19 || !PassesLuhn(number))
+            throw new InvalidOperationException("payment-card number is invalid");
+        if (!int.TryParse(card.ExpiryMonth, out var month) || month is < 1 or > 12)
+            throw new InvalidOperationException("payment-card expiry month is invalid");
+        if (!int.TryParse(card.ExpiryYear, out var year) || card.ExpiryYear!.Length != 4 || year < DateTime.UtcNow.Year)
+            throw new InvalidOperationException("payment-card expiry year is invalid");
+        if (year == DateTime.UtcNow.Year && month < DateTime.UtcNow.Month)
+            throw new InvalidOperationException("payment card has expired");
+        if (card.SecurityCode is { Length: > 0 } cvc && cvc.Length is < 3 or > 4)
+            throw new InvalidOperationException("payment-card security code is invalid");
+    }
+
+    private static bool PassesLuhn(string digits)
+    {
+        var sum = 0;
+        var alternate = false;
+        for (var i = digits.Length - 1; i >= 0; i--)
+        {
+            var n = digits[i] - '0';
+            if (alternate && (n *= 2) > 9) n -= 9;
+            sum += n;
+            alternate = !alternate;
+        }
+        return digits.Length > 0 && sum % 10 == 0;
+    }
+
+    private static string? DigitsOnly(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var digits = new string(value.Where(char.IsAsciiDigit).ToArray());
+        return digits.Length == 0 ? null : digits;
+    }
+
+    private static string? LastFour(string? value)
+    {
+        var digits = DigitsOnly(value);
+        return digits is null ? null : digits[^Math.Min(4, digits.Length)..];
+    }
 
     private void EnsureUnlockedLocked()
     {

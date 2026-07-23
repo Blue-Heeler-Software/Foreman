@@ -19,17 +19,17 @@ public sealed class VaultResolver(IVaultStore store) : IVaultResolver
         var refs = new List<string>();
         string? reason = null;
 
-        var output = VaultReference.Replace(text, (origin, field) =>
+        var output = VaultReference.Replace(text, (origin, entryId, field) =>
         {
-            var info = _store.FindByOrigin(origin);
+            var info = _store.FindByOrigin(origin, entryId);
             if (info is null) { reason ??= "credential not found"; return null; }                       // no existence oracle
             if (!VaultDomainBinding.ReleaseAllowed(info.Origins, origin, liveTargetHost))
             { reason ??= $"live target '{liveTargetHost}' does not match the credential's origin"; return null; }
             if (!isOperator && !info.AllowsHarness(harnessId))
             { reason ??= "this harness is not authorized for that credential"; return null; }
-            var secret = _store.GetSecret(origin, field);
+            var secret = _store.GetSecret(origin, field, entryId);
             if (secret is null) { reason ??= "credential field is empty"; return null; }
-            refs.Add($"{VaultDomainBinding.NormalizeHost(origin)}/{field.ToString().ToLowerInvariant()}");
+            refs.Add($"{VaultDomainBinding.NormalizeHost(origin)}/{(entryId is null ? "" : entryId + "/")}{field.ToString().ToLowerInvariant()}");
             return secret;
         });
 
