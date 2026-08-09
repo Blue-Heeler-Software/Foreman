@@ -1,0 +1,88 @@
+# Foreman Agent Safety — Ubuntu alpha
+
+This private bundle installs the native Ubuntu/Linux build of Foreman Agent
+Safety. It contains the self-contained background monitor and Avalonia desktop
+dashboard/tray application. It is not the unrelated npm project named Foreman.
+
+## Requirements
+
+- Ubuntu Desktop on an x86-64 computer
+- A normal, non-root user account
+- `systemd --user` (standard on Ubuntu Desktop)
+
+No .NET SDK, Node.js or npm installation is required.
+
+## Install locally
+
+Extract the archive, enter the extracted directory, and run:
+
+```bash
+chmod +x install.sh uninstall.sh
+./install.sh
+```
+
+If installing over SSH and the monitor must start at boot and continue after
+logout, explicitly opt into user lingering:
+
+```bash
+./install.sh --enable-linger
+```
+
+That option asks for `sudo` solely to run `loginctl enable-linger "$USER"`.
+The Foreman monitor and GUI still run as the normal user.
+
+## Open and verify
+
+Open **Foreman Agent Safety** from Ubuntu's application menu, or run:
+
+```bash
+~/.local/bin/foreman-desktop
+~/.local/bin/foreman-agent doctor
+~/.local/bin/foreman-agent status
+~/.local/bin/foreman-agent events 25
+```
+
+The installer also enables the monitor as a hardened per-user service and adds
+the desktop/tray application to graphical-session autostart.
+
+Connect an installed harness with the instructions printed by, for example:
+
+```bash
+~/.local/bin/foreman-agent connect codex
+~/.local/bin/foreman-agent connect claude-code
+```
+
+## Logs and local data
+
+```bash
+journalctl --user -u foreman-agent -f
+```
+
+Foreman uses:
+
+- `~/.config/foreman`
+- `~/.local/state/foreman`
+- `~/.local/share/foreman`
+
+The MCP endpoint is loopback-only. Do not expose it through a public proxy.
+
+## Remove
+
+```bash
+./uninstall.sh
+```
+
+Uninstalling preserves configuration and audit evidence. The uninstaller does
+not silently delete those directories or reverse a deliberate lingering choice.
+
+## Alpha limitations
+
+This is version `@VERSION@`. It provides the native GUI, `/proc`
+process and I/O monitoring, harness detection, risky-command analysis, MCP
+inventory and authenticated loopback MCP support, behaviour escalation, audit
+history and desktop notifications.
+
+It does not claim parity with the Windows build's ETW network accounting, SACL
+decoy-read auditing, Guardian service, presence controls or computer-use
+sidecars. Treat it as safety visibility tooling, not an operating-system
+sandbox.

@@ -122,6 +122,24 @@ The installer builds the background agent and Avalonia desktop application, inst
 `foreman-agent.service` as a `systemd --user` service. It requires a .NET 10 SDK only to build; the installed
 executables are self-contained. No root privileges are required.
 
+To create a friend/evaluator-ready binary bundle that needs no SDK on the
+destination computer, run this from an Ubuntu x86-64 source checkout:
+
+```bash
+./scripts/package-ubuntu.sh
+```
+
+The packager produces a versioned `.tar.gz` and external `.sha256` under
+`artifacts/`. The archive contains its own checksum-verifying installer,
+uninstaller, native dashboard and background monitor. On the destination:
+
+```bash
+sha256sum -c foreman-agent-safety-*-linux-x64.tar.gz.sha256
+tar -xzf foreman-agent-safety-*-linux-x64.tar.gz
+cd foreman-agent-safety-*-linux-x64
+./install.sh
+```
+
 Useful commands:
 
 ```bash
