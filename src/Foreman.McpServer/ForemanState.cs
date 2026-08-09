@@ -156,6 +156,10 @@ public sealed class ForemanState : IEventSink
     public ForemanEvent? GetAlert(string alertId) =>
         _alertById.TryGetValue(alertId, out var evt) ? evt : null;
 
+    /// <summary>Operator-facing snapshot for the local desktop UI. Callers must enforce operator-token auth.</summary>
+    public IReadOnlyList<ForemanEvent> GetAlertSnapshot() =>
+        _alertById.Values.OrderByDescending(static e => e.Timestamp).ToArray();
+
     /// <summary>Current escalation level for a harness, or null if it has no profile yet.</summary>
     public EscalationLevel? GetEscalationLevel(string harnessId) =>
         GetBehaviorProfiles?.Invoke()

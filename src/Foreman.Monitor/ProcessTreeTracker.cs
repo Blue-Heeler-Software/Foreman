@@ -190,7 +190,7 @@ public sealed class ProcessTreeTracker
         return null;
     }
 
-    // Windows OS hosts that never sit INSIDE a harness's process subtree. Hitting one while walking ANCESTORS
+    // OS hosts that never sit INSIDE a harness's process subtree. Hitting one while walking ANCESTORS
     // marks the chain above it untrustworthy (PID reuse / stale ppid), so the walk stops and attributes nothing.
     private static readonly HashSet<string> SystemHosts = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -198,6 +198,8 @@ public sealed class ProcessTreeTracker
         "explorer.exe", "sihost.exe", "taskhostw.exe", "dwm.exe", "fontdrvhost.exe", "ctfmon.exe",
         "RuntimeBroker.exe", "MoUsoCoreWorker.exe", "usocoreworker.exe", "dllhost.exe", "WmiPrvSE.exe",
         "System", "Registry", "MemCompression",
+        "systemd", "systemd-userwork", "dbus-daemon", "dbus-broker", "gnome-shell", "kwin_wayland",
+        "plasmashell",
     };
 
     private static bool IsSystemHost(string? name) => name is not null && SystemHosts.Contains(name);

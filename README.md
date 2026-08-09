@@ -5,7 +5,7 @@
 <h1 align="center">Foreman Agent Safety</h1>
 
 <p align="center">
-  A Windows safety monitor for AI coding agents: watch risky commands, stuck runs, MCP changes, and use one AI to audit another.
+  A Windows and Linux safety monitor for AI coding agents: watch risky commands, stuck runs, MCP changes, and use one AI to audit another.
 </p>
 
 <p align="center">
@@ -16,10 +16,11 @@
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg"></a>
   <a href="https://github.com/aXL333/Foreman/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/aXL333/Foreman/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%2F11-4A90D9">
+  <img alt="Ubuntu Linux" src="https://img.shields.io/badge/Ubuntu-Linux-E95420">
   <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-E8B23C">
 </p>
 
-> **Status:** alpha. Foreman Agent Safety targets the stable .NET 10 SDK and runs on Windows 10/11 x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
+> **Status:** alpha. Foreman Agent Safety targets the stable .NET 10 SDK. It provides a tray application on Windows 10/11 x64 and a native desktop/tray application backed by a per-user service on Ubuntu/Linux x64. Treat it as safety visibility tooling, not a sandbox or policy enforcement boundary.
 
 > **OpenAI Build Week 2026:** Foreman predates the event. See
 > [docs/openai-build-week-2026.md](docs/openai-build-week-2026.md) for the pre-event baseline,
@@ -106,6 +107,43 @@ Anything else can be added in Settings as a custom harness executable name.
 ## Quick Start
 
 ### Install
+
+#### Ubuntu/Linux
+
+The Ubuntu build is a native, self-contained .NET executable and does **not** use npm or Node.js. From a source checkout:
+
+```bash
+./scripts/install-ubuntu.sh
+~/.local/bin/foreman-agent doctor
+```
+
+The installer builds the background agent and Avalonia desktop application, installs both under
+`~/.local/lib/foreman`, adds Foreman to the application menu and desktop autostart, and enables
+`foreman-agent.service` as a `systemd --user` service. It requires a .NET 10 SDK only to build; the installed
+executables are self-contained. No root privileges are required.
+
+Useful commands:
+
+```bash
+foreman-agent status
+foreman-agent events 25
+foreman-agent connect codex
+foreman-desktop
+journalctl --user -u foreman-agent -f
+```
+
+Linux state follows the XDG directory convention. Configuration lives in `~/.config/foreman`, the MCP token
+and tamper-evident event log in `~/.local/state/foreman`, and data in `~/.local/share/foreman`. Private
+directories use mode `0700`; token/setup files use mode `0600`.
+
+The Ubuntu alpha includes unprivileged `/proc` process lifecycle and I/O monitoring, Linux harness detection,
+risky-command and credential-sweep analysis, orphan/hang detection, MCP configuration inventory, behavior
+escalation, the authenticated loopback MCP server, hash-chained audit persistence, desktop notifications, and
+a native dashboard/tray UI for alerts, processes, harnesses, behavior, MCP inventory, audit events, settings,
+and audited operator actions. Windows ETW per-process network accounting, SACL decoy-read auditing, Guardian
+service, Windows presence controls, and computer-use sidecars are explicitly not claimed on Linux yet.
+
+#### Windows
 
 Download the newest maintained alpha installer and its SHA-256 checksum from
 [GitHub Releases](https://github.com/aXL333/Foreman/releases). Releases are self-contained, so judges and

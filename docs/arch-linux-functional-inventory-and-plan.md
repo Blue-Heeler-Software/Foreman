@@ -1,6 +1,6 @@
 # Arch Linux functional inventory and integration plan
 
-Status: planning artifact.
+Status: Ubuntu/Linux service, CLI, and native desktop/tray MVP implemented; Arch packaging and privileged helper work remain planned.
 
 Scope: make Foreman Agent Safety viable on Arch Linux as a first-class local agent, while preserving the existing Windows tray app and Windows-specific security backend. This is not a promise that Linux can reproduce every Windows signal. It is an inventory of what exists, what is portable, what must be replaced, and the order of work that keeps the port honest.
 
@@ -30,7 +30,7 @@ The first Arch target should be a headless per-user service:
 
 | Capability | Current implementation | Linux/Arch disposition | Notes |
 | --- | --- | --- | --- |
-| Tray app, dashboard, settings, alert details | `Foreman.App` WPF, `net10.0-windows10.0.19041.0` | Do not port first | WPF is the wrong first dependency for Arch. Build headless agent and CLI first. |
+| Tray app, dashboard, settings, alert details | `Foreman.App` WPF, `net10.0-windows10.0.19041.0` | Native Avalonia UI implemented on Ubuntu | The Linux UI consumes the authenticated operator API while the service owns monitoring state. |
 | Local safety monitor identity | Product metadata, README, MCP key `foreman` | Reuse | Keep MCP server key and command names stable. |
 | Browser extension pairing | `extension/`, `/pair/challenge`, `/pair/complete` in MCP host | Mostly reusable | Extension already speaks loopback HTTP. Needs Linux install docs and token-path handling. |
 | Connect Agent UI | `ConnectAgentWindow`, registry of harness snippets | Replace with CLI first | Provide `foreman-agent connect codex`, `connect claude-code`, etc. UI can come later. |
@@ -511,20 +511,24 @@ P0:
 
 P1:
 
-- Add `Foreman.Agent` headless host.
-- Make MCP host and event log start without WPF.
-- Add `status` and `doctor` CLI commands.
+- Add `Foreman.Agent` headless host. **Complete for Ubuntu/Linux MVP.**
+- Make MCP host and event log start without WPF. **Complete.**
+- Add `status` and `doctor` CLI commands. **Complete.**
 
 P2:
 
-- Add `Foreman.Platform.Linux` `/proc` snapshot and polling event source.
-- Add Linux harness classification tests.
-- Add XDG settings/state paths.
+- Add `Foreman.Platform.Linux` `/proc` snapshot and polling event source. **Complete.**
+- Add Linux harness classification tests. **Complete.**
+- Add XDG settings/state paths. **Complete.**
 
 P3:
 
 - Add Arch packaging skeleton and user service.
 - Validate install/start/stop on a VM.
+
+Ubuntu progress: a self-contained `linux-x64` per-user installer and hardened `systemd --user` unit are implemented
+under `scripts/install-ubuntu.sh` and `packaging/ubuntu/`. Installation, restart, health, token modes, Codex process
+discovery, a controlled command-detection probe, and native desktop startup have been validated on Ubuntu 26.04 LTS.
 
 P4:
 
@@ -541,23 +545,30 @@ This table should be updated whenever the Windows mainline gains a safety-releva
 | Behavior escalation | `BehaviorTracker`, `EscalationThresholds` | Reuse | Same escalation math and trust presets. |
 | MCP server and tools | `Foreman.McpServer` | Reuse with host adaptation | Tool names and caller scoping remain stable. |
 | Per-harness tokens | `McpAuthToken`, `CallerScope` | Reuse with Unix file modes | Token files must be owner-only. |
-| Peer PID binding | `LoopbackPeer` on Windows | Not started | Linux must support alert-only mismatch detection before enforcement. |
-| Process create/exit | WMI watcher | Started | `/proc` polling is the first portable backend. |
-| Initial process snapshot | WMI query | Started | `/proc` snapshot provider parses pid, ppid, command line, executable target, and start time. |
-| I/O quietness | `GetProcessIoCounters` | Started | `/proc/[pid]/io` reader uses syscall counters and reports degraded state when unavailable. |
+| Peer PID binding | `LoopbackPeer` on Windows | Implemented for `/proc/net/tcp*` + socket inode owner lookup | Remains alert-only by default. |
+| Process create/exit | WMI watcher | Implemented | `/proc` polling is the first portable backend. |
+| Initial process snapshot | WMI query | Implemented | `/proc` snapshot provider parses pid, ppid, command line, executable target, and start time. |
+| I/O quietness | `GetProcessIoCounters` | Implemented | `/proc/[pid]/io` reader uses syscall counters and reports degraded state when unavailable. |
 | Decoy placement | `DecoyCredentialPolicy` | Planned reuse | Same gaps-only, sentinel-gated behavior. |
 | Direct decoy read audit | Windows SACL/Event 4663 sidecar | Unsupported until helper work | Linux must not claim Windows SACL parity. |
 | Per-PID network rates | ETW sidecar | Not started | Optional helper only, and only if attribution is accurate enough. |
 | Wake requests | Windows sidecar probe | Not planned for MVP | Explicitly out of Linux MVP unless a user-facing safety case emerges. |
-| Tray/dashboard UI | WPF | Not planned for MVP | CLI/headless service first. |
-| Startup registration | HKCU Run | Planned | `systemd --user` service. |
-| Packaging | Inno Setup | Planned | Distro-portable tar/self-contained publish first, Arch package second. |
+| Tray/dashboard UI | WPF | Native Avalonia desktop/tray implemented | Operator API requires the raw local token; harness-scoped tokens cannot access it. |
+| Startup registration | HKCU Run | Implemented on Ubuntu | Hardened `systemd --user` service. |
+| Packaging | Inno Setup | Ubuntu per-user installer implemented | Self-contained publish; `.deb`/Arch packages remain later distribution work. |
 
 ## Port progress log
 
 - Added `Foreman.Platform` for portable path, token protection, process observation, and peer resolver contracts.
 - Added `Foreman.Platform.Linux` with XDG path resolution, `/proc` stat/cmdline/io parsers, `/proc` snapshot provider, Linux token-file permission helper, and a polling process event source.
 - Added `Foreman.Platform.Linux.Tests` with XDG, `/proc` parser, I/O parser, and polling-diff tests.
+- Added `Foreman.Agent`, the Linux headless composition root and CLI (`run`, `status`, `doctor`, `events`, `token`, `connect`).
+- Added Linux command analysis, profile inheritance, credential-sweep escalation, orphan/hang detection, MCP inventory,
+  authenticated MCP hosting, XDG persistence, and owner-only token protection.
+- Added Linux socket-to-peer PID attribution through `/proc/net/tcp*` and `/proc/[pid]/fd`.
+- Added Ubuntu self-contained installation and a hardened per-user systemd service without npm/Node dependencies.
+- Added a native Avalonia desktop/tray application, notifications, application-menu entry, autostart, and an
+  operator-only loopback API for dashboard data and audited acknowledgement, termination, and reset actions.
 
 ## Decision record
 

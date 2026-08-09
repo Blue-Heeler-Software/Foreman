@@ -13,19 +13,19 @@ public static class HarnessClassifier
     private static readonly (string[] Exes, string[] NodeMarkers, string[] PyMarkers, string Id)[] _rules =
     [
         (
-            ["claude-code.exe", "claude.exe"],
+            ["claude-code.exe", "claude.exe", "claude-code", "claude"],
             ["@anthropic-ai/claude-code", "claude-code/dist", ".claude/", "claudecode"],
             [],
             "claude-code"
         ),
         (
-            ["codex.exe"],
+            ["codex.exe", "codex"],
             ["@openai/codex", "codex/dist", "openai-codex"],
             [],
             "codex"
         ),
         (
-            ["t3 code.exe", "t3code.exe", "t3-code.exe"],
+            ["t3 code.exe", "t3code.exe", "t3-code.exe", "t3code", "t3-code"],
             ["pingdotgg/t3code", "t3code/apps/desktop", @"t3code\apps\desktop",
              "t3 code/resources/app", @"t3 code\resources\app"],
             [],
@@ -38,13 +38,13 @@ public static class HarnessClassifier
             "opencode"
         ),
         (
-            ["gemini.exe"],
+            ["gemini.exe", "gemini"],
             ["@google/gemini-cli", "@google-labs/gemini-cli", "gemini-cli/dist", "google-gemini-cli"],
             [],
             "gemini-cli"
         ),
         (
-            ["q.exe", "amazon-q.exe", "cw.exe"],
+            ["q.exe", "amazon-q.exe", "cw.exe", "q", "amazon-q", "cw"],
             ["@aws/amazon-q-developer-cli", "amazon-q-developer-cli", "amazon-q/dist"],
             [],
             "amazon-q"
@@ -62,7 +62,7 @@ public static class HarnessClassifier
             "github-copilot"
         ),
         (
-            ["cursor.exe", "cursor-tunnel.exe"],
+            ["cursor.exe", "cursor-tunnel.exe", "cursor", "cursor-tunnel"],
             ["cursor/resources/app", "cursor-server", "cursor-rpc"],
             [],
             "cursor"
@@ -82,27 +82,27 @@ public static class HarnessClassifier
         // bare python.exe) are deliberately NOT matched here — their inference children are covered via the harness
         // ancestor when parented by one of these hosts.
         (
-            ["lm studio.exe", "lms.exe"],     // LM Studio GUI + its CLI (llama.cpp/MLX backend is a child)
+            ["lm studio.exe", "lms.exe", "lm-studio", "lms"],     // LM Studio GUI + its CLI (llama.cpp/MLX backend is a child)
             [], [],
             "lm-studio"
         ),
         (
-            ["ollama.exe", "ollama app.exe"], // tray, `ollama serve`, AND the `ollama runner` inference child (same binary)
+            ["ollama.exe", "ollama app.exe", "ollama"], // tray, `ollama serve`, AND the `ollama runner` inference child (same binary)
             [], [],
             "ollama"
         ),
         (
-            ["jan.exe"],                      // Jan desktop (bundled llama-server child)
+            ["jan.exe", "jan"],                      // Jan desktop (bundled llama-server child)
             [], [],
             "jan"
         ),
         (
-            ["koboldcpp.exe", "koboldcpp_cu12.exe", "koboldcpp_nocuda.exe"],
+            ["koboldcpp.exe", "koboldcpp_cu12.exe", "koboldcpp_nocuda.exe", "koboldcpp"],
             [], [],
             "koboldcpp"
         ),
         (
-            ["local-ai.exe"],
+            ["local-ai.exe", "local-ai", "local-ai-linux"],
             [], [],
             "localai"
         ),

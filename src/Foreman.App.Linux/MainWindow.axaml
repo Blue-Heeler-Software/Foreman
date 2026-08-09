@@ -1,0 +1,139 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Foreman.App.Linux.MainWindow"
+        Title="Foreman Agent Safety"
+        Width="1180" Height="780" MinWidth="900" MinHeight="620"
+        Background="#0B0E14" Foreground="#E6EDF3"
+        WindowStartupLocation="CenterScreen"
+        Icon="/Assets/foreman.png">
+  <Window.Styles>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#8B949E" /></Style>
+    <Style Selector="TextBlock.label"><Setter Property="Foreground" Value="#8B949E" /><Setter Property="FontSize" Value="11" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="TextBlock.metric"><Setter Property="FontSize" Value="27" /><Setter Property="FontWeight" Value="Bold" /></Style>
+    <Style Selector="Border.card"><Setter Property="Background" Value="#151A23" /><Setter Property="BorderBrush" Value="#293140" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="9" /><Setter Property="Padding" Value="14" /></Style>
+    <Style Selector="Button"><Setter Property="Padding" Value="13,7" /><Setter Property="CornerRadius" Value="6" /></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="#D8A93B" /><Setter Property="Foreground" Value="#11151B" /><Setter Property="FontWeight" Value="Bold" /></Style>
+    <Style Selector="TabItem"><Setter Property="Padding" Value="16,10" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="ListBox"><Setter Property="Background" Value="#0F131B" /><Setter Property="BorderBrush" Value="#293140" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" /></Style>
+    <Style Selector="ListBoxItem"><Setter Property="Padding" Value="0" /><Setter Property="HorizontalContentAlignment" Value="Stretch" /></Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <Border Grid.Row="0" Background="#080B10" BorderBrush="#252C38" BorderThickness="0,0,0,1" Padding="18,12">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="11">
+          <Image Source="/Assets/foreman.png" Width="42" Height="42" />
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="FOREMAN" Foreground="#E5B84B" FontSize="18" FontWeight="Bold" />
+            <TextBlock Text="agent safety · Ubuntu" Classes="muted" FontSize="11" />
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,18,0">
+          <TextBlock x:Name="ServiceStateText" Text="CONNECTING" Foreground="#E5B84B" FontWeight="Bold" HorizontalAlignment="Right" />
+          <TextBlock x:Name="UptimeText" Text="service discovery" Classes="muted" FontSize="11" />
+        </StackPanel>
+        <Button Grid.Column="3" Content="Refresh" Click="RefreshClick" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,*,*" Margin="16,14,16,8">
+      <Border Grid.Column="0" Classes="card" Margin="0,0,8,0"><StackPanel><TextBlock x:Name="ActiveAlertsText" Text="—" Classes="metric" /><TextBlock Text="ACTIVE ALERTS" Classes="label" /></StackPanel></Border>
+      <Border Grid.Column="1" Classes="card" Margin="0,0,8,0"><StackPanel><TextBlock x:Name="HarnessesText" Text="—" Classes="metric" /><TextBlock Text="HARNESSES" Classes="label" /></StackPanel></Border>
+      <Border Grid.Column="2" Classes="card" Margin="0,0,8,0"><StackPanel><TextBlock x:Name="ProcessesText" Text="—" Classes="metric" /><TextBlock Text="PROCESSES" Classes="label" /></StackPanel></Border>
+      <Border Grid.Column="3" Classes="card" Margin="0,0,8,0"><StackPanel><TextBlock x:Name="McpSessionsText" Text="—" Classes="metric" /><TextBlock Text="MCP CLIENTS" Classes="label" /></StackPanel></Border>
+      <Border Grid.Column="4" Classes="card" Margin="0,0,8,0"><StackPanel><TextBlock x:Name="PendingText" Text="—" Classes="metric" /><TextBlock Text="PENDING ASKS" Classes="label" /></StackPanel></Border>
+      <Border Grid.Column="5" Classes="card"><StackPanel><TextBlock x:Name="RiskText" Text="—" Classes="metric" /><TextBlock Text="RISK STATE" Classes="label" /></StackPanel></Border>
+    </Grid>
+
+    <TabControl Grid.Row="2" Margin="16,4,16,12">
+      <TabItem Header="Overview">
+        <Grid ColumnDefinitions="3*,2*" Margin="0,12,0,0">
+          <StackPanel Grid.Column="0" Spacing="8" Margin="0,0,10,0">
+            <TextBlock Text="ACTIVE ALERTS" Classes="label" />
+            <ListBox x:Name="OverviewAlertsList">
+              <ListBox.ItemTemplate><DataTemplate>
+                <Border Padding="12,10" BorderBrush="#242B36" BorderThickness="0,0,0,1">
+                  <Grid ColumnDefinitions="90,*,110">
+                    <TextBlock Text="{Binding Severity}" Foreground="#F0B94C" FontWeight="Bold" />
+                    <StackPanel Grid.Column="1"><TextBlock Text="{Binding Message}" TextWrapping="Wrap" /><TextBlock Text="{Binding Source}" Classes="muted" FontSize="11" /></StackPanel>
+                    <TextBlock Grid.Column="2" Text="{Binding Time}" Classes="muted" HorizontalAlignment="Right" />
+                  </Grid>
+                </Border>
+              </DataTemplate></ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Spacing="8" Margin="10,0,0,0">
+            <TextBlock Text="RUNNING HARNESSES" Classes="label" />
+            <ListBox x:Name="OverviewHarnessesList">
+              <ListBox.ItemTemplate><DataTemplate>
+                <Border Padding="12,10" BorderBrush="#242B36" BorderThickness="0,0,0,1">
+                  <Grid ColumnDefinitions="*,Auto"><StackPanel><TextBlock Text="{Binding HarnessType}" FontWeight="Bold" Foreground="#75C8FF" /><TextBlock Text="{Binding Name}" Classes="muted" /></StackPanel><TextBlock Grid.Column="1" Text="{Binding State}" VerticalAlignment="Center" Foreground="#65D48A" /></Grid>
+                </Border>
+              </DataTemplate></ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Alerts">
+        <Grid RowDefinitions="*,Auto" Margin="0,12,0,0">
+          <ListBox x:Name="AlertsList">
+            <ListBox.ItemTemplate><DataTemplate>
+              <Border Padding="12,10" BorderBrush="#242B36" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="85,120,*,110"><TextBlock Text="{Binding Severity}" Foreground="#F0B94C" FontWeight="Bold" /><StackPanel Grid.Column="1"><TextBlock Text="{Binding State}" /><TextBlock Text="{Binding Time}" Classes="muted" FontSize="11" /></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="{Binding Message}" TextWrapping="Wrap" /><TextBlock Text="{Binding Source}" Classes="muted" FontSize="11" /></StackPanel><TextBlock Grid.Column="3" Text="{Binding Id}" Classes="muted" HorizontalAlignment="Right" /></Grid>
+              </Border>
+            </DataTemplate></ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,10,0,0"><Button Content="Acknowledge selected" Classes="primary" Click="AcknowledgeClick" /></StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Processes">
+        <Grid RowDefinitions="Auto,*,Auto" Margin="0,12,0,0">
+          <TextBlock Grid.Row="0" Text="Live /proc tree · commands are secret-redacted at the service boundary" Classes="muted" Margin="2,0,0,8" />
+          <ListBox Grid.Row="1" x:Name="ProcessesList">
+            <ListBox.ItemTemplate><DataTemplate>
+              <Border Padding="10,8" BorderBrush="#242B36" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="70,150,130,90,*"><TextBlock Text="{Binding Pid}" Foreground="#8B949E" /><TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" /><TextBlock Grid.Column="2" Text="{Binding HarnessType}" Foreground="#75C8FF" /><TextBlock Grid.Column="3" Text="{Binding State}" Foreground="#65D48A" /><TextBlock Grid.Column="4" Text="{Binding CommandLine}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding CommandLine}" /></Grid>
+              </Border>
+            </DataTemplate></ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,10,0,0"><Button Content="Terminate selected…" Click="KillClick" /></StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Behavior">
+        <Grid RowDefinitions="*,Auto" Margin="0,12,0,0">
+          <ListBox x:Name="BehaviorList">
+            <ListBox.ItemTemplate><DataTemplate>
+              <Border Padding="12,10" BorderBrush="#242B36" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="180,110,110,110,*"><TextBlock Text="{Binding DisplayName}" FontWeight="Bold" /><TextBlock Grid.Column="1" Text="{Binding Level}" Foreground="#F0B94C" FontWeight="Bold" /><TextBlock Grid.Column="2" Text="{Binding TotalAlerts, StringFormat='{}{0} alerts'}" /><TextBlock Grid.Column="3" Text="{Binding UniqueRules, StringFormat='{}{0} rules'}" /><TextBlock Grid.Column="4" Text="{Binding CategoryText}" Classes="muted" /></Grid>
+              </Border>
+            </DataTemplate></ListBox.ItemTemplate>
+          </ListBox>
+          <Button Grid.Row="1" Content="Reset selected metrics…" HorizontalAlignment="Right" Margin="0,10,0,0" Click="ResetBehaviorClick" />
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="MCP Inventory">
+        <Grid RowDefinitions="Auto,*" Margin="0,12,0,0"><TextBlock Text="Configured MCP servers discovered across supported agent configuration files" Classes="muted" Margin="2,0,0,8" /><ListBox Grid.Row="1" x:Name="McpList"><ListBox.ItemTemplate><DataTemplate><Border Padding="12,9" BorderBrush="#242B36" BorderThickness="0,0,0,1"><Grid ColumnDefinitions="140,180,90,*,180"><TextBlock Text="{Binding Harness}" Foreground="#75C8FF" FontWeight="Bold" /><TextBlock Grid.Column="1" Text="{Binding Name}" /><TextBlock Grid.Column="2" Text="{Binding Transport}" Classes="muted" /><TextBlock Grid.Column="3" Text="{Binding Target}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Target}" /><TextBlock Grid.Column="4" Text="{Binding Scope}" Classes="muted" TextTrimming="CharacterEllipsis" /></Grid></Border></DataTemplate></ListBox.ItemTemplate></ListBox></Grid>
+      </TabItem>
+
+      <TabItem Header="Audit Log">
+        <Grid RowDefinitions="Auto,*" Margin="0,12,0,0"><TextBlock Text="Live session events · the service also persists a tamper-evident JSONL chain" Classes="muted" Margin="2,0,0,8" /><ListBox Grid.Row="1" x:Name="EventsList"><ListBox.ItemTemplate><DataTemplate><Border Padding="11,8" BorderBrush="#242B36" BorderThickness="0,0,0,1"><Grid ColumnDefinitions="125,80,180,*"><TextBlock Text="{Binding Time}" Classes="muted" /><TextBlock Grid.Column="1" Text="{Binding Severity}" Foreground="#F0B94C" FontWeight="SemiBold" /><TextBlock Grid.Column="2" Text="{Binding Source}" Classes="muted" /><TextBlock Grid.Column="3" Text="{Binding Message}" TextWrapping="Wrap" /></Grid></Border></DataTemplate></ListBox.ItemTemplate></ListBox></Grid>
+      </TabItem>
+
+      <TabItem Header="Settings &amp; Connect">
+        <ScrollViewer Margin="0,12,0,0"><StackPanel Spacing="12">
+          <Border Classes="card"><StackPanel Spacing="8"><TextBlock Text="LINUX SERVICE" Classes="label" /><TextBlock x:Name="SettingsSummaryText" Text="Loading settings…" TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="8"><Button Content="Restart service" Click="RestartServiceClick" /><Button Content="Open config directory" Click="OpenConfigClick" /></StackPanel></StackPanel></Border>
+          <Border Classes="card"><StackPanel Spacing="8"><TextBlock Text="CONNECT CODEX" Classes="label" /><TextBlock Text="Use a per-harness token; the desktop never writes or displays the operator token." Classes="muted" /><TextBox x:Name="CodexInstructionsText" IsReadOnly="True" AcceptsReturn="True" MinHeight="175" FontFamily="monospace" TextWrapping="NoWrap" /><Button Content="Copy instructions" Classes="primary" HorizontalAlignment="Left" Click="CopyInstructionsClick" /></StackPanel></Border>
+          <Border Classes="card"><StackPanel Spacing="6"><TextBlock Text="LINUX CAPABILITY NOTES" Classes="label" /><TextBlock Text="Available: process lifecycle/tree monitoring, risky-command analysis, credential-sweep escalation, hang/orphan detection, profiles, MCP inventory and mediation, Ask Harness/audit workflows, operator acknowledgements/termination, hash-chained logs, tray and desktop notifications." TextWrapping="Wrap" /><TextBlock Text="Not yet equivalent to Windows: ETW per-PID network rates, SACL direct decoy-read auditing, hardened Guardian/TPM sealing, Windows Hello presence lock, and desktop/ADB computer-use sidecars." Classes="muted" TextWrapping="Wrap" /></StackPanel></Border>
+        </StackPanel></ScrollViewer>
+      </TabItem>
+    </TabControl>
+
+    <Border Grid.Row="3" Background="#080B10" BorderBrush="#252C38" BorderThickness="0,1,0,0" Padding="16,8">
+      <Grid ColumnDefinitions="*,Auto"><TextBlock x:Name="FooterText" Text="Connecting to Foreman service…" Classes="muted" /><TextBlock Grid.Column="1" Text="local-only · no telemetry · operator authenticated" Classes="muted" /></Grid>
+    </Border>
+  </Grid>
+</Window>

@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Foreman.App/Foreman.App.csproj" />
+    <Project Path="src/Foreman.App.Linux/Foreman.App.Linux.csproj" />
+    <Project Path="src/Foreman.Agent/Foreman.Agent.csproj" />
     <Project Path="src/Foreman.Core/Foreman.Core.csproj" />
     <Project Path="src/Foreman.CuPilot/Foreman.CuPilot.csproj" />
     <Project Path="src/Foreman.CuSidecar/Foreman.CuSidecar.csproj" />
@@ -14,6 +16,7 @@
     <Project Path="src/Foreman.Vault/Foreman.Vault.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Foreman.Agent.Tests/Foreman.Agent.Tests.csproj" />
     <Project Path="tests/Foreman.Core.Tests/Foreman.Core.Tests.csproj" />
     <Project Path="tests/Foreman.Guardian.Tests/Foreman.Guardian.Tests.csproj" />
     <Project Path="tests/Foreman.McpServer.Tests/Foreman.McpServer.Tests.csproj" />

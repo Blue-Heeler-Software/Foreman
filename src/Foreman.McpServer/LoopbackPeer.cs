@@ -31,11 +31,66 @@ internal static class LoopbackPeer
         if (clientPort <= 0 || serverPort <= 0) return null;
         try
         {
+            if (OperatingSystem.IsLinux())
+                return ScanLinux(clientPort, serverPort, ipv6);
+            if (!OperatingSystem.IsWindows())
+                return null;
+
             return ipv6
                 ? Scan(AF_INET6, rowSize: 56, addrLen: 16, clientPort, serverPort)
                 : Scan(AF_INET,  rowSize: 24, addrLen: 4,  clientPort, serverPort);
         }
         catch { return null; }
+    }
+
+    private static int? ScanLinux(int clientPort, int serverPort, bool ipv6)
+    {
+        var table = ipv6 ? "/proc/net/tcp6" : "/proc/net/tcp";
+        if (!File.Exists(table)) return null;
+
+        string? socketInode = null;
+        foreach (var line in File.ReadLines(table).Skip(1))
+        {
+            var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 10) continue;
+            if (!TryLinuxPort(fields[1], out var local) || !TryLinuxPort(fields[2], out var remote))
+                continue;
+            if (local != clientPort || remote != serverPort) continue;
+            socketInode = fields[9];
+            break;
+        }
+
+        if (socketInode is null) return null;
+        var target = $"socket:[{socketInode}]";
+        foreach (var procDir in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(procDir), out var pid)) continue;
+            try
+            {
+                foreach (var fd in Directory.EnumerateFiles(Path.Combine(procDir, "fd")))
+                {
+                    string? link;
+                    try { link = new FileInfo(fd).LinkTarget; }
+                    catch { continue; }
+                    if (string.Equals(link, target, StringComparison.Ordinal))
+                        return pid;
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return null;
+    }
+
+    private static bool TryLinuxPort(string endpoint, out int port)
+    {
+        port = 0;
+        var colon = endpoint.LastIndexOf(':');
+        return colon >= 0 && int.TryParse(
+            endpoint.AsSpan(colon + 1),
+            System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out port);
     }
 
     private static int? Scan(int af, int rowSize, int addrLen, int clientPort, int serverPort)

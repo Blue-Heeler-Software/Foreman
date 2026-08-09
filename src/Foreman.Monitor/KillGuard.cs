@@ -18,7 +18,7 @@ public static class KillGuard
     // tiers), so it is refused regardless of who asks.
     private static readonly HashSet<string> ForemanSelf = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Foreman.exe", "Foreman.Guardian.exe", "Foreman.EtwSidecar.exe",
+        "Foreman.exe", "Foreman.Guardian.exe", "Foreman.EtwSidecar.exe", "foreman-agent",
     };
 
     // Windows OS hosts + the desktop shell. Terminating any of these destabilises the whole session, never just
@@ -29,6 +29,10 @@ public static class KillGuard
         "explorer.exe", "sihost.exe", "taskhostw.exe", "dwm.exe", "fontdrvhost.exe", "ctfmon.exe",
         "RuntimeBroker.exe", "MoUsoCoreWorker.exe", "usocoreworker.exe", "dllhost.exe", "WmiPrvSE.exe",
         "System", "Registry", "MemCompression", "conhost.exe", "audiodg.exe", "spoolsv.exe", "LogonUI.exe",
+        // Linux init, session, IPC, and desktop hosts. These can be tracked for attribution boundaries but are
+        // never valid termination targets for an agent safety tool.
+        "systemd", "systemd-userwork", "dbus-daemon", "dbus-broker", "gnome-shell", "kwin_wayland",
+        "plasmashell",
     };
 
     // NOTE — endpoint-security processes (Defender, Bitdefender, EDR, …) are deliberately NOT hard-coded here.

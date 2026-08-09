@@ -7,7 +7,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="patterns\*.json" />
-    <EmbeddedResource Include="profiles\*.json" />
+    <!-- Linux filesystems are case-sensitive; the source directory is named Profiles. -->
+    <EmbeddedResource Include="Profiles\*.json" />
   </ItemGroup>
 
   <ItemGroup>

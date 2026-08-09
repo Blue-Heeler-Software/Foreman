@@ -34,6 +34,9 @@ public sealed class McpAuthToken
     /// <summary>Absolute path of the token file, so the host can harden its ACL on Windows.</summary>
     public string TokenFilePath => _tokenPath;
 
+    /// <summary>Absolute path of the generated connection guide.</summary>
+    public string SetupFilePath => _setupPath;
+
     /// <summary>
     /// LastWriteTime (UTC) of the persisted token file, or null when it does not exist or can't be read.
     /// LoadOrCreate regenerates the file ONLY when it is missing/empty, so a recent write time is the only

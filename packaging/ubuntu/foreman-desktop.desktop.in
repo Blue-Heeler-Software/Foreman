@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Foreman Agent Safety
+Comment=Safety oversight for local AI coding agents
+Exec=@HOME@/.local/lib/foreman/foreman-desktop
+Icon=@HOME@/.local/share/icons/hicolor/128x128/apps/foreman-agent-safety.png
+Terminal=false
+Categories=System;Security;
+Keywords=AI;agent;safety;MCP;monitor;
+StartupNotify=true

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Foreman Agent Safety
+Comment=Start the Foreman safety tray and dashboard
+Exec=@HOME@/.local/lib/foreman/foreman-desktop --background
+Icon=@HOME@/.local/share/icons/hicolor/128x128/apps/foreman-agent-safety.png
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

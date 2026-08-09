@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>foreman-agent</AssemblyName>
+    <RootNamespace>Foreman.Agent</RootNamespace>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Foreman.Core\Foreman.Core.csproj" />
+    <ProjectReference Include="..\Foreman.McpServer\Foreman.McpServer.csproj" />
+    <ProjectReference Include="..\Foreman.Platform\Foreman.Platform.csproj" />
+    <ProjectReference Include="..\Foreman.Platform.Linux\Foreman.Platform.Linux.csproj" />
+  </ItemGroup>
+
+  <!-- These monitor components are platform-neutral but still live in the Windows monitor project.
+       Link them until the upstream project completes its planned monitor split. -->
+  <ItemGroup>
+    <Compile Include="..\Foreman.Monitor\ProcessTreeTracker.cs" Link="Monitor\ProcessTreeTracker.cs" />
+    <Compile Include="..\Foreman.Monitor\HarnessClassifier.cs" Link="Monitor\HarnessClassifier.cs" />
+    <Compile Include="..\Foreman.Monitor\HangDetector.cs" Link="Monitor\HangDetector.cs" />
+    <Compile Include="..\Foreman.Monitor\UserInputActivity.cs" Link="Monitor\UserInputActivity.cs" />
+    <Compile Include="..\Foreman.Monitor\McpInventoryMonitor.cs" Link="Monitor\McpInventoryMonitor.cs" />
+    <Compile Include="..\Foreman.Monitor\KillGuard.cs" Link="Monitor\KillGuard.cs" />
+  </ItemGroup>
+
+</Project>

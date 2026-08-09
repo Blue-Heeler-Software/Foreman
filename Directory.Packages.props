@@ -3,6 +3,9 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Native cross-platform desktop UI (Ubuntu GUI; no npm/Node toolchain). -->
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.0" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.0" />
     <!-- Tray icon -->
     <PackageVersion Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <!-- MCP server SDK -->

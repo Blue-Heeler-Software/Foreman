@@ -25,7 +25,7 @@ public sealed class McpServerHost : IAsyncDisposable
 {
     private readonly ForemanSettings _settings;
     private readonly EventBus _bus;
-    private readonly McpAuthToken _authToken = new();
+    private readonly McpAuthToken _authToken;
     private readonly PairingManager _pairing = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _peerMismatchSeen = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _staleTokenSeen = new();
@@ -37,6 +37,8 @@ public sealed class McpServerHost : IAsyncDisposable
     /// <summary>Path of the MCP bearer-token file, so the (Windows) app shell can ACL-restrict it.</summary>
     public string TokenFilePath => _authToken.TokenFilePath;
 
+    public string SetupFilePath => _authToken.SetupFilePath;
+
     /// <summary>The per-install bearer token, so the app shell can build connect instructions/config.</summary>
     public string McpToken => _authToken.Value;
 
@@ -47,10 +49,11 @@ public sealed class McpServerHost : IAsyncDisposable
     /// browser extension. The code is the challenge/response key and never crosses the wire. (Closed-loop spec.)</summary>
     public string BeginExtensionPairing() => _pairing.Begin();
 
-    public McpServerHost(ForemanSettings settings, EventBus bus)
+    public McpServerHost(ForemanSettings settings, EventBus bus, string? authBaseDirectory = null)
     {
         _settings = settings;
         _bus = bus;
+        _authToken = new McpAuthToken(authBaseDirectory);
         State.McpPort = settings.McpPort;
         State.LlmTriage = settings.LlmTriage;
         State.HarnessModalities = settings.HarnessModalities;
@@ -118,8 +121,39 @@ public sealed class McpServerHost : IAsyncDisposable
         _app.Use(async (ctx, next) =>
         {
             var isMcpRequest = ctx.Request.Path.StartsWithSegments("/mcp");
+            var isOperatorApi = ctx.Request.Path.StartsWithSegments("/api");
             try
             {
+                if (isOperatorApi)
+                {
+                    if (!LoopbackRequestPolicy.IsLoopbackHost(ctx.Request.Host.Value))
+                    {
+                        await Deny(ctx, StatusCodes.Status403Forbidden,
+                            "Operator API Host is not a loopback address.").ConfigureAwait(false);
+                        return;
+                    }
+
+                    // The desktop app sends no Origin. If one is present it must itself be loopback, preventing
+                    // an arbitrary webpage from driving the operator surface with a stolen/readable token.
+                    var origin = ctx.Request.Headers.Origin.ToString();
+                    if (!string.IsNullOrWhiteSpace(origin)
+                        && (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri) || !originUri.IsLoopback))
+                    {
+                        await Deny(ctx, StatusCodes.Status403Forbidden,
+                            "Cross-origin access to the operator API is forbidden.").ConfigureAwait(false);
+                        return;
+                    }
+
+                    var apiAuth = _authToken.Authenticate(ExtractToken(ctx.Request));
+                    if (!apiAuth.Ok || !apiAuth.IsOperator)
+                    {
+                        ctx.Response.Headers.WWWAuthenticate = "Bearer";
+                        await Deny(ctx, StatusCodes.Status401Unauthorized,
+                            "The Foreman operator token is required.").ConfigureAwait(false);
+                        return;
+                    }
+                }
+
                 if (isMcpRequest)
                 {
                     // Host must be loopback (DNS-rebinding defence) — checked before anything else.
@@ -188,12 +222,12 @@ public sealed class McpServerHost : IAsyncDisposable
                 }
                 await next().ConfigureAwait(false);
             }
-            catch (System.Text.Json.JsonException ex) when (isMcpRequest && !ctx.Response.HasStarted)
+            catch (System.Text.Json.JsonException ex) when ((isMcpRequest || isOperatorApi) && !ctx.Response.HasStarted)
             {
                 LogMcpException(ex);
                 await Deny(ctx, StatusCodes.Status400BadRequest, "Invalid JSON-RPC request body.").ConfigureAwait(false);
             }
-            catch (Exception ex) when (isMcpRequest)
+            catch (Exception ex) when (isMcpRequest || isOperatorApi)
             {
                 LogMcpException(ex);
                 throw;
@@ -204,6 +238,142 @@ public sealed class McpServerHost : IAsyncDisposable
         // Liveness only — no session count: /health is unauthenticated, so it shouldn't
         // tell a local prober how many agents are connected.
         _app.MapGet("/health", () => new { status = "ok", port = _settings.McpPort });
+
+        // Authenticated operator API for the native Linux desktop app. This is deliberately separate from MCP:
+        // harness-scoped tokens are rejected, every endpoint is loopback-only, and all mutating actions are logged.
+        _app.MapGet("/api/status", () => Results.Json(new
+        {
+            status = "ok",
+            version = typeof(McpServerHost).Assembly.GetName().Version?.ToString() ?? "unknown",
+            startedAt = State.StartTime,
+            uptimeSeconds = (long)(DateTimeOffset.UtcNow - State.StartTime).TotalSeconds,
+            activeAlerts = State.ActiveAlerts,
+            hasCritical = State.HasCritical,
+            processCount = State.ProcessCount,
+            harnessCount = State.GetProcesses(includeChildren: false).Count(),
+            mcpSessions = State.McpSessionCount,
+            pendingAskHarness = State.PendingAskHarnessCount,
+            mcpPort = _settings.McpPort,
+        }));
+
+        _app.MapGet("/api/processes", (bool? includeChildren) => Results.Json(
+            State.GetProcesses(includeChildren ?? true)
+                .OrderByDescending(static p => p.IsHarness)
+                .ThenBy(static p => p.HarnessType)
+                .ThenBy(static p => p.Pid)
+                .Select(static p => new
+                {
+                    pid = p.Pid,
+                    parentPid = p.ParentPid,
+                    name = p.Name,
+                    commandLine = Foreman.Core.Security.SecretRedactor.Redact(p.CommandLine),
+                    executablePath = p.ExecutablePath,
+                    startTime = p.StartTime,
+                    uptimeMinutes = p.UptimeMinutes,
+                    silentMinutes = p.SilentMinutes,
+                    isHarness = p.IsHarness,
+                    harnessType = p.HarnessType,
+                    profileName = p.ProfileName,
+                    state = p.State.ToString(),
+                    ioCountersUnavailable = p.IoCountersUnavailable,
+                })));
+
+        _app.MapGet("/api/alerts", (int? limit, bool? activeOnly) => Results.Json(
+            State.GetAlertSnapshot()
+                .Where(e => activeOnly != true || Foreman.Core.Alerts.AlertActivity.IsActive(e))
+                .Take(Math.Clamp(limit ?? 200, 1, 1000))
+                .Select(static e => new
+                {
+                    id = e.Id,
+                    timestamp = e.Timestamp,
+                    severity = e.Severity.ToString(),
+                    source = e.Source,
+                    message = Foreman.Core.Security.SecretRedactor.Redact(e.Message),
+                    acknowledged = e.Acknowledged,
+                    autoResolved = e.AutoResolved,
+                    resolvedReason = e.ResolvedReason,
+                    processId = e switch
+                    {
+                        CommandAlertEvent x => (int?)x.ProcessId,
+                        HangDetectedEvent x => x.ProcessId,
+                        OrphanDetectedEvent x => x.ProcessId,
+                        PermissionViolationEvent x => x.ProcessId,
+                        NonzeroExitEvent x => x.ProcessId,
+                        _ => null,
+                    },
+                })));
+
+        _app.MapGet("/api/events", (int? limit) => Results.Json(
+            State.GetEvents(Math.Clamp(limit ?? 250, 1, 1000), minSeverity: null)));
+
+        _app.MapGet("/api/behavior", () => Results.Json(
+            (State.GetBehaviorProfiles?.Invoke() ?? [])
+                .OrderByDescending(static p => p.CurrentLevel)
+                .ThenBy(static p => p.DisplayName)
+                .Select(static p => new
+                {
+                    harnessId = p.HarnessId,
+                    displayName = p.DisplayName,
+                    level = p.CurrentLevel.ToString(),
+                    totalAlerts = p.TotalAlerts,
+                    uniqueRules = p.UniqueRulesCount,
+                    categories = p.Categories,
+                    lastAlertTime = p.LastAlertTime,
+                })));
+
+        _app.MapGet("/api/mcp-inventory", () => Results.Json(
+            (State.GetMcpInventory?.Invoke() ?? []).OrderBy(static x => x.Harness).ThenBy(static x => x.Name)));
+
+        _app.MapGet("/api/settings", () => Results.Json(new
+        {
+            mcpPort = _settings.McpPort,
+            monitorAllProcesses = _settings.MonitorAllProcesses,
+            hangThresholdMinutes = _settings.HangThresholdMinutes,
+            hookJamThresholdMinutes = _settings.HookJamThresholdMinutes,
+            ioPollerIntervalSeconds = _settings.IoPollerIntervalSeconds,
+            eventLogPersist = _settings.EventLogPersist,
+            scanMcpTools = _settings.ScanMcpTools,
+            idleCleanupEnabled = _settings.IdleCleanupEnabled,
+            idleCleanupAfterMinutes = _settings.IdleCleanupAfterMinutes,
+            mcpPeerBindingEnforce = _settings.McpPeerBindingEnforce,
+        }));
+
+        _app.MapPost("/api/alerts/{id}/ack", (string id) =>
+        {
+            var alert = State.GetAlert(id);
+            if (alert is null) return Results.NotFound(new { ok = false, reason = "Alert not found." });
+            if (!State.AcknowledgeAlert(id)) return Results.NotFound(new { ok = false, reason = "Alert not found." });
+            _bus.Publish(new InfoEvent(DateTimeOffset.UtcNow, "Foreman.Desktop",
+                $"Operator acknowledged {alert.Severity} alert {id} in the Linux desktop app."));
+            return Results.Json(new { ok = true });
+        });
+
+        _app.MapPost("/api/processes/{pid:int}/kill", (int pid) =>
+        {
+            var process = State.GetProcess(pid);
+            if (process is null) return Results.NotFound(new { ok = false, reason = "Process is no longer tracked." });
+            var killed = State.KillProcessByPid?.Invoke(pid, process.StartTime) == true;
+            _bus.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow,
+                killed ? ForemanSeverity.Medium : ForemanSeverity.High,
+                "Foreman.Desktop",
+                killed
+                    ? $"Operator terminated {process.Name} (pid {pid}) from the Linux desktop app."
+                    : $"Operator termination request for {process.Name} (pid {pid}) was refused or failed."));
+            return Results.Json(new { ok = killed, reason = killed ? "Terminated." : "Refused or failed." },
+                statusCode: killed ? StatusCodes.Status200OK : StatusCodes.Status409Conflict);
+        });
+
+        _app.MapPost("/api/behavior/{harnessId}/reset", (string harnessId) =>
+        {
+            if (State.ResetBehaviorProfile is null)
+                return Results.Json(new { ok = false, reason = "Behavior reset is unavailable." }, statusCode: 503);
+            State.ResetBehaviorProfile(harnessId);
+            _bus.Publish(new MonitoringNoticeEvent(
+                DateTimeOffset.UtcNow, ForemanSeverity.Medium, "Foreman.Desktop",
+                $"Operator reset behavior metrics for '{harnessId}' in the Linux desktop app."));
+            return Results.Json(new { ok = true });
+        });
 
         // Extension pairing (loopback-only; no bearer — the extension has none yet. The on-screen code
         // authenticates via challenge/response, so the code never crosses the wire). Host must be loopback.
